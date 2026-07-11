@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
-import { listAgentsByOwner, registerAgent } from "@/lib/data/agent-registry";
+import {
+  listAgentsByOwner,
+  registerAgent,
+  type KnowledgeSource,
+} from "@/lib/data/agent-registry";
 import { listAgents } from "@/lib/data/agents";
+import { isValidSourceUrl, SUPPORTED_SOURCE_TYPES } from "@/lib/knowledge-sources";
 
 export const runtime = "nodejs";
 
@@ -48,6 +53,21 @@ export async function POST(req: Request) {
   const payoutAddress = body.payoutAddress ? String(body.payoutAddress).trim() : undefined;
   const ownerAddress = body.ownerAddress ? String(body.ownerAddress).trim() : undefined;
 
+  // Knowledge sources: only supported types with valid http(s) URLs, max 4.
+  const sources: KnowledgeSource[] = Array.isArray(body.sources)
+    ? (body.sources as unknown[])
+        .map((s) => {
+          const src = s as { type?: unknown; url?: unknown };
+          return { type: String(src.type ?? ""), url: String(src.url ?? "").trim() };
+        })
+        .filter(
+          (s) =>
+            (SUPPORTED_SOURCE_TYPES as readonly string[]).includes(s.type) &&
+            isValidSourceUrl(s.url)
+        )
+        .slice(0, 4)
+    : [];
+
   const missing: string[] = [];
   if (!name) missing.push("name");
   if (!tagline) missing.push("tagline");
@@ -83,6 +103,7 @@ export async function POST(req: Request) {
     mcpEndpoint,
     payoutAddress,
     ownerAddress,
+    sources,
   });
 
   return NextResponse.json({

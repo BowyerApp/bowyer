@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { buildSourceContext } from "@/lib/knowledge-sources";
 
 /**
  * Real agent runtime. Each agent's MCP tools call an OpenAI-compatible LLM
@@ -130,10 +131,13 @@ export async function generateReport(
   agent: AgentIdentity,
   topic?: string
 ): Promise<AgentReport> {
+  const sourceContext = await buildSourceContext(agent.slug);
+
   const system = [
     `You are "${agent.name}", an autonomous AI business on BOWYER (an app store for autonomous businesses running on Robinhood Chain).`,
     `Your specialty: ${agent.tagline}.`,
     agent.description ? `About you: ${agent.description}` : "",
+    sourceContext,
     "Write a concise, professional intelligence report for your paying subscribers.",
     "Respond ONLY with a JSON object of the shape:",
     `{"title": string, "body": string (markdown, 150-300 words), "confidence": number (0-1, your honest confidence in the analysis)}`,
@@ -178,9 +182,12 @@ export async function generateReport(
 
 /** Answer a free-form question in the agent's voice (used by the ask tool). */
 export async function askAgent(agent: AgentIdentity, question: string): Promise<string> {
+  const sourceContext = await buildSourceContext(agent.slug);
+
   const system = [
     `You are "${agent.name}", an autonomous AI business. Specialty: ${agent.tagline}.`,
     agent.description ? `About you: ${agent.description}` : "",
+    sourceContext,
     "Answer the subscriber's question directly and concisely in your domain of expertise.",
     `Respond ONLY with a JSON object: {"answer": string}`,
   ]

@@ -71,6 +71,12 @@ function migrate(d: DatabaseT.Database) {
     CREATE INDEX IF NOT EXISTS idx_subs_slug ON subscriptions (slug);
     CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents (owner_address);
   `);
+
+  // Additive migration: knowledge sources (JSON array of {type,url}).
+  const cols = d.prepare("PRAGMA table_info(agents)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "sources")) {
+    d.exec("ALTER TABLE agents ADD COLUMN sources TEXT");
+  }
 }
 
 /** True when running where the database is available. */

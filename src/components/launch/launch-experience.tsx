@@ -170,17 +170,30 @@ const DEPTHS = [
 ];
 
 const SOURCES = [
-  { id: "website", label: "Website", icon: Globe },
-  { id: "github", label: "GitHub", icon: Github },
-  { id: "x", label: "X", icon: MessageCircle },
-  { id: "rss", label: "RSS", icon: Rss },
-  { id: "pdf", label: "PDF", icon: FileText },
-  { id: "notion", label: "Notion", icon: BookOpen },
-  { id: "wallet", label: "Wallet", icon: Wallet },
-  { id: "discord", label: "Discord", icon: MessageCircle },
-  { id: "telegram", label: "Telegram", icon: Send },
-  { id: "api", label: "Custom API", icon: Key },
+  { id: "website", label: "Website", icon: Globe, live: true, placeholder: "https://example.com" },
+  { id: "github", label: "GitHub", icon: Github, live: true, placeholder: "https://github.com/owner/repo" },
+  { id: "rss", label: "RSS", icon: Rss, live: true, placeholder: "https://blog.example.com/feed.xml" },
+  { id: "x", label: "X", icon: MessageCircle, live: false, placeholder: "" },
+  { id: "pdf", label: "PDF", icon: FileText, live: false, placeholder: "" },
+  { id: "notion", label: "Notion", icon: BookOpen, live: false, placeholder: "" },
+  { id: "wallet", label: "Wallet", icon: Wallet, live: false, placeholder: "" },
+  { id: "discord", label: "Discord", icon: MessageCircle, live: false, placeholder: "" },
+  { id: "telegram", label: "Telegram", icon: Send, live: false, placeholder: "" },
+  { id: "api", label: "Custom API", icon: Key, live: false, placeholder: "" },
 ];
+
+interface ConnectedSource {
+  type: string;
+  url: string;
+}
+
+function sourceHostname(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
 
 const CAPABILITIES = [
   { id: "reports", label: "Publish reports", blurb: "Scheduled and event-driven publications", icon: FileText },
@@ -224,7 +237,10 @@ export function LaunchExperience() {
   const [memory, setMemory] = useState(true);
   const [goal, setGoal] = useState("");
   // Step 4
-  const [sources, setSources] = useState<string[]>([]);
+  const [sources, setSources] = useState<ConnectedSource[]>([]);
+  const [activeSource, setActiveSource] = useState<string | null>(null);
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [sourceError, setSourceError] = useState<string | null>(null);
   // Step 5
   const [capabilities, setCapabilities] = useState<string[]>([]);
   // Step 6
@@ -254,6 +270,41 @@ export function LaunchExperience() {
     setPriceUsd(c.defaults.priceUsd);
     setGoal(c.defaults.goal);
     next();
+  }
+
+  function addSource() {
+    if (!activeSource) return;
+    const url = sourceUrl.trim();
+    let valid = false;
+    try {
+      const u = new URL(url);
+      valid = u.protocol === "https:" || u.protocol === "http:";
+      if (activeSource === "github" && !/github\.com\/[^/]+\/[^/]+/.test(url)) {
+        valid = false;
+      }
+    } catch {
+      valid = false;
+    }
+    if (!valid) {
+      setSourceError(
+        activeSource === "github"
+          ? "Enter a full repository URL, e.g. https://github.com/owner/repo"
+          : "Enter a full URL starting with https://"
+      );
+      return;
+    }
+    if (sources.some((s) => s.url === url)) {
+      setSourceError("That source is already connected.");
+      return;
+    }
+    if (sources.length >= 4) {
+      setSourceError("Up to 4 sources per business for now.");
+      return;
+    }
+    setSources([...sources, { type: activeSource, url }]);
+    setSourceUrl("");
+    setActiveSource(null);
+    setSourceError(null);
   }
 
   function next() {
@@ -299,14 +350,23 @@ export function LaunchExperience() {
           name,
           tagline,
           category: category.id,
-          description:
-            description.trim() ||
-            `${tagline} ${goal}`.trim(),
+          description: [
+            description.trim() || `${tagline} ${goal}`.trim(),
+            instructions.trim() && `Operating instructions: ${instructions.trim()}`,
+            depth === "deep"
+              ? "Reasoning depth: deep — reason thoroughly and show your working."
+              : depth === "fast"
+                ? "Reasoning depth: fast — answer quickly and concisely."
+                : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
           revenueModel: pricingModel === "Subscription" ? "Monthly subscription" : pricingModel,
           priceUsd: pricingModel === "Free" || pricingModel === "Holder access" ? 0 : priceUsd,
           creatorSharePct: 90,
           payoutAddress: payoutAddress || undefined,
           ownerAddress: walletAddress || payoutAddress || undefined,
+          sources,
         }),
       });
       const data = await res.json();
@@ -650,17 +710,18 @@ export function LaunchExperience() {
 
             {sources.length > 0 && (
               <div className="mt-6 flex flex-wrap gap-2">
-                {sources.map((id) => {
-                  const s = SOURCES.find((x) => x.id === id)!;
+                {sources.map((src) => {
+                  const s = SOURCES.find((x) => x.id === src.type);
                   return (
                     <button
-                      key={id}
+                      key={src.url}
                       type="button"
-                      onClick={() => setSources(sources.filter((x) => x !== id))}
+                      onClick={() => setSources(sources.filter((x) => x.url !== src.url))}
+                      title="Remove source"
                       className="flex items-center gap-1.5 rounded-full bg-accent/10 px-3 py-1.5 text-[12px] text-accent transition-colors hover:bg-accent/20"
                     >
                       <Check className="size-3" strokeWidth={2.5} />
-                      {s.label}
+                      {s?.label ?? src.type} · {sourceHostname(src.url)}
                     </button>
                   );
                 })}
@@ -670,31 +731,38 @@ export function LaunchExperience() {
             <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
               {SOURCES.map((s) => {
                 const Icon = s.icon;
-                const connected = sources.includes(s.id);
+                const connected = sources.some((x) => x.type === s.id);
+                const isActive = activeSource === s.id;
                 return (
                   <button
                     key={s.id}
                     type="button"
-                    onClick={() =>
-                      setSources(
-                        connected ? sources.filter((x) => x !== s.id) : [...sources, s.id]
-                      )
-                    }
+                    disabled={!s.live}
+                    onClick={() => {
+                      setSourceError(null);
+                      setSourceUrl("");
+                      setActiveSource(isActive ? null : s.id);
+                    }}
                     className={cn(
                       "flex flex-col items-center gap-3 rounded-2xl border py-6 transition-colors",
-                      connected
+                      !s.live && "cursor-not-allowed opacity-45",
+                      connected || isActive
                         ? "border-accent/70 bg-accent/[0.05]"
-                        : "border-border bg-surface hover:border-white/25"
+                        : "border-border bg-surface",
+                      s.live && !connected && !isActive && "hover:border-white/25"
                     )}
                   >
                     <Icon
-                      className={cn("size-5", connected ? "text-accent" : "text-muted")}
+                      className={cn(
+                        "size-5",
+                        connected || isActive ? "text-accent" : "text-muted"
+                      )}
                       strokeWidth={1.5}
                     />
                     <span
                       className={cn(
                         "text-[12.5px]",
-                        connected ? "text-foreground" : "text-muted"
+                        connected || isActive ? "text-foreground" : "text-muted"
                       )}
                     >
                       {s.label}
@@ -705,14 +773,58 @@ export function LaunchExperience() {
                         connected ? "text-accent" : "text-subtle"
                       )}
                     >
-                      {connected ? "Connected" : "Connect"}
+                      {!s.live ? "Coming soon" : connected ? "Connected" : "Connect"}
                     </span>
                   </button>
                 );
               })}
             </div>
+
+            {activeSource && (
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <p className="text-[12.5px] text-muted">
+                  {activeSource === "github"
+                    ? "Paste a public GitHub repository URL. Your business reads its README."
+                    : activeSource === "rss"
+                      ? "Paste an RSS or Atom feed URL. Your business reads the latest items."
+                      : "Paste a public webpage URL. Your business reads its content."}
+                </p>
+                <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                  <input
+                    type="url"
+                    value={sourceUrl}
+                    onChange={(e) => {
+                      setSourceUrl(e.target.value);
+                      setSourceError(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addSource();
+                      }
+                    }}
+                    placeholder={
+                      SOURCES.find((s) => s.id === activeSource)?.placeholder ?? "https://"
+                    }
+                    className="h-11 flex-1 rounded-sm border border-border bg-background px-4 text-[13.5px] text-foreground outline-none transition-colors placeholder:text-subtle focus:border-accent/60"
+                  />
+                  <button
+                    type="button"
+                    onClick={addSource}
+                    className="flex h-11 shrink-0 items-center justify-center rounded-sm bg-accent px-6 text-[13px] font-medium text-black transition-opacity hover:opacity-90"
+                  >
+                    Add source
+                  </button>
+                </div>
+                {sourceError && (
+                  <p className="mt-2 text-[12px] text-red-400">{sourceError}</p>
+                )}
+              </div>
+            )}
+
             <p className="mt-5 text-[12px] text-subtle">
-              Optional — you can connect sources after launch too.
+              Optional — connected sources are fetched live every time your business writes
+              a report or answers a question.
             </p>
           </div>
         )}
@@ -929,7 +1041,10 @@ export function LaunchExperience() {
                     value={
                       sources.length > 0
                         ? sources
-                            .map((id) => SOURCES.find((s) => s.id === id)?.label)
+                            .map(
+                              (src) =>
+                                `${SOURCES.find((s) => s.id === src.type)?.label ?? src.type} (${sourceHostname(src.url)})`
+                            )
                             .join(" · ")
                         : "Connect after launch"
                     }

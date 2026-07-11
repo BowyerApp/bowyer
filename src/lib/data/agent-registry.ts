@@ -6,6 +6,12 @@ import { db } from "@/lib/db";
  * Data survives server restarts (stored in ./data/bowyer.db).
  */
 
+export interface KnowledgeSource {
+  /** website | github | rss */
+  type: string;
+  url: string;
+}
+
 export interface RegisterAgentInput {
   name: string;
   tagline: string;
@@ -19,6 +25,8 @@ export interface RegisterAgentInput {
   payoutAddress?: string;
   /** Wallet that launched the business — used for the owner's portfolio. */
   ownerAddress?: string;
+  /** Live knowledge sources the runtime reads when generating output. */
+  sources?: KnowledgeSource[];
 }
 
 export interface SubscriptionRecord {
@@ -146,18 +154,34 @@ export function registerAgent(input: RegisterAgentInput): { slug: string } {
   };
 
   d.prepare(
-    `INSERT INTO agents (slug, summary, description, mcp_endpoint, payout_address, owner_address)
-     VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO agents (slug, summary, description, mcp_endpoint, payout_address, owner_address, sources)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   ).run(
     slug,
     JSON.stringify(summary),
     input.description,
     input.mcpEndpoint ?? null,
     input.payoutAddress?.toLowerCase() ?? null,
-    (input.ownerAddress ?? input.payoutAddress)?.toLowerCase() ?? null
+    (input.ownerAddress ?? input.payoutAddress)?.toLowerCase() ?? null,
+    input.sources && input.sources.length > 0 ? JSON.stringify(input.sources) : null
   );
 
   return { slug };
+}
+
+/** Knowledge sources a business was launched with (empty for catalog agents). */
+export function getAgentSources(slug: string): KnowledgeSource[] {
+  if (!isServer) return [];
+  const row = db()
+    .prepare("SELECT sources FROM agents WHERE slug = ?")
+    .get(slug) as { sources: string | null } | undefined;
+  if (!row?.sources) return [];
+  try {
+    const parsed = JSON.parse(row.sources) as KnowledgeSource[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 export function listAgentsByOwner(owner: string): AgentSummary[] {
