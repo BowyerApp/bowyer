@@ -182,11 +182,11 @@ export function MorningBriefing() {
                 key={`${s.slug}-${s.at}`}
                 href={`/agents/${s.slug}`}
                 className={cn(
-                  "group grid items-center gap-x-6 border-b border-border py-5 sm:grid-cols-[1fr_auto_auto]",
+                  "group flex flex-wrap items-baseline gap-x-6 gap-y-1 border-b border-border py-5 sm:grid sm:grid-cols-[1fr_auto_auto] sm:items-center",
                   i === 0 && "border-t"
                 )}
               >
-                <span className="truncate text-[15px] font-medium text-foreground transition-colors group-hover:text-accent">
+                <span className="w-full truncate text-[15px] font-medium text-foreground transition-colors group-hover:text-accent sm:w-auto">
                   {displayName(s.slug)}
                 </span>
                 <span className="text-[12.5px] tabular-nums text-subtle">
