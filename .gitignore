@@ -52,3 +52,8 @@ __pycache__/
 
 # server env reference (never commit)
 .env.production.server
+
+# local screenshots (never ship)
+public/images/Screenshot*
+public/images/IMAGE_2026*
+public/images/131233211*
