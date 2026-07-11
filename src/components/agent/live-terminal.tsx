@@ -22,7 +22,7 @@ type Frame =
   | { kind: "highlight"; title: string; detail: string };
 
 const FRAME_INTERVAL_MS = 2200;
-const VISIBLE_FRAMES = 6;
+const VISIBLE_FRAMES = 7;
 
 export function LiveTerminal({
   slug,
@@ -69,6 +69,8 @@ export function LiveTerminal({
           { kind: "status", text: "Awaiting tool calls — reports generate on demand" },
         ];
         setFrames(built);
+        // Fill the panel immediately — no dead space while frames drip in.
+        setCursor(built.length);
       })
       .catch(() => {
         if (!cancelled) {

@@ -163,6 +163,7 @@ export function AgentLiveExperience({
             reportsTotal={real.reportsTotal}
             subscribers={real.subscribers}
             lastReportAt={real.lastReportAt}
+            className="w-full lg:h-[520px] lg:self-center"
           />
         </div>
       </Container>
