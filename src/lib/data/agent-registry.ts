@@ -1,0 +1,298 @@
+import type { AgentSummary } from "@/lib/types";
+import { db } from "@/lib/db";
+
+/**
+ * SQLite-backed registry for user-launched agents and subscriptions.
+ * Data survives server restarts (stored in ./data/bowyer.db).
+ */
+
+export interface RegisterAgentInput {
+  name: string;
+  tagline: string;
+  category: string;
+  description: string;
+  revenueModel: string;
+  priceUsd: number;
+  creatorSharePct: number;
+  mcpEndpoint?: string;
+  /** Wallet address that receives subscriber payments. Required for paid agents. */
+  payoutAddress?: string;
+  /** Wallet that launched the business — used for the owner's portfolio. */
+  ownerAddress?: string;
+}
+
+export interface SubscriptionRecord {
+  slug: string;
+  subscriber: string;
+  txHash?: string;
+  amountUsd: number;
+  at: string;
+  active?: boolean;
+}
+
+const CATEGORY_TO_FILTER: Record<string, AgentSummary["filter"]> = {
+  Trading: "trading",
+  Macro: "research",
+  Research: "research",
+  Security: "data",
+  Content: "content",
+  Developer: "developer-tools",
+  Data: "data",
+  Automation: "automation",
+};
+
+/**
+ * Client components may transitively import this module via agents.ts.
+ * The database only exists on the server, so every read degrades to an
+ * empty result in the browser (server-rendered data still hydrates fine).
+ */
+const isServer = typeof window === "undefined";
+
+interface AgentRow {
+  slug: string;
+  summary: string;
+  description: string;
+  mcp_endpoint: string | null;
+  payout_address: string | null;
+  owner_address: string | null;
+}
+
+interface SubRow {
+  slug: string;
+  subscriber: string;
+  tx_hash: string | null;
+  amount_usd: number;
+  at: string;
+  active: number;
+}
+
+function rowToSummary(row: AgentRow): AgentSummary {
+  return JSON.parse(row.summary) as AgentSummary;
+}
+
+function rowToSub(row: SubRow): SubscriptionRecord {
+  return {
+    slug: row.slug,
+    subscriber: row.subscriber,
+    txHash: row.tx_hash ?? undefined,
+    amountUsd: row.amount_usd,
+    at: row.at,
+    active: row.active === 1,
+  };
+}
+
+export function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 48);
+}
+
+export function registerAgent(input: RegisterAgentInput): { slug: string } {
+  const d = db();
+  let slug = slugify(input.name);
+  if (!slug) slug = `agent-${Date.now()}`;
+  const exists = d.prepare("SELECT 1 FROM agents WHERE slug = ?").get(slug);
+  if (exists) slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
+
+  const now = new Date().toISOString().slice(0, 10);
+  const filter = CATEGORY_TO_FILTER[input.category] ?? "research";
+
+  const summary: AgentSummary = {
+    id: `agent-user-${Date.now()}`,
+    slug,
+    name: input.name,
+    tagline: input.tagline,
+    thesis: input.description.slice(0, 140),
+    currentTask: "Initializing — first scan queued",
+    category: "analytics",
+    filter,
+    status: "live",
+    riskLevel: "medium",
+    creator: { name: input.name, handle: slugify(input.name), verified: false },
+    pricing:
+      input.priceUsd <= 0 || input.revenueModel === "Free"
+        ? { model: "free", amount: 0, currency: "USD" }
+        : {
+            model: input.revenueModel === "One-time license" ? "one-time" : "subscription",
+            amount: input.priceUsd,
+            currency: "USD",
+            period: "month",
+          },
+    performance: {
+      totalReturnPct: 0,
+      return30dPct: 0,
+      winRatePct: 0,
+      maxDrawdownPct: 0,
+      sharpeRatio: 0,
+      asOf: now,
+    },
+    primaryMetric: { label: "Status", value: "Just launched" },
+    followers: 0,
+    revenueUsd: 0,
+    artwork: "abstract",
+    featured: false,
+    trendingScore: 10,
+    createdAt: now,
+    tags: [input.category.toLowerCase()],
+    profileReady: true,
+    artifactKind: "agent",
+    version: "0.1.0",
+    platforms: ["agent-fun"],
+    stars: 0,
+  };
+
+  d.prepare(
+    `INSERT INTO agents (slug, summary, description, mcp_endpoint, payout_address, owner_address)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(
+    slug,
+    JSON.stringify(summary),
+    input.description,
+    input.mcpEndpoint ?? null,
+    input.payoutAddress?.toLowerCase() ?? null,
+    (input.ownerAddress ?? input.payoutAddress)?.toLowerCase() ?? null
+  );
+
+  return { slug };
+}
+
+export function listAgentsByOwner(owner: string): AgentSummary[] {
+  if (!isServer) return [];
+  const rows = db()
+    .prepare("SELECT * FROM agents WHERE owner_address = ? ORDER BY created_at DESC")
+    .all(owner.toLowerCase()) as AgentRow[];
+  return rows.map(rowToSummary);
+}
+
+/** All payments received by businesses owned by this wallet. */
+export function listEarnings(owner: string): SubscriptionRecord[] {
+  if (!isServer) return [];
+  const rows = db()
+    .prepare(
+      `SELECT s.* FROM subscriptions s
+       JOIN agents a ON a.slug = s.slug
+       WHERE a.owner_address = ?
+       ORDER BY s.at DESC`
+    )
+    .all(owner.toLowerCase()) as SubRow[];
+  return rows.map(rowToSub);
+}
+
+/** Payout address for the platform's own flagship agent. */
+const PLATFORM_PAYOUT = "0x7F3A9c04E2b81cD54f6cE8a91b7Dd94A31E0c821";
+
+export function getPayoutAddress(slug: string): string | null {
+  if (!isServer) return slug === "whale-hunter" ? PLATFORM_PAYOUT : null;
+  const row = db()
+    .prepare("SELECT payout_address FROM agents WHERE slug = ?")
+    .get(slug) as { payout_address: string | null } | undefined;
+  if (row?.payout_address) return row.payout_address;
+  return slug === "whale-hunter" ? PLATFORM_PAYOUT : null;
+}
+
+export function recordSubscription(record: SubscriptionRecord): void {
+  const d = db();
+  d.prepare(
+    `INSERT INTO subscriptions (slug, subscriber, tx_hash, amount_usd, at, active)
+     VALUES (?, ?, ?, ?, ?, 1)`
+  ).run(
+    record.slug,
+    record.subscriber.toLowerCase(),
+    record.txHash ?? null,
+    record.amountUsd,
+    record.at
+  );
+
+  const row = d.prepare("SELECT * FROM agents WHERE slug = ?").get(record.slug) as
+    | AgentRow
+    | undefined;
+  if (row) {
+    const summary = rowToSummary(row);
+    summary.followers += 1;
+    summary.revenueUsd += record.amountUsd;
+    d.prepare("UPDATE agents SET summary = ? WHERE slug = ?").run(
+      JSON.stringify(summary),
+      record.slug
+    );
+  }
+}
+
+export function cancelSubscription(slug: string, subscriber: string): boolean {
+  if (!isServer) return false;
+  const result = db()
+    .prepare(
+      "UPDATE subscriptions SET active = 0 WHERE slug = ? AND subscriber = ? AND active = 1"
+    )
+    .run(slug, subscriber.toLowerCase());
+  return result.changes > 0;
+}
+
+export function listSubscriptions(subscriber?: string): SubscriptionRecord[] {
+  if (!isServer) return [];
+  const d = db();
+  const rows = (
+    subscriber
+      ? d
+          .prepare(
+            "SELECT * FROM subscriptions WHERE subscriber = ? AND active = 1 ORDER BY at DESC"
+          )
+          .all(subscriber.toLowerCase())
+      : d.prepare("SELECT * FROM subscriptions WHERE active = 1 ORDER BY at DESC").all()
+  ) as SubRow[];
+  return rows.map(rowToSub);
+}
+
+export function hasSubscription(slug: string, subscriber: string): boolean {
+  if (!isServer) return false;
+  return Boolean(
+    db()
+      .prepare(
+        "SELECT 1 FROM subscriptions WHERE slug = ? AND subscriber = ? AND active = 1"
+      )
+      .get(slug, subscriber.toLowerCase())
+  );
+}
+
+/** Whether a tx hash has already been used to pay for a subscription. */
+export function isTxHashUsed(txHash: string): boolean {
+  if (!isServer) return false;
+  return Boolean(
+    db().prepare("SELECT 1 FROM subscriptions WHERE tx_hash = ?").get(txHash)
+  );
+}
+
+export function listRegisteredAgents(): AgentSummary[] {
+  if (!isServer) return [];
+  const rows = db()
+    .prepare("SELECT * FROM agents ORDER BY created_at DESC")
+    .all() as AgentRow[];
+  return rows.map(rowToSummary);
+}
+
+export function getRegisteredAgent(slug: string): AgentSummary | null {
+  if (!isServer) return null;
+  const row = db().prepare("SELECT * FROM agents WHERE slug = ?").get(slug) as
+    | AgentRow
+    | undefined;
+  return row ? rowToSummary(row) : null;
+}
+
+export function getRegisteredDescription(slug: string): string | undefined {
+  if (!isServer) return undefined;
+  const row = db().prepare("SELECT description FROM agents WHERE slug = ?").get(slug) as
+    | { description: string }
+    | undefined;
+  return row?.description || undefined;
+}
+
+export function getRegisteredMcpEndpoint(slug: string): string | undefined {
+  if (!isServer) return undefined;
+  const row = db()
+    .prepare("SELECT mcp_endpoint FROM agents WHERE slug = ?")
+    .get(slug) as { mcp_endpoint: string | null } | undefined;
+  return row?.mcp_endpoint ?? undefined;
+}

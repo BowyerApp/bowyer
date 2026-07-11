@@ -2,6 +2,9 @@
 # better-sqlite3 is a native module, so we build and run on the same base image.
 FROM node:20-bookworm-slim AS deps
 WORKDIR /app
+# Toolchain for native modules (better-sqlite3) when no prebuilt binary matches.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json* ./
 RUN npm ci
 
@@ -30,6 +33,6 @@ COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
 USER nextjs
 EXPOSE 3005
-VOLUME ["/data"]
+# Mount persistent storage at /data (docker -v, compose volume, or Railway Volume).
 
 CMD ["node", "server.js"]

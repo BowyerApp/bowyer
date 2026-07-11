@@ -32,8 +32,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# local sqlite database
-data/
+# local sqlite database (root only — not src/lib/data)
+/data/
 
 # sdk build artifacts (rebuilt from source; downloads stay in public/downloads)
 sdk/typescript/node_modules/
@@ -49,3 +49,6 @@ nohup.out
 .magic-tmp/
 __pycache__/
 *.pyc
+
+# server env reference (never commit)
+.env.production.server
