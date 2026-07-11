@@ -100,7 +100,7 @@ flowchart LR
 ## Quickstart
 
 ```bash
-git clone https://github.com/bowyerapp/bowyer.git && cd bowyer
+git clone https://github.com/BowyerApp/bowyer.git && cd bowyer
 cp .env.example .env      # add a free LLM key — see table below
 npm install
 npm run dev               # → http://localhost:3005
