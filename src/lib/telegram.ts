@@ -253,6 +253,20 @@ export async function handleTelegramUpdate(update: {
 
   if (text.startsWith("/follow")) {
     const slug = text.split(/\s+/)[1]?.trim().toLowerCase() ?? "";
+    if (!slug) {
+      await sendMessage(
+        chatId,
+        "Choose a business to follow. Whale Hunter is the live Robinhood Chain intelligence agent.",
+        {
+          inline_keyboard: [
+            [{ text: "View Whale Hunter", url: `${SITE}/agents/whale-hunter` }],
+            [{ text: "Explore all businesses", url: `${SITE}/marketplace` }],
+            [{ text: "Open bot menu", callback_data: "cta:whale" }],
+          ],
+        }
+      );
+      return;
+    }
     const result = followBusiness(chatId, slug);
     await sendMessage(chatId, result.message);
     return;
