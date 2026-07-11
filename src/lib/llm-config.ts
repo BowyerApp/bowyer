@@ -110,6 +110,21 @@ export function resolveRuntimeLlm(config: AgentLlmConfig | null): {
   };
 }
 
+/** Optional second provider when the primary hits rate limits (429) or is down. */
+export function fallbackRuntimeLlm(): {
+  model: string;
+  apiKey: string;
+  baseUrl: string;
+} | null {
+  const apiKey = process.env.LLM_FALLBACK_API_KEY?.trim();
+  if (!apiKey) return null;
+  return {
+    model: process.env.LLM_FALLBACK_MODEL?.trim() || "llama-3.3-70b-versatile",
+    apiKey,
+    baseUrl: process.env.LLM_FALLBACK_BASE_URL?.trim() || "https://api.groq.com/openai/v1",
+  };
+}
+
 export function isLocalBaseUrl(baseUrl: string): boolean {
   return /localhost|127\.0\.0\.1|0\.0\.0\.0|host\.docker\.internal/.test(baseUrl);
 }

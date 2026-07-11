@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { getAgentLlmConfig } from "@/lib/data/agent-registry";
 import { buildSourceContext } from "@/lib/knowledge-sources";
 import {
+  fallbackRuntimeLlm,
   isLocalBaseUrl,
   llmConfigured,
   platformModelIdToModel,
@@ -78,23 +79,15 @@ function depthParams(description?: string): { temperature: number; maxTokens: nu
   return { temperature: 0.7, maxTokens: 900 };
 }
 
-async function chatCompletion(
-  slug: string,
+async function callLlm(
+  model: string,
+  apiKey: string | undefined,
+  baseUrl: string,
   system: string,
   user: string,
-  description?: string
+  temperature: number,
+  maxTokens: number
 ): Promise<{ content: string; model: string }> {
-  const config = getAgentLlmConfig(slug);
-  const { model, apiKey, baseUrl } = resolveRuntimeLlm(config);
-
-  if (!apiKey && !isLocalBaseUrl(baseUrl)) {
-    throw new Error(
-      "No LLM configured for this business. Launch with your own API key, or contact the platform operator."
-    );
-  }
-
-  const { temperature, maxTokens } = depthParams(description);
-
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -102,7 +95,7 @@ async function chatCompletion(
       Authorization: `Bearer ${apiKey ?? "ollama"}`,
     },
     body: JSON.stringify({
-      model: config?.mode === "platform" ? platformModelIdToModel(config.model) : model,
+      model,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
@@ -116,17 +109,66 @@ async function chatCompletion(
 
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
-    throw new Error(`LLM request failed (HTTP ${res.status}): ${detail.slice(0, 200)}`);
+    const err = new Error(`LLM request failed (HTTP ${res.status}): ${detail.slice(0, 200)}`) as Error & {
+      status?: number;
+    };
+    err.status = res.status;
+    throw err;
   }
+
   const json = (await res.json()) as {
     choices?: { message?: { content?: string } }[];
   };
   const content = json.choices?.[0]?.message?.content;
   if (!content) throw new Error("LLM returned an empty response");
+  return { content, model };
+}
 
+async function chatCompletion(
+  slug: string,
+  system: string,
+  user: string,
+  description?: string
+): Promise<{ content: string; model: string }> {
+  const config = getAgentLlmConfig(slug);
+  const primary = resolveRuntimeLlm(config);
   const usedModel =
-    config?.mode === "platform" ? platformModelIdToModel(config.model) : model;
-  return { content, model: usedModel };
+    config?.mode === "platform" ? platformModelIdToModel(config.model) : primary.model;
+
+  if (!primary.apiKey && !isLocalBaseUrl(primary.baseUrl)) {
+    throw new Error(
+      "No LLM configured for this business. Launch with your own API key, or contact the platform operator."
+    );
+  }
+
+  const { temperature, maxTokens } = depthParams(description);
+
+  try {
+    return await callLlm(
+      usedModel,
+      primary.apiKey,
+      primary.baseUrl,
+      system,
+      user,
+      temperature,
+      maxTokens
+    );
+  } catch (err) {
+    const status = (err as Error & { status?: number }).status;
+    const fallback = config?.mode !== "custom" ? fallbackRuntimeLlm() : null;
+    if (fallback && status && [429, 502, 503, 529].includes(status)) {
+      return callLlm(
+        fallback.model,
+        fallback.apiKey,
+        fallback.baseUrl,
+        system,
+        user,
+        temperature,
+        maxTokens
+      );
+    }
+    throw err;
+  }
 }
 
 /**

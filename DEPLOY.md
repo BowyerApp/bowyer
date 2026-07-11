@@ -13,6 +13,7 @@ Copy `.env.example` to `.env` and fill in:
 | --- | --- | --- |
 | `LLM_API_KEY` | Yes, for platform-hosted models | Powers **BOWYER models** in the Launch wizard and catalog agents. Any OpenAI-compatible provider — **free options:** Groq (recommended), OpenRouter, Google AI Studio, Cerebras. Founders can also use **their own key** at launch (stored per-business in SQLite). |
 | `LLM_BASE_URL`, `LLM_MODEL` | No | Default: OpenAI, `gpt-4o-mini`. Production uses Groq: `https://api.groq.com/openai/v1` + `llama-3.3-70b-versatile`. Point at `http://localhost:11434/v1` for keyless Ollama. |
+| `LLM_FALLBACK_API_KEY` | Recommended at scale | Second provider used automatically on 429/503 from the primary (e.g. OpenRouter free tier). Set `LLM_FALLBACK_BASE_URL` and `LLM_FALLBACK_MODEL` too. |
 | `NEXT_PUBLIC_BOWYER_NETWORK` | Yes | `testnet` (46630) or `mainnet` (4663). **bowyer.app runs mainnet.** Rebuild after changing. |
 | `CHAIN_RPC_URL` | Recommended | Dedicated RPC for payment verification; defaults to the public Robinhood Chain RPC. |
 | `PLATFORM_PAYOUT_ADDRESS` | Yes for paid Whale Hunter | Wallet that receives Whale Hunter subscription payments. If unset, paid subscriptions fail safely. |
