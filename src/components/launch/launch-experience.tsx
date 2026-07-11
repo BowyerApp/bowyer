@@ -31,6 +31,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Container } from "@/components/layout/container";
+import { BYOK_PROVIDERS, PLATFORM_MODELS, llmConfigSummary } from "@/lib/llm-config";
 import { shortAddress, useWallet } from "@/lib/wallet-context";
 import { cn } from "@/lib/utils";
 
@@ -69,7 +70,7 @@ const CATEGORIES: CategoryOption[] = [
     icon: LineChart,
     defaults: {
       capabilities: ["monitor", "alerts", "reports"],
-      model: "bowyer-quant",
+      model: "fast",
       priceUsd: 49,
       goal: "Find market signals before anyone else and alert subscribers instantly.",
     },
@@ -82,7 +83,7 @@ const CATEGORIES: CategoryOption[] = [
     icon: Search,
     defaults: {
       capabilities: ["research", "reports"],
-      model: "bowyer-analyst",
+      model: "balanced",
       priceUsd: 29,
       goal: "Produce one deeply researched report every day.",
     },
@@ -95,7 +96,7 @@ const CATEGORIES: CategoryOption[] = [
     icon: Globe,
     defaults: {
       capabilities: ["research", "reports", "content"],
-      model: "bowyer-analyst",
+      model: "balanced",
       priceUsd: 39,
       goal: "Publish the definitive daily macro briefing.",
     },
@@ -108,7 +109,7 @@ const CATEGORIES: CategoryOption[] = [
     icon: Bot,
     defaults: {
       capabilities: ["workflows", "answers"],
-      model: "bowyer-engineer",
+      model: "balanced",
       priceUsd: 19,
       goal: "Serve reliable tool calls to other agents and IDEs.",
     },
@@ -121,7 +122,7 @@ const CATEGORIES: CategoryOption[] = [
     icon: ShieldCheck,
     defaults: {
       capabilities: ["monitor", "alerts"],
-      model: "bowyer-sentinel",
+      model: "fast",
       priceUsd: 59,
       goal: "Detect anomalies and alert subscribers within seconds.",
     },
@@ -134,7 +135,7 @@ const CATEGORIES: CategoryOption[] = [
     icon: Workflow,
     defaults: {
       capabilities: ["workflows", "alerts"],
-      model: "bowyer-operator",
+      model: "fast",
       priceUsd: 25,
       goal: "Execute scheduled operations flawlessly, 24/7.",
     },
@@ -147,20 +148,11 @@ const CATEGORIES: CategoryOption[] = [
     icon: Newspaper,
     defaults: {
       capabilities: ["content", "reports", "social"],
-      model: "bowyer-writer",
+      model: "deep",
       priceUsd: 15,
       goal: "Write content subscribers forward to their friends.",
     },
   },
-];
-
-const MODELS = [
-  { id: "bowyer-quant", name: "Quant", blurb: "Numbers-first. Built for signals and market structure." },
-  { id: "bowyer-analyst", name: "Analyst", blurb: "Deep reading and long-form reasoning." },
-  { id: "bowyer-writer", name: "Writer", blurb: "Voice and clarity. Built for publishing." },
-  { id: "bowyer-engineer", name: "Engineer", blurb: "Precise tool use and structured output." },
-  { id: "bowyer-sentinel", name: "Sentinel", blurb: "Always-on pattern and anomaly detection." },
-  { id: "bowyer-operator", name: "Operator", blurb: "Reliable execution of multi-step work." },
 ];
 
 const DEPTHS = [
@@ -231,7 +223,12 @@ export function LaunchExperience() {
   const [avatar, setAvatar] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   // Step 3
-  const [model, setModel] = useState("bowyer-analyst");
+  const [llmMode, setLlmMode] = useState<"platform" | "custom">("platform");
+  const [model, setModel] = useState("balanced");
+  const [byokProvider, setByokProvider] = useState<string>("groq");
+  const [customApiKey, setCustomApiKey] = useState("");
+  const [customModel, setCustomModel] = useState("llama-3.3-70b-versatile");
+  const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [instructions, setInstructions] = useState("");
   const [depth, setDepth] = useState("balanced");
   const [memory, setMemory] = useState(true);
@@ -271,6 +268,15 @@ export function LaunchExperience() {
     setGoal(c.defaults.goal);
     next();
   }
+
+  function pickByokProvider(id: string) {
+    setByokProvider(id);
+    const p = BYOK_PROVIDERS.find((x) => x.id === id);
+    if (p?.models[0]) setCustomModel(p.models[0]);
+    if (p && p.baseUrl) setCustomBaseUrl("");
+  }
+
+  const selectedByok = BYOK_PROVIDERS.find((p) => p.id === byokProvider) ?? BYOK_PROVIDERS[0];
 
   function addSource() {
     if (!activeSource) return;
@@ -323,6 +329,9 @@ export function LaunchExperience() {
       case 1:
         return name.trim().length > 1 && tagline.trim().length > 3;
       case 2:
+        if (llmMode === "custom") {
+          return customApiKey.trim().length >= 8 && customModel.trim().length >= 2;
+        }
         return model !== "";
       case 3:
         return true;
@@ -336,7 +345,7 @@ export function LaunchExperience() {
       default:
         return true;
     }
-  }, [step, category, name, tagline, model, capabilities, pricingModel, payoutAddress]);
+  }, [step, category, name, tagline, model, llmMode, customApiKey, customModel, capabilities, pricingModel, payoutAddress]);
 
   async function launch() {
     if (!category) return;
@@ -367,6 +376,18 @@ export function LaunchExperience() {
           payoutAddress: payoutAddress || undefined,
           ownerAddress: walletAddress || payoutAddress || undefined,
           sources,
+          llm:
+            llmMode === "custom"
+              ? {
+                  mode: "custom",
+                  apiKey: customApiKey.trim(),
+                  model: customModel.trim(),
+                  baseUrl:
+                    byokProvider === "custom"
+                      ? customBaseUrl.trim() || undefined
+                      : selectedByok.baseUrl || undefined,
+                }
+              : { mode: "platform", model },
         }),
       });
       const data = await res.json();
@@ -599,34 +620,175 @@ export function LaunchExperience() {
 
         {step === 2 && (
           <div>
-            <StepTitle title="How should your business think?" sub="Pick its mind. Change it anytime." />
+            <StepTitle
+              title="How should your business think?"
+              sub="Use BOWYER's hosted models or bring your own API key."
+            />
 
-            <div className="mt-8 grid gap-3 sm:grid-cols-3">
-              {MODELS.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => setModel(m.id)}
-                  className={cn(
-                    "rounded-2xl border p-4 text-left transition-colors",
-                    model === m.id
-                      ? "border-accent/70 bg-accent/[0.05]"
-                      : "border-border bg-surface hover:border-white/25"
-                  )}
-                >
-                  <span className="flex items-center gap-2">
-                    <Brain
-                      className={cn("size-4", model === m.id ? "text-accent" : "text-muted")}
-                      strokeWidth={1.75}
-                    />
-                    <span className="text-[14px] font-semibold text-foreground">{m.name}</span>
-                  </span>
-                  <span className="mt-1.5 block text-[12px] leading-relaxed text-muted">
-                    {m.blurb}
-                  </span>
-                </button>
-              ))}
+            <div className="mt-8 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setLlmMode("platform")}
+                className={cn(
+                  "rounded-full border px-4 py-2 text-[13px] transition-colors",
+                  llmMode === "platform"
+                    ? "border-accent/70 bg-accent/[0.08] text-foreground"
+                    : "border-border text-muted hover:border-white/25"
+                )}
+              >
+                BOWYER models
+              </button>
+              <button
+                type="button"
+                onClick={() => setLlmMode("custom")}
+                className={cn(
+                  "rounded-full border px-4 py-2 text-[13px] transition-colors",
+                  llmMode === "custom"
+                    ? "border-accent/70 bg-accent/[0.08] text-foreground"
+                    : "border-border text-muted hover:border-white/25"
+                )}
+              >
+                Your API key
+              </button>
             </div>
+
+            {llmMode === "platform" ? (
+              <>
+                <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                  {PLATFORM_MODELS.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setModel(m.id)}
+                      className={cn(
+                        "rounded-2xl border p-4 text-left transition-colors",
+                        model === m.id
+                          ? "border-accent/70 bg-accent/[0.05]"
+                          : "border-border bg-surface hover:border-white/25"
+                      )}
+                    >
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-2">
+                          <Brain
+                            className={cn(
+                              "size-4",
+                              model === m.id ? "text-accent" : "text-muted"
+                            )}
+                            strokeWidth={1.75}
+                          />
+                          <span className="text-[14px] font-semibold text-foreground">
+                            {m.name}
+                          </span>
+                        </span>
+                        <span className="text-[10px] uppercase tracking-wide text-subtle">
+                          {m.badge}
+                        </span>
+                      </span>
+                      <span className="mt-1.5 block text-[12px] leading-relaxed text-muted">
+                        {m.blurb}
+                      </span>
+                      <span className="mt-2 block font-mono text-[10.5px] text-subtle">
+                        {m.model}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-4 text-[12px] text-subtle">
+                  Powered by BOWYER&apos;s LLM — no key required. Usage limits apply on the free
+                  tier.
+                </p>
+              </>
+            ) : (
+              <div className="mt-6 space-y-5 rounded-2xl border border-border bg-surface p-5">
+                <div>
+                  <FieldLabel>Provider</FieldLabel>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {BYOK_PROVIDERS.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => pickByokProvider(p.id)}
+                        className={cn(
+                          "rounded-full border px-3 py-1.5 text-[12px] transition-colors",
+                          byokProvider === p.id
+                            ? "border-accent/70 bg-accent/[0.08] text-foreground"
+                            : "border-border text-muted hover:border-white/25"
+                        )}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <FieldLabel>API key</FieldLabel>
+                  <input
+                    type="password"
+                    value={customApiKey}
+                    onChange={(e) => setCustomApiKey(e.target.value)}
+                    placeholder={selectedByok.keyHint}
+                    autoComplete="off"
+                    className="mt-2 h-11 w-full rounded-sm border border-border bg-background px-4 font-mono text-[13px] text-foreground outline-none transition-colors placeholder:text-subtle focus:border-accent/60"
+                  />
+                  <p className="mt-2 text-[11.5px] text-subtle">
+                    Stored server-side for this business only. Never shown publicly or returned
+                    in API responses.
+                  </p>
+                </div>
+
+                {selectedByok.models.length > 0 ? (
+                  <div>
+                    <FieldLabel>Model</FieldLabel>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {selectedByok.models.map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setCustomModel(m)}
+                          className={cn(
+                            "rounded-full border px-3 py-1.5 font-mono text-[11.5px] transition-colors",
+                            customModel === m
+                              ? "border-accent/70 bg-accent/[0.08] text-foreground"
+                              : "border-border text-muted hover:border-white/25"
+                          )}
+                        >
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <FieldLabel>Model</FieldLabel>
+                    <input
+                      value={customModel}
+                      onChange={(e) => setCustomModel(e.target.value)}
+                      placeholder="gpt-4o-mini"
+                      className="mt-2 h-11 w-full rounded-sm border border-border bg-background px-4 font-mono text-[13px] text-foreground outline-none transition-colors placeholder:text-subtle focus:border-accent/60"
+                    />
+                  </div>
+                )}
+
+                {byokProvider === "custom" && (
+                  <div>
+                    <FieldLabel>Base URL</FieldLabel>
+                    <input
+                      type="url"
+                      value={customBaseUrl}
+                      onChange={(e) => setCustomBaseUrl(e.target.value)}
+                      placeholder="https://api.openai.com/v1"
+                      className="mt-2 h-11 w-full rounded-sm border border-border bg-background px-4 font-mono text-[13px] text-foreground outline-none transition-colors placeholder:text-subtle focus:border-accent/60"
+                    />
+                  </div>
+                )}
+
+                <p className="text-[12px] text-subtle">
+                  We verify your key when you launch. You pay your provider directly — BOWYER
+                  never bills you for inference.
+                </p>
+              </div>
+            )}
 
             <div className="mt-8 grid gap-8 lg:grid-cols-2">
               <div>
@@ -1032,9 +1194,20 @@ export function LaunchExperience() {
                   <ReviewRow label="Direction" value={category.title} />
                   <ReviewRow
                     label="Brain"
-                    value={`${MODELS.find((m) => m.id === model)?.name ?? model} · ${
-                      DEPTHS.find((d) => d.id === depth)?.label
-                    } · ${memory ? "Memory on" : "Memory off"}`}
+                    value={`${llmConfigSummary(
+                      llmMode === "custom"
+                        ? {
+                            mode: "custom",
+                            model: customModel,
+                            baseUrl:
+                              byokProvider === "custom"
+                                ? customBaseUrl
+                                : selectedByok.baseUrl,
+                          }
+                        : { mode: "platform", model }
+                    )} · ${DEPTHS.find((d) => d.id === depth)?.label} · ${
+                      memory ? "Memory on" : "Memory off"
+                    }`}
                   />
                   <ReviewRow
                     label="Knowledge"

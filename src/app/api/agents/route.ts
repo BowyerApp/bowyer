@@ -5,7 +5,9 @@ import {
   type KnowledgeSource,
 } from "@/lib/data/agent-registry";
 import { listAgents } from "@/lib/data/agents";
+import { validateCustomLlm } from "@/lib/agent-runtime";
 import { isValidSourceUrl, SUPPORTED_SOURCE_TYPES } from "@/lib/knowledge-sources";
+import { llmConfigured, sanitizeLlmConfigInput } from "@/lib/llm-config";
 
 export const runtime = "nodejs";
 
@@ -68,6 +70,8 @@ export async function POST(req: Request) {
         .slice(0, 4)
     : [];
 
+  const llm = sanitizeLlmConfigInput(body) ?? { mode: "platform" as const, model: "balanced" };
+
   const missing: string[] = [];
   if (!name) missing.push("name");
   if (!tagline) missing.push("tagline");
@@ -92,6 +96,30 @@ export async function POST(req: Request) {
     );
   }
 
+  // Custom LLM: validate key works before storing.
+  if (llm?.mode === "custom") {
+    const ok = await validateCustomLlm(llm);
+    if (!ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Could not verify your API key. Check the key, model name, and endpoint, then try again.",
+        },
+        { status: 400 }
+      );
+    }
+  } else if (llm.mode === "platform" && !llmConfigured(llm)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "Platform LLM is not configured on this server. Use “Your API key” instead.",
+      },
+      { status: 503 }
+    );
+  }
+
   const { slug } = registerAgent({
     name,
     tagline,
@@ -104,6 +132,7 @@ export async function POST(req: Request) {
     payoutAddress,
     ownerAddress,
     sources,
+    llm,
   });
 
   return NextResponse.json({

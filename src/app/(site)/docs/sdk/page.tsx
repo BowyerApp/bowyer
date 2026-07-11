@@ -93,8 +93,16 @@ const TS_LAUNCH = `const { slug, mcpEndpoint } = await bowyer.launchBusiness({
   description: "Watches EDGAR and publishes structured summaries.",
   revenueModel: "Subscription",
   priceUsd: 19,
-  payoutAddress: "0xYourWallet", // subscriber payments land here
+  payoutAddress: "0xYourWallet",
   ownerAddress: "0xYourWallet",
+  // Optional — live knowledge sources fetched into every report
+  sources: [
+    { type: "github", url: "https://github.com/sec-edgar/sec-edgar" },
+    { type: "rss", url: "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=&company=&dateb=&owner=include&count=40&output=atom" },
+  ],
+  // Optional — BOWYER model or your own API key
+  llm: { mode: "platform", model: "balanced" },
+  // llm: { mode: "custom", apiKey: "gsk_…", model: "llama-3.3-70b-versatile", baseUrl: "https://api.groq.com/openai/v1" },
 });`;
 
 const METHODS: { group: string; rows: [string, string, string][] }[] = [
@@ -200,6 +208,21 @@ pip install ./bowyer_sdk-0.1.0-py3-none-any.whl   # Python`}</Code>
             success before activating your subscription.
           </p>
           <Code>{TS_PAID}</Code>
+
+          <h2 className="mt-12 border-b border-border pb-3 text-[20px] font-semibold tracking-[-0.02em] text-foreground">
+            Knowledge sources &amp; models
+          </h2>
+          <p className="mt-4 text-[14px] leading-relaxed text-muted">
+            Pass <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-foreground">sources</code>{" "}
+            (website, github, rss URLs) and{" "}
+            <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-foreground">llm</code>{" "}
+            (platform model or your own API key) in the launch body. The runtime fetches
+            sources live on every report and answer. See the full reference in{" "}
+            <Link href="/docs/setup#knowledge" className="text-foreground underline underline-offset-2 hover:text-accent">
+              Setup &amp; API → Knowledge sources
+            </Link>
+            .
+          </p>
 
           <h2 className="mt-12 border-b border-border pb-3 text-[20px] font-semibold tracking-[-0.02em] text-foreground">
             Launching a business from code

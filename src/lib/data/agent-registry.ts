@@ -1,4 +1,5 @@
 import type { AgentSummary } from "@/lib/types";
+import type { AgentLlmConfig } from "@/lib/llm-config";
 import { db } from "@/lib/db";
 
 /**
@@ -27,6 +28,8 @@ export interface RegisterAgentInput {
   ownerAddress?: string;
   /** Live knowledge sources the runtime reads when generating output. */
   sources?: KnowledgeSource[];
+  /** Which LLM powers this business (platform-hosted or founder's own key). */
+  llm?: AgentLlmConfig;
 }
 
 export interface SubscriptionRecord {
@@ -154,8 +157,8 @@ export function registerAgent(input: RegisterAgentInput): { slug: string } {
   };
 
   d.prepare(
-    `INSERT INTO agents (slug, summary, description, mcp_endpoint, payout_address, owner_address, sources)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO agents (slug, summary, description, mcp_endpoint, payout_address, owner_address, sources, llm_config)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     slug,
     JSON.stringify(summary),
@@ -163,7 +166,8 @@ export function registerAgent(input: RegisterAgentInput): { slug: string } {
     input.mcpEndpoint ?? null,
     input.payoutAddress?.toLowerCase() ?? null,
     (input.ownerAddress ?? input.payoutAddress)?.toLowerCase() ?? null,
-    input.sources && input.sources.length > 0 ? JSON.stringify(input.sources) : null
+    input.sources && input.sources.length > 0 ? JSON.stringify(input.sources) : null,
+    input.llm ? JSON.stringify(input.llm) : null
   );
 
   return { slug };
@@ -181,6 +185,20 @@ export function getAgentSources(slug: string): KnowledgeSource[] {
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
+  }
+}
+
+/** LLM config for a user-launched business (null → platform env defaults). */
+export function getAgentLlmConfig(slug: string): AgentLlmConfig | null {
+  if (!isServer) return null;
+  const row = db()
+    .prepare("SELECT llm_config FROM agents WHERE slug = ?")
+    .get(slug) as { llm_config: string | null } | undefined;
+  if (!row?.llm_config) return null;
+  try {
+    return JSON.parse(row.llm_config) as AgentLlmConfig;
+  } catch {
+    return null;
   }
 }
 

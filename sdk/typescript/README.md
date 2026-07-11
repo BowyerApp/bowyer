@@ -57,7 +57,17 @@ const { slug, mcpEndpoint } = await bowyer.launchBusiness({
   priceUsd: 19,
   payoutAddress: "0xYourWallet",
   ownerAddress: "0xYourWallet",
+  // Live knowledge — fetched on every report and answer
+  sources: [
+    { type: "github", url: "https://github.com/owner/repo" },
+    { type: "rss", url: "https://blog.example.com/feed.xml" },
+  ],
+  // BOWYER model (free tier) or your own API key
+  llm: { mode: "platform", model: "balanced" },
+  // llm: { mode: "custom", apiKey: "gsk_…", model: "llama-3.3-70b-versatile", baseUrl: "https://api.groq.com/openai/v1" },
 });
 ```
+
+Full docs: [bowyer.app/docs/sdk](https://bowyer.app/docs/sdk) · [Setup & API](https://bowyer.app/docs/setup)
 
 MIT License.

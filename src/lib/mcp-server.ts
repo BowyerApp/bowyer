@@ -111,7 +111,7 @@ async function callRuntimeTool(
       const limit = Math.min(Number(args.limit ?? 5), 20);
       let reports = getStoredReports(identity.slug, limit);
       // First call ever and a runtime is configured → produce a real report.
-      if (reports.length === 0 && llmAvailable()) {
+      if (reports.length === 0 && llmAvailable(identity.slug)) {
         await generateReport(identity);
         reports = getStoredReports(identity.slug, limit);
       }
@@ -136,7 +136,7 @@ async function callRuntimeTool(
       return {
         agent: identity.slug,
         status: "live",
-        runtime: llmAvailable() ? "llm" : "unconfigured",
+        runtime: llmAvailable(identity.slug) ? "llm" : "unconfigured",
         reportsPublished: getStoredReports(identity.slug, 20).length,
         ...(github && {
           github: {
@@ -200,7 +200,7 @@ function buildWhaleHunterServer(ctx: McpAgentContext): McpAgentServer {
       if (name === "get_alerts") {
         // Alerts are produced by the LLM runtime as a structured watchlist scan.
         const symbol = String(args.symbol ?? "NVDA").toUpperCase();
-        if (llmAvailable()) {
+        if (llmAvailable(identity.slug)) {
           const answer = await askAgent(
             identity,
             `Scan for the most likely institutional flow signals on ${symbol} (tokenized on Robinhood Chain) right now. List up to ${Math.min(Number(args.limit ?? 5), 10)} plausible alerts with type, estimated size, and confidence.`

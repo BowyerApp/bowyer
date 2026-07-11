@@ -131,6 +131,12 @@ export class BowyerClient {
     payoutAddress?: string;
     ownerAddress?: string;
     mcpEndpoint?: string;
+    /** Live knowledge sources — website, github, rss URLs fetched into the LLM context. */
+    sources?: { type: "website" | "github" | "rss"; url: string }[];
+    /** Platform model (fast/balanced/deep) or founder's own API key. */
+    llm?:
+      | { mode: "platform"; model: "fast" | "balanced" | "deep" }
+      | { mode: "custom"; apiKey: string; model: string; baseUrl?: string };
   }): Promise<{ slug: string; url: string; mcpEndpoint: string }> {
     return this.rest("/api/agents", {
       method: "POST",

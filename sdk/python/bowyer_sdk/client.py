@@ -85,24 +85,27 @@ class BowyerClient:
         payout_address: Optional[str] = None,
         owner_address: Optional[str] = None,
         mcp_endpoint: Optional[str] = None,
+        sources: Optional[list[dict]] = None,
+        llm: Optional[dict] = None,
     ) -> dict:
         """Launch a business. Paid businesses require payout_address."""
-        return self._request(
-            "/api/agents",
-            method="POST",
-            body={
-                "name": name,
-                "tagline": tagline,
-                "category": category,
-                "description": description,
-                "revenueModel": revenue_model,
-                "priceUsd": price_usd,
-                "creatorSharePct": 90,
-                "payoutAddress": payout_address,
-                "ownerAddress": owner_address,
-                "mcpEndpoint": mcp_endpoint,
-            },
-        )
+        body: dict = {
+            "name": name,
+            "tagline": tagline,
+            "category": category,
+            "description": description,
+            "revenueModel": revenue_model,
+            "priceUsd": price_usd,
+            "creatorSharePct": 90,
+            "payoutAddress": payout_address,
+            "ownerAddress": owner_address,
+            "mcpEndpoint": mcp_endpoint,
+        }
+        if sources:
+            body["sources"] = sources
+        if llm:
+            body["llm"] = llm
+        return self._request("/api/agents", method="POST", body=body)
 
     def list_subscriptions(self, subscriber: Optional[str] = None) -> list[dict]:
         """Subscriptions bought by a wallet (defaults to the client wallet)."""

@@ -11,12 +11,13 @@ Copy `.env.example` to `.env` and fill in:
 
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `LLM_API_KEY` | Yes, for real agent output | Any OpenAI-compatible provider. **Free options:** Groq (fastest), OpenRouter, Google AI Studio, Cerebras — see `.env.example` for base URLs. Without it, `generate_report`/`ask` return "runtime unconfigured". |
-| `LLM_BASE_URL`, `LLM_MODEL` | No | Default: OpenAI, `gpt-4o-mini`. Point at `http://localhost:11434/v1` for a fully local, keyless Ollama setup. |
-| `NEXT_PUBLIC_BOWYER_NETWORK` | Yes | `testnet` (default) or `mainnet`. Set `mainnet` for real payments on chain 4663. |
+| `LLM_API_KEY` | Yes, for platform-hosted models | Powers **BOWYER models** in the Launch wizard and catalog agents. Any OpenAI-compatible provider — **free options:** Groq (recommended), OpenRouter, Google AI Studio, Cerebras. Founders can also use **their own key** at launch (stored per-business in SQLite). |
+| `LLM_BASE_URL`, `LLM_MODEL` | No | Default: OpenAI, `gpt-4o-mini`. Production uses Groq: `https://api.groq.com/openai/v1` + `llama-3.3-70b-versatile`. Point at `http://localhost:11434/v1` for keyless Ollama. |
+| `NEXT_PUBLIC_BOWYER_NETWORK` | Yes | `testnet` (46630) or `mainnet` (4663). **bowyer.app runs mainnet.** Rebuild after changing. |
 | `CHAIN_RPC_URL` | Recommended | Dedicated RPC for payment verification; defaults to the public Robinhood Chain RPC. |
-| `GITHUB_TOKEN` | No | Higher rate limits for live repo stats. |
-| `BOWYER_DB_PATH` | No | Defaults to `./data/bowyer.db` (Docker: `/data/bowyer.db`). |
+| `PLATFORM_PAYOUT_ADDRESS` | Yes for paid Whale Hunter | Wallet that receives Whale Hunter subscription payments. If unset, paid subscriptions fail safely. |
+| `GITHUB_TOKEN` | No | Higher rate limits for live repo stats and GitHub knowledge sources. |
+| `BOWYER_DB_PATH` | No | Defaults to `./data/bowyer.db` (Docker: `/data/bowyer.db`). Stores agents, subscriptions, reports, **knowledge sources**, and **per-business LLM config** (including BYOK keys). |
 
 `NEXT_PUBLIC_BOWYER_NETWORK` is baked in at **build time** — rebuild after
 changing it.
@@ -59,14 +60,17 @@ pm2 start .next/standalone/server.js --name bowyer
 
 ## 4. Go-live checklist
 
-- [ ] `.env` has a real `LLM_API_KEY` (agents produce real reports)
-- [ ] `NEXT_PUBLIC_BOWYER_NETWORK=mainnet` and rebuilt (real payments)
+- [ ] `.env` has a real `LLM_API_KEY` (BOWYER models + catalog agents produce real output)
+- [ ] `NEXT_PUBLIC_BOWYER_NETWORK=mainnet` and rebuilt (real payments on chain 4663)
+- [ ] `PLATFORM_PAYOUT_ADDRESS` set to a wallet you control (Whale Hunter payouts)
 - [ ] `CHAIN_RPC_URL` points at a reliable mainnet RPC
 - [ ] TLS terminates at bowyer.app and proxies to :3005
 - [ ] Database volume is on persistent storage and backed up
       (`sqlite3 /data/bowyer.db ".backup /backups/bowyer-$(date +%F).db"`)
-- [ ] Smoke test: `/`, `/marketplace`, `/docs/sdk`, `/downloads/bowyer-sdk-0.1.0.tgz`,
-      and a `tools/list` call against `/api/mcp/whale-hunter`
+- [ ] Smoke test: `/`, `/marketplace`, `/launch`, `/docs/setup`, `/docs/sdk`,
+      `/downloads/bowyer-sdk-0.1.0.tgz`, and a `tools/call` against `/api/mcp/whale-hunter`
+- [ ] Launch wizard: connect a GitHub source, pick a BOWYER model, launch a test business,
+      call `ask` on its MCP endpoint and confirm the source is cited
 
 ## SDK artifacts
 

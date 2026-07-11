@@ -77,6 +77,9 @@ function migrate(d: DatabaseT.Database) {
   if (!cols.some((c) => c.name === "sources")) {
     d.exec("ALTER TABLE agents ADD COLUMN sources TEXT");
   }
+  if (!cols.some((c) => c.name === "llm_config")) {
+    d.exec("ALTER TABLE agents ADD COLUMN llm_config TEXT");
+  }
 }
 
 /** True when running where the database is available. */

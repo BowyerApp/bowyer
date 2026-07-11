@@ -1,40 +1,25 @@
 import { db } from "@/lib/db";
+import { getAgentLlmConfig } from "@/lib/data/agent-registry";
 import { buildSourceContext } from "@/lib/knowledge-sources";
+import {
+  isLocalBaseUrl,
+  llmConfigured,
+  platformModelIdToModel,
+  resolveRuntimeLlm,
+  type AgentLlmConfig,
+} from "@/lib/llm-config";
 
 /**
  * Real agent runtime. Each agent's MCP tools call an OpenAI-compatible LLM
  * and persist generated reports to the database.
  *
- * Works with any /chat/completions provider:
- *   OpenAI      — https://api.openai.com/v1              (paid)
- *   Groq        — https://api.groq.com/openai/v1          (free tier, fastest)
- *   OpenRouter  — https://openrouter.ai/api/v1            (free models available)
- *   Google      — https://generativelanguage.googleapis.com/v1beta/openai (free tier)
- *   Cerebras    — https://api.cerebras.ai/v1              (free tier, ~1M tok/day)
- *   Ollama      — http://localhost:11434/v1               (local, free, no key needed)
- *
- * Configuration:
- *   LLM_API_KEY  (or OPENAI_API_KEY) — required for hosted providers;
- *                optional for local servers like Ollama/vLLM/llama.cpp
- *   LLM_BASE_URL — default https://api.openai.com/v1
- *   LLM_MODEL    — default gpt-4o-mini
+ * Per-business LLM config (platform model or founder's API key) is read from
+ * the agents table. Catalog agents fall back to server env vars.
  */
 
-const DEFAULT_BASE_URL = "https://api.openai.com/v1";
-const BASE_URL = process.env.LLM_BASE_URL ?? DEFAULT_BASE_URL;
-const MODEL = process.env.LLM_MODEL ?? "gpt-4o-mini";
-
-function apiKey(): string | undefined {
-  return process.env.LLM_API_KEY ?? process.env.OPENAI_API_KEY;
-}
-
-/** Local OpenAI-compatible servers (Ollama, vLLM, llama.cpp) accept any key. */
-function isLocalBaseUrl(): boolean {
-  return /localhost|127\.0\.0\.1|0\.0\.0\.0|host\.docker\.internal/.test(BASE_URL);
-}
-
-export function llmAvailable(): boolean {
-  return Boolean(apiKey()) || isLocalBaseUrl();
+export function llmAvailable(slug?: string): boolean {
+  const config = slug ? getAgentLlmConfig(slug) : null;
+  return llmConfigured(config);
 }
 
 export interface AgentIdentity {
@@ -83,29 +68,47 @@ export function getStoredReports(slug: string, limit = 5): AgentReport[] {
   return rows.map(rowToReport);
 }
 
-async function chatCompletion(system: string, user: string): Promise<string> {
-  const key = apiKey();
-  if (!key && !isLocalBaseUrl()) {
+function depthParams(description?: string): { temperature: number; maxTokens: number } {
+  if (/Reasoning depth: deep/i.test(description ?? "")) {
+    return { temperature: 0.4, maxTokens: 1400 };
+  }
+  if (/Reasoning depth: fast/i.test(description ?? "")) {
+    return { temperature: 0.85, maxTokens: 600 };
+  }
+  return { temperature: 0.7, maxTokens: 900 };
+}
+
+async function chatCompletion(
+  slug: string,
+  system: string,
+  user: string,
+  description?: string
+): Promise<{ content: string; model: string }> {
+  const config = getAgentLlmConfig(slug);
+  const { model, apiKey, baseUrl } = resolveRuntimeLlm(config);
+
+  if (!apiKey && !isLocalBaseUrl(baseUrl)) {
     throw new Error(
-      "No LLM configured. Set LLM_API_KEY (free options: Groq, OpenRouter, Google AI Studio, Cerebras) or point LLM_BASE_URL at a local Ollama/vLLM server."
+      "No LLM configured for this business. Launch with your own API key, or contact the platform operator."
     );
   }
 
-  const res = await fetch(`${BASE_URL}/chat/completions`, {
+  const { temperature, maxTokens } = depthParams(description);
+
+  const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      // Local servers like Ollama ignore the key but expect the header shape.
-      Authorization: `Bearer ${key ?? "ollama"}`,
+      Authorization: `Bearer ${apiKey ?? "ollama"}`,
     },
     body: JSON.stringify({
-      model: MODEL,
+      model: config?.mode === "platform" ? platformModelIdToModel(config.model) : model,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
       ],
-      temperature: 0.7,
-      max_tokens: 900,
+      temperature,
+      max_tokens: maxTokens,
       response_format: { type: "json_object" },
     }),
     signal: AbortSignal.timeout(45_000),
@@ -120,7 +123,10 @@ async function chatCompletion(system: string, user: string): Promise<string> {
   };
   const content = json.choices?.[0]?.message?.content;
   if (!content) throw new Error("LLM returned an empty response");
-  return content;
+
+  const usedModel =
+    config?.mode === "platform" ? platformModelIdToModel(config.model) : model;
+  return { content, model: usedModel };
 }
 
 /**
@@ -149,7 +155,12 @@ export async function generateReport(
     ? `Subscriber request: produce your next report focused on: ${topic}`
     : "Produce your next scheduled report on the most relevant development in your domain right now.";
 
-  const raw = await chatCompletion(system, user);
+  const { content: raw, model: usedModel } = await chatCompletion(
+    agent.slug,
+    system,
+    user,
+    agent.description
+  );
 
   let parsed: { title?: string; body?: string; confidence?: number };
   try {
@@ -167,7 +178,7 @@ export async function generateReport(
       `INSERT INTO reports (slug, title, body, confidence, model, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(agent.slug, title, body, confidence, MODEL, new Date().toISOString());
+    .run(agent.slug, title, body, confidence, usedModel, new Date().toISOString());
 
   return {
     id: Number(result.lastInsertRowid),
@@ -175,7 +186,7 @@ export async function generateReport(
     title,
     body,
     confidence,
-    model: MODEL,
+    model: usedModel,
     createdAt: new Date().toISOString(),
   };
 }
@@ -194,11 +205,41 @@ export async function askAgent(agent: AgentIdentity, question: string): Promise<
     .filter(Boolean)
     .join("\n");
 
-  const raw = await chatCompletion(system, question);
+  const { content: raw } = await chatCompletion(
+    agent.slug,
+    system,
+    question,
+    agent.description
+  );
   try {
     const parsed = JSON.parse(raw) as { answer?: string };
     return parsed.answer ?? raw;
   } catch {
     return raw;
+  }
+}
+
+/** Validate a custom API key with a minimal completion (launch-time check). */
+export async function validateCustomLlm(config: AgentLlmConfig): Promise<boolean> {
+  if (config.mode !== "custom" || !config.apiKey) return false;
+  const { model, apiKey, baseUrl } = resolveRuntimeLlm(config);
+  try {
+    const res = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "Reply with JSON: {\"ok\":true}" }],
+        max_tokens: 16,
+        response_format: { type: "json_object" },
+      }),
+      signal: AbortSignal.timeout(12_000),
+    });
+    return res.ok;
+  } catch {
+    return false;
   }
 }
