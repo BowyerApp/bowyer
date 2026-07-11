@@ -28,7 +28,11 @@ interface RpcReceipt {
 async function rpc<T>(method: string, params: unknown[]): Promise<T | null> {
   const res = await fetch(rpcUrl(), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    // The public Robinhood Chain RPC returns 403 without a User-Agent.
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "Mozilla/5.0 bowyer-runtime",
+    },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
     // Payment verification must not hang the request forever.
     signal: AbortSignal.timeout(10_000),

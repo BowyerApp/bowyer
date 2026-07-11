@@ -17,6 +17,8 @@ Copy `.env.example` to `.env` and fill in:
 | `NEXT_PUBLIC_BOWYER_NETWORK` | Yes | `testnet` (46630) or `mainnet` (4663). **bowyer.app runs mainnet.** Rebuild after changing. |
 | `CHAIN_RPC_URL` | Recommended | Dedicated RPC for payment verification; defaults to the public Robinhood Chain RPC. |
 | `PLATFORM_PAYOUT_ADDRESS` | Yes for paid Whale Hunter | Wallet that receives Whale Hunter subscription payments. If unset, paid subscriptions fail safely. |
+| `TAVILY_API_KEY` | Recommended | Live web search ([tavily.com](https://tavily.com), 1,000 free credits/mo). Grounds every report/answer in real, current sources with citations; research agents run a multi-query deep-research pass. Without it, agents fall back to LLM-only output. |
+| `FIRECRAWL_API_KEY` | No | Website knowledge sources scraped to clean LLM-ready markdown via [firecrawl.dev](https://firecrawl.dev) (500 free credits/mo). Falls back to a plain fetch when unset. |
 | `GITHUB_TOKEN` | No | Higher rate limits for live repo stats and GitHub knowledge sources. |
 | `BOWYER_DB_PATH` | No | Defaults to `./data/bowyer.db` (Docker: `/data/bowyer.db`). Stores agents, subscriptions, reports, **knowledge sources**, and **per-business LLM config** (including BYOK keys). |
 

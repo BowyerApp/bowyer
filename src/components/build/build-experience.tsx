@@ -7,9 +7,14 @@ import {
   ArrowDown,
   ArrowRight,
   ArrowUpRight,
-  GitFork,
-  Star,
-  Users,
+  BookOpen,
+  Bot,
+  Coins,
+  Download,
+  Globe,
+  Package,
+  Palette,
+  Terminal,
 } from "lucide-react";
 import { Container } from "@/components/layout/container";
 import { CopyButton } from "@/components/ui/copy-button";
@@ -219,55 +224,77 @@ reports = agent.latest_reports(5)`,
   },
 };
 
-/** Real open-source projects whose patterns power BOWYER — see src/lib/github-sources.ts */
-const REPOS = [
+/** Everything a builder gets — real, downloadable or live today. */
+const DELIVERABLES: {
+  icon: React.ElementType;
+  name: string;
+  what: string;
+  cta: { label: string; href: string; download?: boolean };
+}[] = [
   {
-    name: "modelcontextprotocol/typescript-sdk",
-    description:
-      "Powers our live MCP endpoints at /api/mcp/[slug] — JSON-RPC tools/list and tools/call.",
-    stars: "12.1K",
-    forks: "1.4K",
-    contributors: 220,
+    icon: Package,
+    name: "TypeScript SDK",
+    what: "Browse businesses, subscribe, call tools, and launch — from Node or the browser.",
+    cta: { label: "Download .tgz", href: "/downloads/bowyer-sdk-0.1.0.tgz", download: true },
   },
   {
-    name: "smithery-ai/cli",
-    description:
-      "The publish flow behind agent listing — smithery mcp publish, auth, and URL validation.",
-    stars: "1.8K",
-    forks: 142,
-    contributors: 36,
+    icon: Package,
+    name: "Python SDK",
+    what: "The same client for Python — zero dependencies, works in scripts and notebooks.",
+    cta: {
+      label: "Download .whl",
+      href: "/downloads/bowyer_sdk-0.1.0-py3-none-any.whl",
+      download: true,
+    },
   },
   {
-    name: "dukelyuu/skills-marketplace",
-    description:
-      "Marketplace catalog patterns — command palette search, rankings, and related items.",
-    stars: "940",
-    forks: 87,
-    contributors: 12,
+    icon: Terminal,
+    name: "REST + MCP API",
+    what: "Every business is a live MCP server. JSON-RPC tools/call from any language, no SDK required.",
+    cta: { label: "API reference", href: "/docs/setup" },
   },
   {
-    name: "pacocoursey/cmdk",
-    description: "The ⌘K command palette UX used across every page of BOWYER.",
-    stars: "11.6K",
-    forks: 320,
-    contributors: 64,
+    icon: Bot,
+    name: "Hosted models or your key",
+    what: "Launch on BOWYER-hosted models (Fast / Balanced / Deep) or bring your own API key. Automatic failover included.",
+    cta: { label: "How models work", href: "/docs/setup#brain" },
   },
   {
-    name: "loonghao/agentverse",
-    description:
-      "Artifact kinds, semantic versioning, and the namespace registry format for listings.",
-    stars: "620",
-    forks: 54,
-    contributors: 9,
+    icon: Globe,
+    name: "Live intelligence built in",
+    what: "Web search grounding, website / GitHub / RSS knowledge sources, and a real Robinhood Chain scanner — every report cites real sources.",
+    cta: { label: "Knowledge sources", href: "/docs/setup#knowledge" },
   },
   {
-    name: "geelen/mcp-remote",
-    description:
-      "Stdio bridge for remote HTTP MCP servers — used in agent connect snippets.",
-    stars: "2.3K",
-    forks: 178,
-    contributors: 21,
+    icon: Coins,
+    name: "On-chain payments",
+    what: "Subscriptions settle in ETH on Robinhood Chain, verified on-chain, straight to your payout wallet. No middleman.",
+    cta: { label: "Chain & payments", href: "/docs/setup#chain" },
   },
+  {
+    icon: Palette,
+    name: "Brand kit",
+    what: "Logos, wordmark, and the full robot artwork set — transparent PNGs, ready for your launch posts.",
+    cta: { label: "Download kit (.zip)", href: "/downloads/bowyer-brand-kit.zip", download: true },
+  },
+  {
+    icon: BookOpen,
+    name: "Docs & open source",
+    what: "Full setup guides, SDK reference, and the entire platform public on GitHub.",
+    cta: { label: "Read the docs", href: "/docs/setup" },
+  },
+];
+
+/** Robot artwork shown in the brand section. */
+const BRAND_ROBOTS = [
+  { src: "/images/robots/robot-trading.png", label: "Trading" },
+  { src: "/images/robots/robot-research.png", label: "Research" },
+  { src: "/images/robots/robot-developer.png", label: "Developer" },
+  { src: "/images/robots/robot-automation.png", label: "Automation" },
+  { src: "/images/robots/robot-security.png", label: "Security" },
+  { src: "/images/robots/robot-news.png", label: "News" },
+  { src: "/images/robots/robot-macro.png", label: "Macro" },
+  { src: "/images/robots/robot-defi.png", label: "Yield" },
 ];
 
 /* ================= syntax tokens ================= */
@@ -554,37 +581,79 @@ export function BuildExperience() {
         </div>
       </Container>
 
-      {/* ---------- 6 · open source ---------- */}
+      {/* ---------- 6 · what you get ---------- */}
       <Container className="mt-28 lg:mt-36">
-        <h2 className="section-heading">Open source</h2>
+        <h2 className="section-heading">Everything you get</h2>
         <p className="mt-1.5 text-[13px] text-muted">
-          The platform is built in public. Clone anything.
+          Not promises — assets you can download and APIs that are live right now.
         </p>
 
-        <div className="mt-10 grid gap-px overflow-hidden rounded-sm border border-border bg-border sm:grid-cols-2">
-          {REPOS.map((repo) => (
-            <div key={repo.name} className="flex flex-col bg-background p-7">
-              <p className="break-all font-mono text-[14px] text-foreground">{repo.name}</p>
-              <p className="mt-2 flex-1 text-[13px] leading-relaxed text-muted">
-                {repo.description}
-              </p>
-              <div className="mt-5 flex items-center justify-between">
-                <div className="flex items-center gap-5 text-[12px] text-subtle">
-                  <span className="flex items-center gap-1.5">
-                    <Star className="size-3.5" strokeWidth={1.5} />
-                    {repo.stars}
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <GitFork className="size-3.5" strokeWidth={1.5} />
-                    {repo.forks}
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <Users className="size-3.5" strokeWidth={1.5} />
-                    {repo.contributors}
-                  </span>
-                </div>
-                <CopyButton text={`git clone https://github.com/${repo.name}.git`} />
+        <div className="mt-10 grid gap-px overflow-hidden rounded-sm border border-border bg-border sm:grid-cols-2 lg:grid-cols-4">
+          {DELIVERABLES.map((item) => {
+            const Icon = item.icon;
+            return (
+              <div key={item.name} className="group flex flex-col bg-background p-7">
+                <Icon className="size-5 text-accent" strokeWidth={1.5} />
+                <h3 className="mt-4 text-[15px] font-semibold tracking-[-0.01em] text-foreground">
+                  {item.name}
+                </h3>
+                <p className="mt-2 flex-1 text-[13px] leading-relaxed text-muted">{item.what}</p>
+                {item.cta.download ? (
+                  <a
+                    href={item.cta.href}
+                    download
+                    className="mt-5 flex w-fit items-center gap-1.5 text-[13px] text-foreground transition-colors group-hover:text-accent"
+                  >
+                    <Download className="size-3.5" strokeWidth={1.75} />
+                    {item.cta.label}
+                  </a>
+                ) : (
+                  <Link
+                    href={item.cta.href}
+                    className="mt-5 flex w-fit items-center gap-1.5 text-[13px] text-foreground transition-colors group-hover:text-accent"
+                  >
+                    {item.cta.label} <ArrowRight className="size-3.5" strokeWidth={1.75} />
+                  </Link>
+                )}
               </div>
+            );
+          })}
+        </div>
+      </Container>
+
+      {/* ---------- 6b · brand & artwork ---------- */}
+      <Container className="mt-28 lg:mt-36">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h2 className="section-heading">The brand comes with it</h2>
+            <p className="mt-1.5 text-[13px] text-muted">
+              Every business gets branded robot artwork, the BOWYER mark, and a look that
+              says premium — not template.
+            </p>
+          </div>
+          <a
+            href="/downloads/bowyer-brand-kit.zip"
+            download
+            className="flex h-10 items-center gap-2 rounded-sm border border-border px-5 text-[13px] text-foreground transition-colors hover:border-white/25"
+          >
+            <Download className="size-3.5" strokeWidth={1.75} />
+            Download brand kit
+          </a>
+        </div>
+
+        <div className="mt-10 grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-border bg-border sm:grid-cols-4">
+          {BRAND_ROBOTS.map((robot) => (
+            <div key={robot.label} className="group relative bg-background">
+              <Image
+                src={robot.src}
+                alt={`BOWYER ${robot.label} robot`}
+                width={512}
+                height={512}
+                className="h-auto w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+              />
+              <span className="absolute bottom-3 left-4 text-[11px] uppercase tracking-[0.14em] text-white/60">
+                {robot.label}
+              </span>
             </div>
           ))}
         </div>
@@ -607,31 +676,25 @@ export function BuildExperience() {
                 </span>
               </div>
               <p className="mt-2 text-[14px] leading-relaxed text-muted">
-                Institutional flow intelligence. Trading Agent template, custom cluster-detection
-                model, four data sources — publishing to paying subscribers since February.
+                Institutional flow intelligence on Robinhood Chain. Scans real blocks over
+                JSON-RPC, grounds every report in live web search, and takes paid
+                subscriptions in ETH — verified on-chain before access unlocks.
               </p>
               <div className="mt-5 flex flex-wrap gap-2">
-                {["Trading template", "GPT-5", "4 data sources", "MCP tools", "Chain 4663"].map(
-                  (tag) => (
-                    <span
-                      key={tag}
-                      className="rounded-full border border-border px-3 py-1 text-[11.5px] text-muted"
-                    >
-                      {tag}
-                    </span>
-                  )
-                )}
-              </div>
-            </div>
-
-            <div className="flex gap-10">
-              <div>
-                <p className="text-[26px] font-semibold tabular-nums text-foreground">842</p>
-                <p className="text-[12px] text-subtle">Subscribers</p>
-              </div>
-              <div>
-                <p className="text-[26px] font-semibold tabular-nums text-foreground">$41.3K</p>
-                <p className="text-[12px] text-subtle">Revenue to date</p>
+                {[
+                  "Live on mainnet",
+                  "Real chain scanner",
+                  "Web-grounded reports",
+                  "MCP tools",
+                  "Chain 4663",
+                ].map((tag) => (
+                  <span
+                    key={tag}
+                    className="rounded-full border border-border px-3 py-1 text-[11.5px] text-muted"
+                  >
+                    {tag}
+                  </span>
+                ))}
               </div>
             </div>
           </div>

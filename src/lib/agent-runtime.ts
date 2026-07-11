@@ -1,6 +1,14 @@
 import { db } from "@/lib/db";
 import { getAgentLlmConfig } from "@/lib/data/agent-registry";
 import { buildSourceContext } from "@/lib/knowledge-sources";
+import { formatChainContext, scanChain } from "@/lib/chain-scanner";
+import {
+  deepResearch,
+  formatDeepResearchContext,
+  formatSearchContext,
+  webSearch,
+  webSearchAvailable,
+} from "@/lib/web-search";
 import {
   fallbackRuntimeLlm,
   isLocalBaseUrl,
@@ -171,6 +179,49 @@ async function chatCompletion(
   }
 }
 
+/** Agents that run the multi-query deep-research pipeline. */
+function isResearchAgent(agent: AgentIdentity): boolean {
+  return (
+    agent.slug === "gpt-researcher" ||
+    /Reasoning depth: deep/i.test(agent.description ?? "")
+  );
+}
+
+/**
+ * Build the live grounding context for a report or answer:
+ * — Whale Hunter gets a real Robinhood Chain scan (recent blocks over RPC)
+ * — research agents get a multi-query deep-research pass (Tavily)
+ * — everyone else gets a single live web search on the topic
+ */
+async function buildLiveContext(agent: AgentIdentity, query: string): Promise<string> {
+  const parts: string[] = [];
+
+  if (agent.slug === "whale-hunter") {
+    try {
+      parts.push(formatChainContext(await scanChain()));
+    } catch {
+      // Chain scan unavailable — the agent still has web search below.
+    }
+  }
+
+  if (webSearchAvailable()) {
+    if (isResearchAgent(agent)) {
+      const groups = await deepResearch(query, [
+        `${query} latest news`,
+        `${query} analysis data`,
+      ]);
+      const ctx = formatDeepResearchContext(groups);
+      if (ctx) parts.push(ctx);
+    } else {
+      const results = await webSearch(query, 5);
+      const ctx = formatSearchContext(query, results);
+      if (ctx) parts.push(ctx);
+    }
+  }
+
+  return parts.join("\n\n");
+}
+
 /**
  * Generate a real report for an agent, persist it, and return it.
  * `topic` is optional user steering (e.g. a ticker or question).
@@ -179,13 +230,18 @@ export async function generateReport(
   agent: AgentIdentity,
   topic?: string
 ): Promise<AgentReport> {
-  const sourceContext = await buildSourceContext(agent.slug);
+  const searchQuery = topic?.trim() || `${agent.tagline} latest developments`;
+  const [sourceContext, liveContext] = await Promise.all([
+    buildSourceContext(agent.slug),
+    buildLiveContext(agent, searchQuery),
+  ]);
 
   const system = [
     `You are "${agent.name}", an autonomous AI business on BOWYER (an app store for autonomous businesses running on Robinhood Chain).`,
     `Your specialty: ${agent.tagline}.`,
     agent.description ? `About you: ${agent.description}` : "",
     sourceContext,
+    liveContext,
     "Write a concise, professional intelligence report for your paying subscribers.",
     "Respond ONLY with a JSON object of the shape:",
     `{"title": string, "body": string (markdown, 150-300 words), "confidence": number (0-1, your honest confidence in the analysis)}`,
@@ -235,12 +291,16 @@ export async function generateReport(
 
 /** Answer a free-form question in the agent's voice (used by the ask tool). */
 export async function askAgent(agent: AgentIdentity, question: string): Promise<string> {
-  const sourceContext = await buildSourceContext(agent.slug);
+  const [sourceContext, liveContext] = await Promise.all([
+    buildSourceContext(agent.slug),
+    buildLiveContext(agent, question),
+  ]);
 
   const system = [
     `You are "${agent.name}", an autonomous AI business. Specialty: ${agent.tagline}.`,
     agent.description ? `About you: ${agent.description}` : "",
     sourceContext,
+    liveContext,
     "Answer the subscriber's question directly and concisely in your domain of expertise.",
     `Respond ONLY with a JSON object: {"answer": string}`,
   ]

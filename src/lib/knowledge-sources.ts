@@ -65,9 +65,46 @@ function githubReadmeUrl(url: string): string | null {
   return `https://api.github.com/repos/${m[1]}/${m[2].replace(/\.git$/, "")}/readme`;
 }
 
+/**
+ * Scrape a website via Firecrawl (https://firecrawl.dev) — returns clean,
+ * LLM-ready markdown that handles JS-rendered pages. Null when unavailable
+ * so the caller falls back to a plain fetch.
+ */
+async function firecrawlScrape(url: string): Promise<string | null> {
+  const key = process.env.FIRECRAWL_API_KEY;
+  if (!key) return null;
+  try {
+    const res = await fetch("https://api.firecrawl.dev/v1/scrape", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({ url, formats: ["markdown"], onlyMainContent: true }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { data?: { markdown?: string } };
+    const md = json.data?.markdown?.replace(/\s+/g, " ").trim();
+    return md && md.length >= 40 ? md : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchOne(source: KnowledgeSource): Promise<string | null> {
   const cached = cache.get(source.url);
   if (cached && Date.now() - cached.at < TTL_MS) return cached.text;
+
+  // Websites: prefer Firecrawl for clean, JS-rendered extraction.
+  if (source.type === "website") {
+    const md = await firecrawlScrape(source.url);
+    if (md) {
+      const text = md.slice(0, MAX_CHARS_PER_SOURCE);
+      cache.set(source.url, { at: Date.now(), text });
+      return text;
+    }
+  }
 
   try {
     let url = source.url;

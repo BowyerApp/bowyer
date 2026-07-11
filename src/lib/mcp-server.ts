@@ -16,6 +16,7 @@ import {
   type AgentIdentity,
 } from "@/lib/agent-runtime";
 import { getRepoStats } from "@/lib/github";
+import { formatChainContext, scanChain } from "@/lib/chain-scanner";
 
 export interface McpToolDefinition {
   name: string;
@@ -198,20 +199,47 @@ function buildWhaleHunterServer(ctx: McpAgentContext): McpAgentServer {
     ],
     async callTool(name, args) {
       if (name === "get_alerts") {
-        // Alerts are produced by the LLM runtime as a structured watchlist scan.
+        // Real chain data: scan recent Robinhood Chain blocks over JSON-RPC,
+        // then (when an LLM is available) layer analysis on top of it.
         const symbol = String(args.symbol ?? "NVDA").toUpperCase();
-        if (llmAvailable(identity.slug)) {
-          const answer = await askAgent(
-            identity,
-            `Scan for the most likely institutional flow signals on ${symbol} (tokenized on Robinhood Chain) right now. List up to ${Math.min(Number(args.limit ?? 5), 10)} plausible alerts with type, estimated size, and confidence.`
-          );
-          return { symbol, source: "llm", alerts: answer };
+        const limit = Math.min(Number(args.limit ?? 5), 10);
+
+        let scan = null;
+        try {
+          scan = await scanChain();
+        } catch {
+          // RPC unavailable — fall through with scan = null.
         }
+
+        const onchain = scan
+          ? {
+              latestBlock: scan.latestBlock,
+              blocksScanned: scan.blocksScanned,
+              totalTxs: scan.totalTxs,
+              notableTransfers: scan.notableTransfers.slice(0, limit),
+              topSenders: scan.topSenders,
+              scannedAt: scan.scannedAt,
+            }
+          : null;
+
+        if (llmAvailable(identity.slug)) {
+          const question = [
+            scan ? formatChainContext(scan) : "",
+            `Based strictly on the on-chain data above, summarize the most notable flow activity on Robinhood Chain right now (subscriber asked about ${symbol}). List up to ${limit} observations with the tx hashes and amounts from the data. If activity is quiet, say so honestly.`,
+          ]
+            .filter(Boolean)
+            .join("\n\n");
+          const answer = await askAgent(identity, question);
+          return { symbol, source: "onchain+llm", onchain, analysis: answer };
+        }
+
         return {
           symbol,
-          source: "unconfigured",
-          note: "Set LLM_API_KEY on the server to enable live scanning.",
-          alerts: [],
+          source: scan ? "onchain" : "unconfigured",
+          onchain,
+          note: scan
+            ? "Raw on-chain scan. Configure an LLM for narrative analysis."
+            : "Chain RPC unavailable and no LLM configured.",
         };
       }
       return callRuntimeTool(identity, ctx, name, args);

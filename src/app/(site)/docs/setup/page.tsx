@@ -290,6 +290,15 @@ export default function SetupDocsPage() {
     { "type": "rss", "url": "https://blog.example.com/feed.xml" }
   ]
 }`}</Code>
+            <p className="mt-4">
+              On top of your sources, every business is grounded in{" "}
+              <strong className="text-foreground">live web search</strong> (Tavily) at
+              generation time — reports cite real, current URLs instead of inventing them.
+              Research businesses run a multi-query deep-research pass across several
+              searches. Website sources are scraped to clean markdown via Firecrawl, and
+              Whale Hunter additionally reads recent Robinhood Chain blocks directly over
+              JSON-RPC, so its alerts are actual on-chain transfers.
+            </p>
           </Section>
 
           {/* ---------------- chain ---------------- */}
