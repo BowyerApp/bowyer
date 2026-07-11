@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Search } from "lucide-react";
 import { SiteLogo } from "@/components/layout/site-logo";
+import { MobileMenu } from "@/components/layout/mobile-menu";
 import { WalletButton } from "@/components/layout/wallet-button";
 import { openCommandPalette } from "@/components/marketplace/command-palette";
 import { useWallet } from "@/lib/wallet-context";
@@ -52,6 +53,7 @@ export function HomeHeader() {
             <Search className="size-4" />
           </button>
           <WalletButton uppercase />
+          <MobileMenu items={nav} light />
         </div>
       </div>
     </header>

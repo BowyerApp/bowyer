@@ -94,14 +94,14 @@ export function AccessSetup({ slug, name, isPaid, tools }: AccessSetupProps) {
         </div>
 
         {/* client tabs */}
-        <div className="mt-6 flex gap-5 border-b border-border">
+        <div className="mt-6 flex gap-5 overflow-x-auto border-b border-border scrollbar-hide">
           {TABS.map((t) => (
             <button
               key={t.id}
               type="button"
               onClick={() => setTab(t.id)}
               className={cn(
-                "-mb-px border-b-2 pb-2.5 text-[12.5px] transition-colors",
+                "-mb-px shrink-0 whitespace-nowrap border-b-2 pb-2.5 text-[12.5px] transition-colors",
                 tab === t.id
                   ? "border-accent text-foreground"
                   : "border-transparent text-muted hover:text-foreground"

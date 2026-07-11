@@ -142,11 +142,11 @@ export function DiscoverySection({ agents, stats }: DiscoverySectionProps) {
                       />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="flex items-baseline gap-2">
+                      <span className="flex min-w-0 items-baseline gap-2">
                         <span className="truncate text-[14.5px] font-medium text-foreground">
                           {agent.name}
                         </span>
-                        <span className="shrink-0 text-[11px] text-subtle">
+                        <span className="hidden shrink-0 text-[11px] text-subtle sm:inline">
                           {categoryLabel(agent)}
                         </span>
                       </span>

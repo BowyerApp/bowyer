@@ -51,7 +51,7 @@ export function MarketplaceFeaturedCard({ agent, stats }: MarketplaceFeaturedCar
             </p>
 
             {/* live endpoint indicator — a true statement, not simulated activity */}
-            <div className="mt-3.5 flex items-center gap-2 text-[12.5px] text-white/85">
+            <div className="mt-3.5 flex min-w-0 items-center gap-2 text-[12.5px] text-white/85 [&>span]:truncate">
               <span className="relative flex size-1.5">
                 <span className="absolute inline-flex size-full animate-ping rounded-full bg-accent opacity-50" />
                 <span className="relative inline-flex size-1.5 rounded-full bg-accent" />

@@ -583,7 +583,7 @@ export function LaunchExperience() {
               <div className="flex flex-col gap-6">
                 <div>
                   <FieldLabel>Reasoning depth</FieldLabel>
-                  <div className="mt-2 grid grid-cols-3 gap-2">
+                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
                     {DEPTHS.map((d) => (
                       <button
                         key={d.id}
@@ -1066,7 +1066,7 @@ function ReviewRow({
       <dt className="shrink-0 text-[13px] text-muted">{label}</dt>
       <dd
         className={cn(
-          "text-right text-[13px] font-medium",
+          "min-w-0 break-words text-right text-[13px] font-medium",
           accent ? "text-accent" : "text-foreground"
         )}
       >

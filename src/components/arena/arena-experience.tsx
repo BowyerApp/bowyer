@@ -357,7 +357,7 @@ function Contender({
       <div className={cn(right && "text-right")}>
         <h2
           className={cn(
-            "text-[44px] sm:text-[64px] lg:text-[84px] font-semibold leading-[0.95] tracking-[-0.04em] text-foreground",
+            "text-[30px] sm:text-[64px] lg:text-[84px] font-semibold leading-[0.98] sm:leading-[0.95] tracking-[-0.04em] text-foreground [overflow-wrap:anywhere]",
             c.slug && "transition-colors group-hover:text-accent"
           )}
         >
@@ -540,15 +540,16 @@ function LiveStream() {
           <div
             key={e.key}
             className={cn(
-              "step-enter grid grid-cols-[44px_180px_1fr] items-baseline gap-x-6 border-b border-border py-3.5 transition-opacity duration-500 sm:grid-cols-[52px_220px_1fr]",
+              "step-enter grid grid-cols-[44px_minmax(0,1fr)] gap-y-0.5 items-baseline gap-x-4 border-b border-border py-3.5 transition-opacity duration-500 sm:grid-cols-[52px_220px_1fr] sm:gap-x-6",
               i >= 5 ? "opacity-40" : i >= 3 ? "opacity-70" : "opacity-100"
             )}
           >
             <span className="font-mono text-[12px] tabular-nums text-subtle">{stamp}</span>
             <span className="truncate text-[14px] font-medium text-foreground">{e.business}</span>
+            {/* on mobile the event text wraps to a full-width second row */}
             <span
               className={cn(
-                "truncate text-[14px]",
+                "col-span-2 truncate text-[14px] sm:col-span-1 sm:col-auto",
                 e.kind === "alert" ? "text-accent" : "text-muted",
                 active && "animate-pulse"
               )}

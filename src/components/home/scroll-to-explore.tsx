@@ -36,7 +36,8 @@ export function ScrollToExplore() {
       )}
     >
       <Mouse className="size-3.5 animate-bounce" style={{ animationDuration: "2s" }} />
-      Scroll to explore
+      <span className="hidden sm:inline">Scroll to explore</span>
+      <span className="sm:hidden">Explore</span>
     </button>
   );
 }

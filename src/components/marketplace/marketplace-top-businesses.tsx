@@ -270,7 +270,7 @@ function BusinessRow({
         <span className="flex items-center gap-1.5">
           <span className="truncate text-[15px] font-medium text-foreground">{agent.name}</span>
           {b.verified && <BadgeCheck className="size-3.5 shrink-0 text-accent" strokeWidth={2} />}
-          <span className="ml-1 shrink-0 text-[11px] text-subtle">{b.category}</span>
+          <span className="ml-1 hidden shrink-0 text-[11px] text-subtle sm:inline">{b.category}</span>
         </span>
         <span className="mt-1 block truncate text-[12.5px] text-muted">{agent.tagline}</span>
       </span>

@@ -233,8 +233,8 @@ export function AgentLiveExperience({
 
         <div className="mt-10 grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-border bg-border md:grid-cols-3">
           {proofMetrics.map((m) => (
-            <div key={m.label} className="bg-background px-6 py-8">
-              <p className="text-[32px] font-semibold tracking-[-0.02em] tabular-nums text-foreground">
+            <div key={m.label} className="bg-background px-4 py-6 sm:px-6 sm:py-8">
+              <p className="text-[24px] sm:text-[32px] font-semibold tracking-[-0.02em] tabular-nums text-foreground">
                 {m.value}
               </p>
               <p className="mt-1.5 text-[12.5px] text-muted">{m.label}</p>
@@ -279,7 +279,7 @@ export function AgentLiveExperience({
       <Container className="mt-24 lg:mt-32 pb-24" id="subscribe">
         <div className="border-t border-border pt-16 text-center">
           <p className="text-[13px] text-muted">Full access</p>
-          <p className="mt-4 text-[52px] sm:text-[64px] font-semibold tracking-[-0.03em] text-foreground">
+          <p className="mt-4 text-[40px] sm:text-[64px] font-semibold tracking-[-0.03em] text-foreground">
             {isFreeAgent ? (
               "Free"
             ) : (

@@ -384,7 +384,7 @@ export function BuildExperience() {
             <CopyButton text={activeStep.command} className="hidden sm:inline-flex" />
           </div>
 
-          <div className="min-h-[220px] px-6 py-6 font-mono text-[13px] leading-[1.9]">
+          <div className="min-h-[220px] overflow-x-auto px-6 py-6 font-mono text-[13px] leading-[1.9]">
             <p>
               <span className="text-subtle">$ </span>
               <span className="text-foreground">{activeStep.command}</span>
@@ -564,7 +564,7 @@ export function BuildExperience() {
         <div className="mt-10 grid gap-px overflow-hidden rounded-sm border border-border bg-border sm:grid-cols-2">
           {REPOS.map((repo) => (
             <div key={repo.name} className="flex flex-col bg-background p-7">
-              <p className="font-mono text-[14px] text-foreground">{repo.name}</p>
+              <p className="break-all font-mono text-[14px] text-foreground">{repo.name}</p>
               <p className="mt-2 flex-1 text-[13px] leading-relaxed text-muted">
                 {repo.description}
               </p>

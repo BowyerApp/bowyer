@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bell, Search } from "lucide-react";
 import { SiteLogo } from "@/components/layout/site-logo";
+import { MobileMenu } from "@/components/layout/mobile-menu";
 import { WalletButton } from "@/components/layout/wallet-button";
 import { openCommandPalette } from "@/components/marketplace/command-palette";
 import { useWallet } from "@/lib/wallet-context";
@@ -65,6 +66,7 @@ export function SiteHeader() {
             <Bell className="size-4" strokeWidth={1.75} />
           </button>
           <WalletButton />
+          <MobileMenu items={nav} />
         </div>
       </div>
     </header>

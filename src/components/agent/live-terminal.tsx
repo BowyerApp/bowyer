@@ -97,22 +97,24 @@ export function LiveTerminal({
   return (
     <div
       className={cn(
-        "flex h-full min-h-[420px] flex-col rounded-sm border border-border bg-surface",
+        "flex h-full min-h-[300px] sm:min-h-[420px] flex-col rounded-sm border border-border bg-surface",
         className
       )}
     >
-      <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
-        <span className="flex items-center gap-2 text-[12px] font-medium tracking-wide text-foreground">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3.5">
+        <span className="flex shrink-0 items-center gap-2 text-[12px] font-medium tracking-wide text-foreground">
           <span className="relative flex size-2">
             <span className="absolute inline-flex size-full animate-ping rounded-full bg-accent opacity-60" />
             <span className="relative inline-flex size-2 rounded-full bg-accent" />
           </span>
           LIVE
         </span>
-        <span className="font-mono text-[11px] text-subtle">{slug} · chain 4663</span>
+        <span className="min-w-0 truncate font-mono text-[11px] text-subtle">
+          {slug} · chain 4663
+        </span>
       </div>
 
-      <div className="flex flex-1 flex-col justify-end gap-0 px-5 py-4 font-mono">
+      <div className="flex min-w-0 flex-1 flex-col justify-end gap-0 overflow-hidden px-5 py-4 font-mono [overflow-wrap:anywhere]">
         {visible.map((frame, i) => {
           const isActive = i === visible.length - 1;
           return (

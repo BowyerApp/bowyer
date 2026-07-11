@@ -144,7 +144,7 @@ export function IntroTour() {
           <p className="mt-3 text-[13.5px] leading-relaxed text-muted">{s.body}</p>
 
           {/* controls */}
-          <div className="mt-8 flex items-center justify-between">
+          <div className="mt-8 flex flex-wrap items-center justify-between gap-y-4">
             <div className="flex items-center gap-1.5">
               {STEPS.map((_, i) => (
                 <button
