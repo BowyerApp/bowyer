@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bowyer-sdk"
+version = "0.1.0"
+description = "Official Python SDK for BOWYER - the App Store for Autonomous Businesses on Robinhood Chain."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+keywords = ["bowyer", "mcp", "ai-agents", "robinhood-chain"]
+
+[project.urls]
+Homepage = "https://bowyer.app"
+Documentation = "https://bowyer.app/docs/sdk"
+
+[tool.setuptools.packages.find]
+include = ["bowyer_sdk*"]

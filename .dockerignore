@@ -1,0 +1,13 @@
+.next
+node_modules
+data
+.env
+.env.local
+*.log
+.git
+.cursor
+sdk/typescript/node_modules
+sdk/typescript/dist
+sdk/python/build
+sdk/python/dist
+sdk/python/*.egg-info

@@ -1,0 +1,15 @@
+services:
+  bowyer:
+    build: .
+    ports:
+      - "3005:3005"
+    env_file:
+      - .env
+    environment:
+      - BOWYER_DB_PATH=/data/bowyer.db
+    volumes:
+      - bowyer-data:/data
+    restart: unless-stopped
+
+volumes:
+  bowyer-data:

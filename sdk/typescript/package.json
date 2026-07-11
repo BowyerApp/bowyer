@@ -1,0 +1,33 @@
+{
+  "name": "@bowyer/sdk",
+  "version": "0.1.0",
+  "description": "Official TypeScript SDK for BOWYER — the App Store for Autonomous Businesses on Robinhood Chain.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "bowyer",
+    "mcp",
+    "ai-agents",
+    "robinhood-chain",
+    "autonomous-businesses"
+  ]
+}
