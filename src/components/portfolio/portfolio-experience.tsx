@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, ArrowUpRight, Copy, Check } from "lucide-react";
 import { Container } from "@/components/layout/container";
 import { ConnectGate } from "@/components/layout/wallet-button";
 import { MorningBriefing } from "@/components/portfolio/morning-briefing";
+import { ConnectionsPanel } from "@/components/connect/connections-panel";
 import { shortAddress, useWallet } from "@/lib/wallet-context";
 import type { AgentSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -14,6 +16,7 @@ const TABS = [
   { id: "briefing", label: "Briefing" },
   { id: "businesses", label: "My Businesses" },
   { id: "subscriptions", label: "Subscriptions" },
+  { id: "connections", label: "Connections" },
   { id: "earnings", label: "Earnings" },
 ] as const;
 
@@ -28,8 +31,55 @@ interface SubscriptionRow {
 }
 
 export function PortfolioExperience() {
+  return (
+    <Suspense fallback={null}>
+      <PortfolioExperienceInner />
+    </Suspense>
+  );
+}
+
+function PortfolioExperienceInner() {
   const { address } = useWallet();
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [tab, setTab] = useState<TabId>("briefing");
+  const [oauthNotice, setOauthNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    const oauth = searchParams.get("oauth");
+    const reason = searchParams.get("reason");
+    if (!oauth) return;
+
+    if (oauth.endsWith("_ok")) {
+      setTab("connections");
+      const provider = oauth.replace("_ok", "");
+      const labels: Record<string, string> = {
+        github: "GitHub",
+        notion: "Notion",
+        discord: "Discord",
+        x: "X",
+      };
+      setOauthNotice(
+        `${labels[provider] ?? provider} connected. Use Launch to pick sources, or manage here.`
+      );
+    } else if (oauth === "error") {
+      setTab("connections");
+      const messages: Record<string, string> = {
+        github_not_configured: "GitHub OAuth is not configured on the server.",
+        notion_not_configured: "Notion OAuth is not configured on the server.",
+        discord_not_configured: "Discord OAuth is not configured on the server.",
+        x_not_configured: "X OAuth is not configured on the server.",
+        missing_code: "The provider did not return an authorization code.",
+        invalid_state: "OAuth session expired. Try connecting again.",
+        token_exchange: "Could not exchange authorization code for a token.",
+        no_token: "No access token returned.",
+        user_fetch: "Could not load your profile from the provider.",
+      };
+      setOauthNotice(messages[reason ?? ""] ?? "Connection failed. Try again.");
+    }
+
+    router.replace("/portfolio", { scroll: false });
+  }, [searchParams, router]);
 
   if (!address) {
     return (
@@ -67,9 +117,25 @@ export function PortfolioExperience() {
         </div>
       </Container>
 
+      {oauthNotice && (
+        <Container className="pt-4">
+          <p
+            className={cn(
+              "rounded-sm border px-4 py-3 text-[13px]",
+              oauthNotice.includes("failed") || oauthNotice.includes("not configured")
+                ? "border-negative/30 text-negative"
+                : "border-accent/30 text-accent"
+            )}
+          >
+            {oauthNotice}
+          </p>
+        </Container>
+      )}
+
       {tab === "briefing" && <MorningBriefing />}
       {tab === "businesses" && <MyBusinesses address={address} />}
       {tab === "subscriptions" && <MySubscriptions address={address} />}
+      {tab === "connections" && <ConnectionsPanel />}
       {tab === "earnings" && <Earnings address={address} />}
     </>
   );

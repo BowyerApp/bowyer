@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   ArrowRight,
@@ -165,11 +166,11 @@ const SOURCES = [
   { id: "website", label: "Website", icon: Globe, live: true, placeholder: "https://example.com" },
   { id: "github", label: "GitHub", icon: Github, live: true, placeholder: "https://github.com/owner/repo" },
   { id: "rss", label: "RSS", icon: Rss, live: true, placeholder: "https://blog.example.com/feed.xml" },
-  { id: "x", label: "X", icon: MessageCircle, live: false, placeholder: "" },
+  { id: "x", label: "X", icon: MessageCircle, live: true, placeholder: "" },
   { id: "pdf", label: "PDF", icon: FileText, live: false, placeholder: "" },
-  { id: "notion", label: "Notion", icon: BookOpen, live: false, placeholder: "" },
+  { id: "notion", label: "Notion", icon: BookOpen, live: true, placeholder: "" },
   { id: "wallet", label: "Wallet", icon: Wallet, live: false, placeholder: "" },
-  { id: "discord", label: "Discord", icon: MessageCircle, live: false, placeholder: "" },
+  { id: "discord", label: "Discord", icon: MessageCircle, live: true, placeholder: "" },
   { id: "telegram", label: "Telegram", icon: Send, live: false, placeholder: "" },
   { id: "api", label: "Custom API", icon: Key, live: false, placeholder: "" },
 ];
@@ -180,6 +181,9 @@ interface ConnectedSource {
 }
 
 function sourceHostname(url: string): string {
+  if (url.startsWith("notion://page/")) return "Notion page";
+  if (url.startsWith("discord://channel/")) return "Discord channel";
+  if (url.startsWith("x://user/")) return `@${url.replace("x://user/", "")}`;
   try {
     return new URL(url).hostname.replace(/^www\./, "");
   } catch {
@@ -238,6 +242,19 @@ export function LaunchExperience() {
   const [activeSource, setActiveSource] = useState<string | null>(null);
   const [sourceUrl, setSourceUrl] = useState("");
   const [sourceError, setSourceError] = useState<string | null>(null);
+  const [githubRepos, setGithubRepos] = useState<
+    { fullName: string; url: string; private: boolean; description: string | null }[]
+  >([]);
+  const [githubReposLoading, setGithubReposLoading] = useState(false);
+  const [notionPages, setNotionPages] = useState<{ id: string; title: string; url: string }[]>([]);
+  const [notionLoading, setNotionLoading] = useState(false);
+  const [discordChannels, setDiscordChannels] = useState<
+    { guildName: string; name: string; url: string }[]
+  >([]);
+  const [discordLoading, setDiscordLoading] = useState(false);
+  const [xAccounts, setXAccounts] = useState<{ username: string; name: string; url: string }[]>([]);
+  const [xLoading, setXLoading] = useState(false);
+  const searchParams = useSearchParams();
   // Step 5
   const [capabilities, setCapabilities] = useState<string[]>([]);
   // Step 6
@@ -252,6 +269,105 @@ export function LaunchExperience() {
     if (walletAddress && !payoutAddress) setPayoutAddress(walletAddress);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletAddress]);
+
+  async function loadGithubRepos() {
+    if (!walletAddress) return;
+    setGithubReposLoading(true);
+    try {
+      const res = await fetch(`/api/auth/github/repos?wallet=${walletAddress}`);
+      const json = await res.json();
+      if (json.ok) setGithubRepos(json.repos ?? []);
+    } catch {
+      setGithubRepos([]);
+    } finally {
+      setGithubReposLoading(false);
+    }
+  }
+
+  async function loadNotionPages() {
+    if (!walletAddress) return;
+    setNotionLoading(true);
+    try {
+      const res = await fetch(`/api/auth/notion/pages?wallet=${walletAddress}`);
+      const json = await res.json();
+      if (json.ok) setNotionPages(json.pages ?? []);
+    } catch {
+      setNotionPages([]);
+    } finally {
+      setNotionLoading(false);
+    }
+  }
+
+  async function loadDiscordChannels() {
+    if (!walletAddress) return;
+    setDiscordLoading(true);
+    try {
+      const res = await fetch(`/api/auth/discord/channels?wallet=${walletAddress}`);
+      const json = await res.json();
+      if (json.ok) setDiscordChannels(json.channels ?? []);
+    } catch {
+      setDiscordChannels([]);
+    } finally {
+      setDiscordLoading(false);
+    }
+  }
+
+  async function loadXAccounts() {
+    if (!walletAddress) return;
+    setXLoading(true);
+    try {
+      const res = await fetch(`/api/auth/x/accounts?wallet=${walletAddress}`);
+      const json = await res.json();
+      if (json.ok) setXAccounts(json.accounts ?? []);
+    } catch {
+      setXAccounts([]);
+    } finally {
+      setXLoading(false);
+    }
+  }
+
+  function addPickedSource(type: string, url: string) {
+    if (sources.some((s) => s.url === url)) {
+      setSourceError("That source is already connected.");
+      return;
+    }
+    if (sources.length >= 4) {
+      setSourceError("Up to 4 sources per business for now.");
+      return;
+    }
+    setSources([...sources, { type, url }]);
+    setSourceError(null);
+    setActiveSource(null);
+  }
+
+  useEffect(() => {
+    const oauth = searchParams.get("oauth");
+    if (!oauth?.endsWith("_ok") || !walletAddress) return;
+    const provider = oauth.replace("_ok", "");
+    if (provider === "github") {
+      loadGithubRepos();
+      setActiveSource("github");
+    } else if (provider === "notion") {
+      loadNotionPages();
+      setActiveSource("notion");
+    } else if (provider === "discord") {
+      loadDiscordChannels();
+      setActiveSource("discord");
+    } else if (provider === "x") {
+      loadXAccounts();
+      setActiveSource("x");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, walletAddress]);
+
+  useEffect(() => {
+    if (!walletAddress || !activeSource) return;
+    if (activeSource === "github") loadGithubRepos();
+    if (activeSource === "notion") loadNotionPages();
+    if (activeSource === "discord") loadDiscordChannels();
+    if (activeSource === "x") loadXAccounts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSource, walletAddress]);
   // Submit
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -282,35 +398,32 @@ export function LaunchExperience() {
     if (!activeSource) return;
     const url = sourceUrl.trim();
     let valid = false;
-    try {
-      const u = new URL(url);
-      valid = u.protocol === "https:" || u.protocol === "http:";
-      if (activeSource === "github" && !/github\.com\/[^/]+\/[^/]+/.test(url)) {
+    if (activeSource === "notion") valid = /^notion:\/\/page\//.test(url);
+    else if (activeSource === "discord") valid = /^discord:\/\/channel\/\d+\/\d+/.test(url);
+    else if (activeSource === "x") valid = /^x:\/\/user\/[A-Za-z0-9_]{1,15}$/.test(url);
+    else {
+      try {
+        const u = new URL(url);
+        valid = u.protocol === "https:" || u.protocol === "http:";
+        if (activeSource === "github" && !/github\.com\/[^/]+\/[^/]+/.test(url)) {
+          valid = false;
+        }
+      } catch {
         valid = false;
       }
-    } catch {
-      valid = false;
     }
     if (!valid) {
       setSourceError(
         activeSource === "github"
           ? "Enter a full repository URL, e.g. https://github.com/owner/repo"
-          : "Enter a full URL starting with https://"
+          : activeSource === "notion" || activeSource === "discord" || activeSource === "x"
+            ? "Connect the service above and pick from the list."
+            : "Enter a full URL starting with https://"
       );
       return;
     }
-    if (sources.some((s) => s.url === url)) {
-      setSourceError("That source is already connected.");
-      return;
-    }
-    if (sources.length >= 4) {
-      setSourceError("Up to 4 sources per business for now.");
-      return;
-    }
-    setSources([...sources, { type: activeSource, url }]);
+    addPickedSource(activeSource, url);
     setSourceUrl("");
-    setActiveSource(null);
-    setSourceError(null);
   }
 
   function next() {
@@ -944,40 +1057,231 @@ export function LaunchExperience() {
 
             {activeSource && (
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <p className="text-[12.5px] text-muted">
-                  {activeSource === "github"
-                    ? "Paste a public GitHub repository URL. Your business reads its README."
-                    : activeSource === "rss"
+                {activeSource === "github" && (
+                  <>
+                    <p className="text-[12.5px] text-muted">
+                      Connect GitHub to pick a repository, or paste a URL manually.
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      {walletAddress ? (
+                        <a
+                          href={`/api/auth/github?wallet=${walletAddress}&returnTo=/launch`}
+                          className="flex h-10 items-center gap-2 rounded-sm border border-border px-4 text-[13px] text-foreground hover:border-white/25"
+                        >
+                          <Github className="size-4" /> Connect GitHub
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => connectWallet()}
+                          className="flex h-10 items-center gap-2 rounded-sm border border-border px-4 text-[13px] text-foreground hover:border-white/25"
+                        >
+                          <Wallet className="size-4" /> Connect wallet first
+                        </button>
+                      )}
+                    </div>
+                    {githubReposLoading && (
+                      <p className="mt-4 text-[12px] text-subtle">Loading your repositories…</p>
+                    )}
+                    {githubRepos.length > 0 && (
+                      <ul className="mt-4 max-h-48 space-y-1 overflow-y-auto border-t border-border pt-3">
+                        {githubRepos.map((repo) => (
+                          <li key={repo.url}>
+                            <button
+                              type="button"
+                              onClick={() => addPickedSource("github", repo.url)}
+                              className="flex w-full flex-col rounded-sm px-2 py-2 text-left hover:bg-white/[0.04]"
+                            >
+                              <span className="text-[13px] text-foreground">{repo.fullName}</span>
+                              {repo.description && (
+                                <span className="truncate text-[11px] text-subtle">
+                                  {repo.description}
+                                </span>
+                              )}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <p className="mt-4 text-[12px] text-subtle">Or paste a repository URL:</p>
+                  </>
+                )}
+
+                {activeSource === "notion" && (
+                  <>
+                    <p className="text-[12.5px] text-muted">
+                      Connect Notion to pick a page your business reads on every run.
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      {walletAddress ? (
+                        <a
+                          href={`/api/auth/notion?wallet=${walletAddress}&returnTo=/launch`}
+                          className="flex h-10 items-center gap-2 rounded-sm border border-border px-4 text-[13px] text-foreground hover:border-white/25"
+                        >
+                          <BookOpen className="size-4" /> Connect Notion
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => connectWallet()}
+                          className="flex h-10 items-center gap-2 rounded-sm border border-border px-4 text-[13px] text-foreground hover:border-white/25"
+                        >
+                          <Wallet className="size-4" /> Connect wallet first
+                        </button>
+                      )}
+                    </div>
+                    {notionLoading && (
+                      <p className="mt-4 text-[12px] text-subtle">Loading your pages…</p>
+                    )}
+                    {notionPages.length > 0 && (
+                      <ul className="mt-4 max-h-48 space-y-1 overflow-y-auto border-t border-border pt-3">
+                        {notionPages.map((page) => (
+                          <li key={page.url}>
+                            <button
+                              type="button"
+                              onClick={() => addPickedSource("notion", page.url)}
+                              className="flex w-full rounded-sm px-2 py-2 text-left text-[13px] text-foreground hover:bg-white/[0.04]"
+                            >
+                              {page.title}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+
+                {activeSource === "discord" && (
+                  <>
+                    <p className="text-[12.5px] text-muted">
+                      Connect Discord, then pick a channel. The Bowyer bot must be in that server.
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      {walletAddress ? (
+                        <a
+                          href={`/api/auth/discord?wallet=${walletAddress}&returnTo=/launch`}
+                          className="flex h-10 items-center gap-2 rounded-sm border border-border px-4 text-[13px] text-foreground hover:border-white/25"
+                        >
+                          <MessageCircle className="size-4" /> Connect Discord
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => connectWallet()}
+                          className="flex h-10 items-center gap-2 rounded-sm border border-border px-4 text-[13px] text-foreground hover:border-white/25"
+                        >
+                          <Wallet className="size-4" /> Connect wallet first
+                        </button>
+                      )}
+                    </div>
+                    {discordLoading && (
+                      <p className="mt-4 text-[12px] text-subtle">Loading channels…</p>
+                    )}
+                    {discordChannels.length > 0 && (
+                      <ul className="mt-4 max-h-48 space-y-1 overflow-y-auto border-t border-border pt-3">
+                        {discordChannels.map((ch) => (
+                          <li key={ch.url}>
+                            <button
+                              type="button"
+                              onClick={() => addPickedSource("discord", ch.url)}
+                              className="flex w-full flex-col rounded-sm px-2 py-2 text-left hover:bg-white/[0.04]"
+                            >
+                              <span className="text-[13px] text-foreground">#{ch.name}</span>
+                              <span className="text-[11px] text-subtle">{ch.guildName}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+
+                {activeSource === "x" && (
+                  <>
+                    <p className="text-[12.5px] text-muted">
+                      Connect X to ingest your recent posts as live knowledge.
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      {walletAddress ? (
+                        <a
+                          href={`/api/auth/x?wallet=${walletAddress}&returnTo=/launch`}
+                          className="flex h-10 items-center gap-2 rounded-sm border border-border px-4 text-[13px] text-foreground hover:border-white/25"
+                        >
+                          <MessageCircle className="size-4" /> Connect X
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => connectWallet()}
+                          className="flex h-10 items-center gap-2 rounded-sm border border-border px-4 text-[13px] text-foreground hover:border-white/25"
+                        >
+                          <Wallet className="size-4" /> Connect wallet first
+                        </button>
+                      )}
+                    </div>
+                    {xLoading && (
+                      <p className="mt-4 text-[12px] text-subtle">Loading your profile…</p>
+                    )}
+                    {xAccounts.length > 0 && (
+                      <ul className="mt-4 max-h-48 space-y-1 overflow-y-auto border-t border-border pt-3">
+                        {xAccounts.map((acct) => (
+                          <li key={acct.url}>
+                            <button
+                              type="button"
+                              onClick={() => addPickedSource("x", acct.url)}
+                              className="flex w-full flex-col rounded-sm px-2 py-2 text-left hover:bg-white/[0.04]"
+                            >
+                              <span className="text-[13px] text-foreground">@{acct.username}</span>
+                              {acct.name && (
+                                <span className="text-[11px] text-subtle">{acct.name}</span>
+                              )}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+
+                {(activeSource === "website" || activeSource === "rss") && (
+                  <p className="text-[12.5px] text-muted">
+                    {activeSource === "rss"
                       ? "Paste an RSS or Atom feed URL. Your business reads the latest items."
                       : "Paste a public webpage URL. Your business reads its content."}
-                </p>
-                <div className="mt-3 flex flex-col gap-3 sm:flex-row">
-                  <input
-                    type="url"
-                    value={sourceUrl}
-                    onChange={(e) => {
-                      setSourceUrl(e.target.value);
-                      setSourceError(null);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        addSource();
+                  </p>
+                )}
+
+                {(activeSource === "website" ||
+                  activeSource === "rss" ||
+                  activeSource === "github") && (
+                  <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                    <input
+                      type="url"
+                      value={sourceUrl}
+                      onChange={(e) => {
+                        setSourceUrl(e.target.value);
+                        setSourceError(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addSource();
+                        }
+                      }}
+                      placeholder={
+                        SOURCES.find((s) => s.id === activeSource)?.placeholder ?? "https://"
                       }
-                    }}
-                    placeholder={
-                      SOURCES.find((s) => s.id === activeSource)?.placeholder ?? "https://"
-                    }
-                    className="h-11 flex-1 rounded-sm border border-border bg-background px-4 text-[13.5px] text-foreground outline-none transition-colors placeholder:text-subtle focus:border-accent/60"
-                  />
-                  <button
-                    type="button"
-                    onClick={addSource}
-                    className="flex h-11 shrink-0 items-center justify-center rounded-sm bg-accent px-6 text-[13px] font-medium text-black transition-opacity hover:opacity-90"
-                  >
-                    Add source
-                  </button>
-                </div>
+                      className="h-11 flex-1 rounded-sm border border-border bg-background px-4 text-[13.5px] text-foreground outline-none transition-colors placeholder:text-subtle focus:border-accent/60"
+                    />
+                    <button
+                      type="button"
+                      onClick={addSource}
+                      className="flex h-11 shrink-0 items-center justify-center rounded-sm bg-accent px-6 text-[13px] font-medium text-black transition-opacity hover:opacity-90"
+                    >
+                      Add source
+                    </button>
+                  </div>
+                )}
                 {sourceError && (
                   <p className="mt-2 text-[12px] text-red-400">{sourceError}</p>
                 )}

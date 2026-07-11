@@ -110,6 +110,18 @@ function migrate(d: DatabaseT.Database) {
       count INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (slug, day, kind)
     );
+
+    CREATE TABLE IF NOT EXISTS oauth_connections (
+      wallet TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      provider_user_id TEXT NOT NULL,
+      provider_username TEXT,
+      access_token_enc TEXT,
+      refresh_token_enc TEXT,
+      metadata TEXT,
+      connected_at TEXT NOT NULL,
+      PRIMARY KEY (wallet, provider)
+    );
   `);
 }
 

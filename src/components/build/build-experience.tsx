@@ -14,6 +14,7 @@ import {
   Globe,
   Package,
   Palette,
+  Star,
   Terminal,
 } from "lucide-react";
 import { Container } from "@/components/layout/container";
@@ -21,6 +22,8 @@ import { CopyButton } from "@/components/ui/copy-button";
 import { cn } from "@/lib/utils";
 
 /* ================= data ================= */
+
+const GITHUB_REPO = "https://github.com/BowyerApp/bowyer";
 
 const HERO_STACK = ["Model", "Memory", "Wallet", "Marketplace", "Subscribers", "Revenue"];
 
@@ -439,12 +442,40 @@ export function BuildExperience() {
                 Next step <ArrowRight className="size-3.5" strokeWidth={1.75} />
               </button>
             ) : (
-              <Link
-                href="/launch"
-                className="mt-4 flex w-fit items-center gap-1.5 font-sans text-[13px] text-accent hover:opacity-80"
-              >
-                Launch for real <ArrowRight className="size-3.5" strokeWidth={1.75} />
-              </Link>
+              <div className="mt-4 flex flex-col gap-5">
+                <Link
+                  href="/launch"
+                  className="flex w-fit items-center gap-1.5 font-sans text-[13px] text-accent hover:opacity-80"
+                >
+                  Launch for real <ArrowRight className="size-3.5" strokeWidth={1.75} />
+                </Link>
+                <div className="flex flex-col gap-3 rounded-sm border border-border bg-background/60 p-5 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-start gap-3">
+                    <Star
+                      className="mt-0.5 size-4 shrink-0 text-accent"
+                      strokeWidth={1.75}
+                      fill="currentColor"
+                    />
+                    <div>
+                      <p className="font-sans text-[13px] font-medium text-foreground">
+                        Enjoying the tutorial?
+                      </p>
+                      <p className="mt-0.5 font-sans text-[12.5px] leading-relaxed text-muted">
+                        Star us on GitHub — it helps other builders discover BOWYER.
+                      </p>
+                    </div>
+                  </div>
+                  <a
+                    href={GITHUB_REPO}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-sm bg-accent px-5 font-sans text-[13px] font-medium text-background transition-opacity hover:opacity-90"
+                  >
+                    <Star className="size-3.5" strokeWidth={2} fill="currentColor" />
+                    Star on GitHub
+                  </a>
+                </div>
+              </div>
             )}
           </div>
         </div>

@@ -27,6 +27,7 @@ export default function SetupDocsPage() {
               ["#tools", "Tool reference"],
               ["#rest", "REST API"],
               ["#creators", "For creators"],
+              ["#connections", "Connections & OAuth"],
               ["#brain", "Brain & models"],
               ["#knowledge", "Knowledge sources"],
               ["#chain", "Chain & payments"],
@@ -228,8 +229,36 @@ export default function SetupDocsPage() {
             </p>
           </Section>
 
+          {/* ---------------- connections ---------------- */}
+          <Section id="connections" title="7 · Connections & OAuth">
+            <p>
+              Link accounts once at{" "}
+              <Link href="/portfolio" className="text-foreground underline underline-offset-2 hover:text-accent">
+                Portfolio → Connections
+              </Link>
+              . Tokens are encrypted at rest. Use them in the Launch wizard to pick knowledge
+              sources, or link Telegram for report delivery.
+            </p>
+            <ul className="mt-3 flex list-disc flex-col gap-2 pl-5">
+              <li><strong className="text-foreground">GitHub</strong> — browse private repos, ingest READMEs</li>
+              <li><strong className="text-foreground">Notion</strong> — pick workspace pages as live sources</li>
+              <li><strong className="text-foreground">Discord</strong> — pick channels (Bowyer bot must be in the server)</li>
+              <li><strong className="text-foreground">X</strong> — ingest your recent posts</li>
+              <li><strong className="text-foreground">Telegram</strong> — one-click login; then <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-foreground">/follow slug</code> in the delivery bot</li>
+            </ul>
+            <p className="mt-4 text-[13px] text-subtle">
+              Self-hosters: set <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-foreground">GITHUB_CLIENT_*</code>,{" "}
+              <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-foreground">NOTION_CLIENT_*</code>,{" "}
+              <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-foreground">DISCORD_CLIENT_*</code> +{" "}
+              <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-foreground">DISCORD_BOT_TOKEN</code>,{" "}
+              <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-foreground">X_CLIENT_*</code>, and{" "}
+              <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-foreground">OAUTH_ENCRYPTION_KEY</code>.
+              See <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-foreground">DEPLOY.md</code> for callback URLs.
+            </p>
+          </Section>
+
           {/* ---------------- brain ---------------- */}
-          <Section id="brain" title="7 · Brain & models">
+          <Section id="brain" title="8 · Brain & models">
             <p>
               Every business needs an LLM to generate reports and answer questions. At launch
               you choose one of two paths:
@@ -265,7 +294,7 @@ export default function SetupDocsPage() {
           </Section>
 
           {/* ---------------- knowledge ---------------- */}
-          <Section id="knowledge" title="8 · Knowledge sources">
+          <Section id="knowledge" title="9 · Knowledge sources">
             <p>
               Connect live sources at launch. The runtime fetches them on every{" "}
               <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-foreground">generate_report</code>{" "}
@@ -274,18 +303,23 @@ export default function SetupDocsPage() {
               call and injects the content into the LLM context:
             </p>
             <ul className="mt-3 flex list-disc flex-col gap-2 pl-5">
-              <li><strong className="text-foreground">Website</strong> — any public https:// URL</li>
-              <li><strong className="text-foreground">GitHub</strong> — repository README via the GitHub API</li>
+              <li><strong className="text-foreground">Website</strong> — any public https:// URL (Firecrawl when configured)</li>
+              <li><strong className="text-foreground">GitHub</strong> — repository README; OAuth for private repos</li>
               <li><strong className="text-foreground">RSS</strong> — latest feed items from an RSS/Atom URL</li>
+              <li><strong className="text-foreground">Notion</strong> — page blocks via OAuth</li>
+              <li><strong className="text-foreground">Discord</strong> — recent channel messages</li>
+              <li><strong className="text-foreground">X</strong> — recent posts from a connected account</li>
             </ul>
             <p className="mt-4">
               Up to 4 sources per business. Content is cached for 10 minutes per URL.
-              Notion, X, Discord, Telegram, PDF, and Custom API are marked Coming soon in
-              the Launch wizard.
+              PDF, wallet monitoring, and Custom API are still coming soon.
             </p>
             <Code>{`{
   "sources": [
     { "type": "github", "url": "https://github.com/owner/repo" },
+    { "type": "notion", "url": "notion://page/abc123…" },
+    { "type": "discord", "url": "discord://channel/GUILD_ID/CHANNEL_ID" },
+    { "type": "x", "url": "x://user/yourhandle" },
     { "type": "website", "url": "https://example.com/docs" },
     { "type": "rss", "url": "https://blog.example.com/feed.xml" }
   ]
@@ -302,7 +336,7 @@ export default function SetupDocsPage() {
           </Section>
 
           {/* ---------------- chain ---------------- */}
-          <Section id="chain" title="9 · Chain & payments">
+          <Section id="chain" title="10 · Chain & payments">
             <div className="overflow-x-auto">
               <table className="mt-2 w-full text-left text-[13px]">
                 <thead>
