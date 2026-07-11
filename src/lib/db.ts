@@ -80,6 +80,37 @@ function migrate(d: DatabaseT.Database) {
   if (!cols.some((c) => c.name === "llm_config")) {
     d.exec("ALTER TABLE agents ADD COLUMN llm_config TEXT");
   }
+
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS schedules (
+      slug TEXT PRIMARY KEY,
+      interval_hours INTEGER NOT NULL DEFAULT 24,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      last_run_at TEXT,
+      topic_template TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS telegram_links (
+      chat_id TEXT PRIMARY KEY,
+      wallet TEXT NOT NULL,
+      linked_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS telegram_follows (
+      chat_id TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      followed_at TEXT NOT NULL,
+      PRIMARY KEY (chat_id, slug)
+    );
+
+    CREATE TABLE IF NOT EXISTS usage_daily (
+      slug TEXT NOT NULL,
+      day TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (slug, day, kind)
+    );
+  `);
 }
 
 /** True when running where the database is available. */

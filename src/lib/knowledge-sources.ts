@@ -70,9 +70,13 @@ function githubReadmeUrl(url: string): string | null {
  * LLM-ready markdown that handles JS-rendered pages. Null when unavailable
  * so the caller falls back to a plain fetch.
  */
-async function firecrawlScrape(url: string): Promise<string | null> {
+async function firecrawlScrape(url: string, slug?: string): Promise<string | null> {
   const key = process.env.FIRECRAWL_API_KEY;
   if (!key) return null;
+  if (slug) {
+    const { usageAllowed, recordUsage } = await import("@/lib/usage");
+    if (!usageAllowed(slug, "scrape")) return null;
+  }
   try {
     const res = await fetch("https://api.firecrawl.dev/v1/scrape", {
       method: "POST",
@@ -86,19 +90,26 @@ async function firecrawlScrape(url: string): Promise<string | null> {
     if (!res.ok) return null;
     const json = (await res.json()) as { data?: { markdown?: string } };
     const md = json.data?.markdown?.replace(/\s+/g, " ").trim();
-    return md && md.length >= 40 ? md : null;
+    if (md && md.length >= 40) {
+      if (slug) {
+        const { recordUsage } = await import("@/lib/usage");
+        recordUsage(slug, "scrape");
+      }
+      return md;
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
-async function fetchOne(source: KnowledgeSource): Promise<string | null> {
+async function fetchOne(source: KnowledgeSource, slug?: string): Promise<string | null> {
   const cached = cache.get(source.url);
   if (cached && Date.now() - cached.at < TTL_MS) return cached.text;
 
   // Websites: prefer Firecrawl for clean, JS-rendered extraction.
   if (source.type === "website") {
-    const md = await firecrawlScrape(source.url);
+    const md = await firecrawlScrape(source.url, slug);
     if (md) {
       const text = md.slice(0, MAX_CHARS_PER_SOURCE);
       cache.set(source.url, { at: Date.now(), text });
@@ -159,7 +170,7 @@ export async function buildSourceContext(slug: string): Promise<string> {
 
   const results = await Promise.all(
     sources.map(async (s) => {
-      const text = await fetchOne(s);
+      const text = await fetchOne(s, slug);
       if (!text) return null;
       return `--- Source (${s.type}): ${s.url} ---\n${text}`;
     })

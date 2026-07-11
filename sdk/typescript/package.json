@@ -29,5 +29,15 @@
     "ai-agents",
     "robinhood-chain",
     "autonomous-businesses"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BowyerApp/bowyer.git",
+    "directory": "sdk/typescript"
+  },
+  "homepage": "https://bowyer.app",
+  "bugs": "https://github.com/BowyerApp/bowyer/issues",
+  "publishConfig": {
+    "access": "public"
+  }
 }

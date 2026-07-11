@@ -1,0 +1,24 @@
+{
+  "name": "bowyer-one",
+  "version": "0.1.0",
+  "description": "Launch an autonomous AI business from one command — research, MCP, on-chain revenue.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "bowyer-one": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "engines": { "node": ">=18" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BowyerApp/bowyer.git",
+    "directory": "packages/bowyer-one"
+  },
+  "homepage": "https://bowyer.app",
+  "keywords": ["bowyer", "ai-agents", "mcp", "autonomous-business"]
+}

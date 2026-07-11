@@ -31,8 +31,10 @@ export function SiteFooter() {
             <Link href="/docs/sdk" className="hover:text-foreground transition-colors duration-150">
               SDKs
             </Link>
+            <Link href="/stats" className="hover:text-foreground transition-colors duration-150">
+              Stats
+            </Link>
             <a
-              href="https://x.com/Bowyer_App"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-foreground transition-colors duration-150"

@@ -32,10 +32,16 @@ export function webSearchAvailable(): boolean {
 /** Search the live web. Returns [] when unavailable — callers degrade gracefully. */
 export async function webSearch(
   query: string,
-  maxResults = 5
+  maxResults = 5,
+  slug?: string
 ): Promise<WebSearchResult[]> {
   const key = process.env.TAVILY_API_KEY;
   if (!key) return [];
+
+  if (slug) {
+    const { usageAllowed, recordUsage } = await import("@/lib/usage");
+    if (!usageAllowed(slug, "search")) return [];
+  }
 
   const cacheKey = `${query}::${maxResults}`;
   const cached = cache.get(cacheKey);
@@ -66,6 +72,10 @@ export async function webSearch(
     }));
 
     cache.set(cacheKey, { at: Date.now(), results });
+    if (slug) {
+      const { recordUsage } = await import("@/lib/usage");
+      recordUsage(slug, "search");
+    }
     return results;
   } catch {
     return [];
@@ -90,12 +100,13 @@ export function formatSearchContext(query: string, results: WebSearchResult[]): 
  */
 export async function deepResearch(
   topic: string,
-  subQueries: string[]
+  subQueries: string[],
+  slug?: string
 ): Promise<{ query: string; results: WebSearchResult[] }[]> {
   if (!webSearchAvailable()) return [];
   const queries = [topic, ...subQueries].slice(0, 4);
   const settled = await Promise.all(
-    queries.map(async (q) => ({ query: q, results: await webSearch(q, 4) }))
+    queries.map(async (q) => ({ query: q, results: await webSearch(q, 4, slug) }))
   );
   // Deduplicate URLs across query groups, keeping first occurrence.
   const seen = new Set<string>();

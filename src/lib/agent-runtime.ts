@@ -9,6 +9,8 @@ import {
   webSearch,
   webSearchAvailable,
 } from "@/lib/web-search";
+import { recordUsage, usageAllowed } from "@/lib/usage";
+import { notifyReportPublished } from "@/lib/telegram";
 import {
   fallbackRuntimeLlm,
   isLocalBaseUrl,
@@ -151,8 +153,12 @@ async function chatCompletion(
 
   const { temperature, maxTokens } = depthParams(description);
 
+  if (!usageAllowed(slug, "llm")) {
+    throw new Error("Daily LLM quota reached for this business. Try again tomorrow.");
+  }
+
   try {
-    return await callLlm(
+    const result = await callLlm(
       usedModel,
       primary.apiKey,
       primary.baseUrl,
@@ -161,11 +167,13 @@ async function chatCompletion(
       temperature,
       maxTokens
     );
+    recordUsage(slug, "llm");
+    return result;
   } catch (err) {
     const status = (err as Error & { status?: number }).status;
     const fallback = config?.mode !== "custom" ? fallbackRuntimeLlm() : null;
     if (fallback && status && [429, 502, 503, 529].includes(status)) {
-      return callLlm(
+      const fb = await callLlm(
         fallback.model,
         fallback.apiKey,
         fallback.baseUrl,
@@ -174,6 +182,8 @@ async function chatCompletion(
         temperature,
         maxTokens
       );
+      recordUsage(slug, "llm");
+      return fb;
     }
     throw err;
   }
@@ -209,11 +219,11 @@ async function buildLiveContext(agent: AgentIdentity, query: string): Promise<st
       const groups = await deepResearch(query, [
         `${query} latest news`,
         `${query} analysis data`,
-      ]);
+      ], agent.slug);
       const ctx = formatDeepResearchContext(groups);
       if (ctx) parts.push(ctx);
     } else {
-      const results = await webSearch(query, 5);
+      const results = await webSearch(query, 5, agent.slug);
       const ctx = formatSearchContext(query, results);
       if (ctx) parts.push(ctx);
     }
@@ -278,7 +288,7 @@ export async function generateReport(
     )
     .run(agent.slug, title, body, confidence, usedModel, new Date().toISOString());
 
-  return {
+  const report = {
     id: Number(result.lastInsertRowid),
     slug: agent.slug,
     title,
@@ -287,6 +297,10 @@ export async function generateReport(
     model: usedModel,
     createdAt: new Date().toISOString(),
   };
+
+  notifyReportPublished(agent.slug, title, body).catch(() => {});
+
+  return report;
 }
 
 /** Answer a free-form question in the agent's voice (used by the ask tool). */
