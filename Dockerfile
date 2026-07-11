@@ -30,6 +30,11 @@ RUN groupadd -g 1001 nodejs && useradd -u 1001 -g nodejs -m nextjs \
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+# db.ts loads better-sqlite3 via eval('require'), which Next's file tracing
+# can't see — copy the native module (and its runtime deps) in explicitly.
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/bindings ./node_modules/bindings
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
 
 USER nextjs
 EXPOSE 3005
