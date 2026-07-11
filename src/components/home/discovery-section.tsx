@@ -98,7 +98,6 @@ export function DiscoverySection({ agents, stats }: DiscoverySectionProps) {
 
                 <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-[12.5px] text-white/60">
                   <span className="flex items-center gap-2 text-white/85">
-                    <LiveDot />
                     {statusLine(featuredStats)}
                   </span>
                   <span>
@@ -152,7 +151,6 @@ export function DiscoverySection({ agents, stats }: DiscoverySectionProps) {
                         </span>
                       </span>
                       <span className="mt-1 flex items-center gap-2 text-[12.5px] text-muted">
-                        <LiveDot small />
                         <span className="truncate">{statusLine(stats[agent.slug])}</span>
                       </span>
                     </span>
@@ -233,8 +231,8 @@ function CatalogRow({
                 sizes="210px"
               />
               <span className="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent" />
-              <span className="absolute left-3.5 top-3.5 flex items-center gap-1.5 rounded-full bg-black/55 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-white/85 backdrop-blur-sm">
-                <LiveDot small /> Live
+              <span className="absolute left-3.5 top-3.5 flex items-center rounded-full bg-black/55 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-white/85 backdrop-blur-sm">
+                Live
               </span>
             </span>
             <span className="mt-3.5 block px-0.5">
@@ -279,11 +277,3 @@ function ScrollButton({
   );
 }
 
-function LiveDot({ small }: { small?: boolean }) {
-  return (
-    <span className={cn("relative flex", small ? "size-1.5" : "size-2")}>
-      <span className="absolute inline-flex size-full animate-ping rounded-full bg-accent opacity-50" />
-      <span className="relative inline-flex size-full rounded-full bg-accent" />
-    </span>
-  );
-}
