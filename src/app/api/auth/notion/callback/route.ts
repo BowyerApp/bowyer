@@ -1,6 +1,7 @@
-import { verifyOAuthState, siteUrl } from "@/lib/oauth/crypto";
+import { siteUrl } from "@/lib/oauth/crypto";
 import { oauthRedirectError, oauthRedirectSuccess } from "@/lib/oauth/redirect";
 import { saveConnection } from "@/lib/oauth/store";
+import { consumeOAuthState } from "@/lib/wallet-auth";
 
 export const runtime = "nodejs";
 
@@ -18,13 +19,9 @@ export async function GET(req: Request) {
     return oauthRedirectError("/portfolio", "missing_code");
   }
 
-  const state = verifyOAuthState<{
-    wallet: string;
-    provider: string;
-    returnTo: string;
-  }>(stateToken);
-  if (!state || state.provider !== "notion") {
-    return oauthRedirectError(state?.returnTo ?? "/portfolio", "invalid_state");
+  const state = consumeOAuthState(stateToken, "notion");
+  if (!state) {
+    return oauthRedirectError("/portfolio", "invalid_state");
   }
 
   const redirectUri = `${siteUrl()}/api/auth/notion/callback`;

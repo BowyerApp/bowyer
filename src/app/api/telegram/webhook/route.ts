@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { handleTelegramUpdate, telegramConfigured } from "@/lib/telegram";
 
 export const runtime = "nodejs";
@@ -10,16 +11,22 @@ export async function POST(req: Request) {
   }
 
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim();
-  if (secret) {
-    const header = req.headers.get("x-telegram-bot-api-secret-token");
-    if (header !== secret) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
+  const header = req.headers.get("x-telegram-bot-api-secret-token");
+  if (
+    !secret ||
+    !header ||
+    header.length !== secret.length ||
+    !timingSafeEqual(Buffer.from(header), Buffer.from(secret))
+  ) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
   try {
     const update = await req.json();
-    await handleTelegramUpdate(update);
+    // Telegram expects a fast acknowledgement; LLM replies may take much longer.
+    void handleTelegramUpdate(update).catch((err) => {
+      console.error("Telegram update failed", err);
+    });
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(

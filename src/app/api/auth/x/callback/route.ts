@@ -1,6 +1,7 @@
-import { verifyOAuthState, siteUrl } from "@/lib/oauth/crypto";
+import { siteUrl } from "@/lib/oauth/crypto";
 import { oauthRedirectError, oauthRedirectSuccess } from "@/lib/oauth/redirect";
 import { saveConnection } from "@/lib/oauth/store";
+import { consumeOAuthState } from "@/lib/wallet-auth";
 
 export const runtime = "nodejs";
 
@@ -18,13 +19,9 @@ export async function GET(req: Request) {
     return oauthRedirectError("/portfolio", "missing_code");
   }
 
-  const state = verifyOAuthState<{
-    wallet: string;
-    provider: string;
-    returnTo: string;
-    code_verifier: string;
-  }>(stateToken);
-  if (!state || state.provider !== "x" || !state.code_verifier) {
+  const state = consumeOAuthState(stateToken, "x");
+  const codeVerifier = state?.payload.code_verifier;
+  if (!state || !codeVerifier) {
     return oauthRedirectError(state?.returnTo ?? "/portfolio", "invalid_state");
   }
 
@@ -34,7 +31,7 @@ export async function GET(req: Request) {
     code,
     grant_type: "authorization_code",
     redirect_uri: redirectUri,
-    code_verifier: state.code_verifier,
+    code_verifier: codeVerifier,
   });
 
   const tokenRes = await fetch("https://api.twitter.com/2/oauth2/token", {

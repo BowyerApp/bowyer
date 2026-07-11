@@ -122,6 +122,33 @@ function migrate(d: DatabaseT.Database) {
       connected_at TEXT NOT NULL,
       PRIMARY KEY (wallet, provider)
     );
+
+    CREATE TABLE IF NOT EXISTS wallet_auth_nonces (
+      nonce TEXT PRIMARY KEY,
+      wallet TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS wallet_sessions (
+      token_hash TEXT PRIMARY KEY,
+      wallet TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS oauth_states (
+      state TEXT PRIMARY KEY,
+      wallet TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      return_to TEXT NOT NULL,
+      payload TEXT,
+      expires_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS telegram_sessions (
+      chat_id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 }
 

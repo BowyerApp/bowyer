@@ -6,8 +6,9 @@ import {
 } from "@/lib/data/agent-registry";
 import { listAgents } from "@/lib/data/agents";
 import { validateCustomLlm } from "@/lib/agent-runtime";
-import { isValidSourceUrl, SUPPORTED_SOURCE_TYPES } from "@/lib/knowledge-sources";
+import { isSafePublicHttpUrl, isValidSourceUrl, SUPPORTED_SOURCE_TYPES } from "@/lib/knowledge-sources";
 import { llmConfigured, sanitizeLlmConfigInput } from "@/lib/llm-config";
+import { requireWalletSession } from "@/lib/wallet-auth";
 
 export const runtime = "nodejs";
 
@@ -54,9 +55,10 @@ export async function POST(req: Request) {
   const mcpEndpoint = body.mcpEndpoint ? String(body.mcpEndpoint).trim() : undefined;
   const payoutAddress = body.payoutAddress ? String(body.payoutAddress).trim() : undefined;
   const ownerAddress = body.ownerAddress ? String(body.ownerAddress).trim() : undefined;
+  const authenticatedWallet = ownerAddress ? requireWalletSession(req, ownerAddress) : null;
 
   // Knowledge sources: only supported types with valid http(s) URLs, max 4.
-  const sources: KnowledgeSource[] = Array.isArray(body.sources)
+  const requestedSources: KnowledgeSource[] = Array.isArray(body.sources)
     ? (body.sources as unknown[])
         .map((s) => {
           const src = s as { type?: unknown; url?: unknown };
@@ -69,6 +71,12 @@ export async function POST(req: Request) {
         )
         .slice(0, 4)
     : [];
+  const sources: KnowledgeSource[] = [];
+  for (const source of requestedSources) {
+    const isHttp = source.type === "website" || source.type === "rss" || source.type === "github";
+    if (isHttp && !(await isSafePublicHttpUrl(source.url))) continue;
+    sources.push(source);
+  }
 
   const llm = sanitizeLlmConfigInput(body) ?? { mode: "platform" as const, model: "balanced" };
 
@@ -84,6 +92,18 @@ export async function POST(req: Request) {
   if (missing.length > 0) {
     return NextResponse.json(
       { ok: false, error: `Missing required fields: ${missing.join(", ")}` },
+      { status: 400 }
+    );
+  }
+  if (!ownerAddress || !authenticatedWallet) {
+    return NextResponse.json(
+      { ok: false, error: "Connect and sign your wallet session before launching a business." },
+      { status: 401 }
+    );
+  }
+  if (isFree && sources.some((source) => ["notion", "discord", "x"].includes(source.type))) {
+    return NextResponse.json(
+      { ok: false, error: "OAuth-backed knowledge sources require a paid business." },
       { status: 400 }
     );
   }

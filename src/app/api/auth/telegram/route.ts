@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { verifyTelegramLogin } from "@/lib/oauth/telegram-login";
 import { saveConnection } from "@/lib/oauth/store";
 import { db } from "@/lib/db";
+import { requireWalletSession } from "@/lib/wallet-auth";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,9 @@ export async function POST(req: Request) {
   const wallet = String(body.wallet ?? "").trim().toLowerCase();
   if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
     return NextResponse.json({ ok: false, error: "Connect your wallet first." }, { status: 400 });
+  }
+  if (!requireWalletSession(req, wallet)) {
+    return NextResponse.json({ ok: false, error: "Sign your wallet session first." }, { status: 401 });
   }
 
   const telegramFields: Record<string, string> = {};

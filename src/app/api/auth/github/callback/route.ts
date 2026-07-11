@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { verifyOAuthState, siteUrl } from "@/lib/oauth/crypto";
+import { siteUrl } from "@/lib/oauth/crypto";
 import { saveConnection } from "@/lib/oauth/store";
+import { consumeOAuthState } from "@/lib/wallet-auth";
 
 export const runtime = "nodejs";
 
@@ -18,12 +19,8 @@ export async function GET(req: Request) {
     return NextResponse.redirect(`${siteUrl()}/portfolio?oauth=error&reason=missing_code`);
   }
 
-  const state = verifyOAuthState<{
-    wallet: string;
-    provider: string;
-    returnTo: string;
-  }>(stateToken);
-  if (!state || state.provider !== "github") {
+  const state = consumeOAuthState(stateToken, "github");
+  if (!state) {
     return NextResponse.redirect(`${siteUrl()}/portfolio?oauth=error&reason=invalid_state`);
   }
 

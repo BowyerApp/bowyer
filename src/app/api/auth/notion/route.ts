@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { signOAuthState, siteUrl } from "@/lib/oauth/crypto";
+import { siteUrl } from "@/lib/oauth/crypto";
 import { isOAuthConfigured } from "@/lib/oauth/providers";
+import { createOAuthState, requireWalletSession } from "@/lib/wallet-auth";
 
 export const runtime = "nodejs";
 
@@ -21,13 +22,13 @@ export async function GET(req: Request) {
   if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
     return NextResponse.json({ ok: false, error: "Connect your wallet first." }, { status: 400 });
   }
-
-  const state = signOAuthState({
-    wallet: wallet.toLowerCase(),
-    provider: "notion",
-    returnTo,
-    ts: String(Date.now()),
-  });
+  if (!requireWalletSession(req, wallet)) {
+    return NextResponse.json({ ok: false, error: "Sign your wallet session first." }, { status: 401 });
+  }
+  if (!returnTo.startsWith("/")) {
+    return NextResponse.json({ ok: false, error: "Invalid return path." }, { status: 400 });
+  }
+  const state = createOAuthState({ wallet, provider: "notion", returnTo });
 
   const redirectUri = `${siteUrl()}/api/auth/notion/callback`;
   const url = new URL("https://api.notion.com/v1/oauth/authorize");

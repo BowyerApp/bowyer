@@ -46,6 +46,8 @@ interface WalletContextValue {
   hasProvider: boolean;
   connect: () => Promise<string | null>;
   disconnect: () => void;
+  /** Signs an expiring BOWYER login challenge and creates an HttpOnly session. */
+  authenticate: () => Promise<boolean>;
   /** Sends a native-token payment; resolves to the transaction hash. */
   sendPayment: (to: string, usd: number) => Promise<string>;
 }
@@ -131,7 +133,32 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const disconnect = useCallback(() => {
     setAddress(null);
     localStorage.removeItem(STORAGE_KEY);
+    fetch("/api/auth/wallet", { method: "DELETE" }).catch(() => {});
   }, []);
+
+  const authenticate = useCallback(async (): Promise<boolean> => {
+    const provider = getProvider();
+    const wallet = address ?? (await connect());
+    if (!provider || !wallet) return false;
+
+    const existing = await fetch("/api/auth/wallet?session=1").then((res) => res.json()).catch(() => null);
+    if (existing?.wallet?.toLowerCase() === wallet.toLowerCase()) return true;
+
+    const challenge = await fetch(`/api/auth/wallet?wallet=${wallet}`).then((res) => res.json());
+    if (!challenge.ok || !challenge.message || !challenge.nonce) return false;
+
+    const signature = (await provider.request({
+      method: "personal_sign",
+      params: [challenge.message, wallet],
+    })) as string;
+
+    const response = await fetch("/api/auth/wallet", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wallet, nonce: challenge.nonce, signature }),
+    });
+    return response.ok;
+  }, [address, connect]);
 
   const sendPayment = useCallback(
     async (to: string, usd: number): Promise<string> => {
@@ -170,7 +197,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <WalletContext.Provider
-      value={{ address, connecting, hasProvider, connect, disconnect, sendPayment }}
+      value={{ address, connecting, hasProvider, connect, disconnect, authenticate, sendPayment }}
     >
       {children}
     </WalletContext.Provider>

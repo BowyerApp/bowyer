@@ -1,5 +1,7 @@
 import { getAgentSources, type KnowledgeSource } from "@/lib/data/agent-registry";
 import { getAccessTokenForAgent, getGitHubTokenForAgent } from "@/lib/oauth/store";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 
 /**
  * Live knowledge ingestion. When a business was launched with sources,
@@ -32,6 +34,42 @@ export function isValidSourceUrl(url: string): boolean {
   try {
     const u = new URL(url);
     return u.protocol === "https:" || u.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function isPrivateAddress(address: string): boolean {
+  if (isIP(address) === 4) {
+    const [a, b] = address.split(".").map(Number);
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      a >= 224 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127)
+    );
+  }
+  const normalized = address.toLowerCase();
+  return normalized === "::1" || normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe80:");
+}
+
+/** Reject local/private destinations before a source is fetched server-side. */
+export async function isSafePublicHttpUrl(url: string): Promise<boolean> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return false;
+  if (parsed.hostname === "localhost" || parsed.hostname.endsWith(".localhost")) return false;
+  try {
+    const addresses = await lookup(parsed.hostname, { all: true, verbatim: true });
+    return addresses.length > 0 && addresses.every(({ address }) => !isPrivateAddress(address));
   } catch {
     return false;
   }
@@ -230,7 +268,8 @@ async function fetchXTimeline(url: string, token: string): Promise<string | null
 }
 
 async function fetchOne(source: KnowledgeSource, slug?: string): Promise<string | null> {
-  const cached = cache.get(source.url);
+  const cacheKey = `${slug ?? "public"}:${source.type}:${source.url}`;
+  const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.at < TTL_MS) return cached.text;
 
   if (source.type === "notion" && slug) {
@@ -238,7 +277,7 @@ async function fetchOne(source: KnowledgeSource, slug?: string): Promise<string 
     if (token) {
       const text = (await fetchNotionPage(source.url, token))?.slice(0, MAX_CHARS_PER_SOURCE);
       if (text && text.length >= 20) {
-        cache.set(source.url, { at: Date.now(), text });
+        cache.set(cacheKey, { at: Date.now(), text });
         return text;
       }
     }
@@ -247,7 +286,7 @@ async function fetchOne(source: KnowledgeSource, slug?: string): Promise<string 
   if (source.type === "discord") {
     const text = (await fetchDiscordChannel(source.url))?.slice(0, MAX_CHARS_PER_SOURCE);
     if (text && text.length >= 20) {
-      cache.set(source.url, { at: Date.now(), text });
+      cache.set(cacheKey, { at: Date.now(), text });
       return text;
     }
   }
@@ -257,7 +296,7 @@ async function fetchOne(source: KnowledgeSource, slug?: string): Promise<string 
     if (token) {
       const text = (await fetchXTimeline(source.url, token))?.slice(0, MAX_CHARS_PER_SOURCE);
       if (text && text.length >= 20) {
-        cache.set(source.url, { at: Date.now(), text });
+        cache.set(cacheKey, { at: Date.now(), text });
         return text;
       }
     }
@@ -267,7 +306,7 @@ async function fetchOne(source: KnowledgeSource, slug?: string): Promise<string 
     const md = await firecrawlScrape(source.url, slug);
     if (md) {
       const text = md.slice(0, MAX_CHARS_PER_SOURCE);
-      cache.set(source.url, { at: Date.now(), text });
+      cache.set(cacheKey, { at: Date.now(), text });
       return text;
     }
   }
@@ -307,7 +346,7 @@ async function fetchOne(source: KnowledgeSource, slug?: string): Promise<string 
     text = text.slice(0, MAX_CHARS_PER_SOURCE);
     if (text.length < 40) return null;
 
-    cache.set(source.url, { at: Date.now(), text });
+    cache.set(cacheKey, { at: Date.now(), text });
     return text;
   } catch {
     return null;

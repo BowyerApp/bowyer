@@ -58,16 +58,20 @@ const OAUTH_ROWS = [
 ] as const;
 
 export function ConnectionsPanel() {
-  const { address } = useWallet();
+  const { address, authenticate } = useWallet();
   const [connections, setConnections] = useState<Connection[]>([]);
   const [configured, setConfigured] = useState<Configured | null>(null);
   const [loading, setLoading] = useState(true);
   const [telegramBusy, setTelegramBusy] = useState(false);
   const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME?.trim();
 
-  const refresh = useCallback(() => {
+  const refresh = useCallback(async () => {
     if (!address) return;
     setLoading(true);
+    if (!(await authenticate())) {
+      setLoading(false);
+      return;
+    }
     fetch(`/api/auth/connections?wallet=${address}`)
       .then((r) => r.json())
       .then((d) => {
@@ -79,7 +83,7 @@ export function ConnectionsPanel() {
         setConfigured(null);
       })
       .finally(() => setLoading(false));
-  }, [address]);
+  }, [address, authenticate]);
 
   useEffect(() => {
     refresh();
@@ -90,6 +94,7 @@ export function ConnectionsPanel() {
     window.onBowyerTelegramAuth = async (user) => {
       setTelegramBusy(true);
       try {
+        if (!(await authenticate())) return;
         const res = await fetch("/api/auth/telegram", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -103,16 +108,23 @@ export function ConnectionsPanel() {
     return () => {
       delete window.onBowyerTelegramAuth;
     };
-  }, [address, refresh]);
+  }, [address, authenticate, refresh]);
 
   async function disconnect(provider: string) {
     if (!address) return;
+    if (!(await authenticate())) return;
     await fetch("/api/auth/connections", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ wallet: address, provider }),
     });
     refresh();
+  }
+
+  async function beginOAuth(event: React.MouseEvent<HTMLAnchorElement>, authPath: string) {
+    event.preventDefault();
+    if (!address || !(await authenticate())) return;
+    window.location.assign(`${authPath}?wallet=${address}&returnTo=/portfolio`);
   }
 
   function connectionFor(provider: string) {
@@ -169,6 +181,7 @@ export function ConnectionsPanel() {
                 ) : isConfigured ? (
                   <a
                     href={`${authPath}?wallet=${address}&returnTo=/portfolio`}
+                    onClick={(event) => beginOAuth(event, authPath)}
                     className="flex h-9 items-center rounded-sm bg-accent px-4 text-[13px] font-medium text-background hover:opacity-90"
                   >
                     Connect {label}

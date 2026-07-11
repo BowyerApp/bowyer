@@ -21,7 +21,8 @@ Copy `.env.example` to `.env` and fill in:
 | `FIRECRAWL_API_KEY` | No | Website knowledge sources scraped to clean LLM-ready markdown via [firecrawl.dev](https://firecrawl.dev) (500 free credits/mo). Falls back to a plain fetch when unset. |
 | `CRON_SECRET` | Recommended in prod | Secures `POST /api/cron/publish`. Set on Railway cron (every 15 min) when `DISABLE_SCHEDULER=1` on multi-instance deploys. |
 | `DISABLE_SCHEDULER` | No | Set to `1` to disable in-process scheduler; use external cron instead. |
-| `TELEGRAM_BOT_TOKEN` | No | Enables report delivery bot. Webhook: `https://bowyer.app/api/telegram/webhook` |
+| `TELEGRAM_BOT_TOKEN` | No | Enables report delivery and paid agent chat. Webhook: `https://bowyer.app/api/telegram/webhook` |
+| `TELEGRAM_WEBHOOK_SECRET` | With Telegram | Required webhook secret; register it with Telegram's `secret_token` parameter |
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME` | No | Bot username (no @) for Telegram Login Widget on Portfolio → Connections |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | No | GitHub OAuth for repo picker in Launch + private README access |
 | `NOTION_CLIENT_ID` / `NOTION_CLIENT_SECRET` | No | Notion OAuth for page picker + live page ingestion |
@@ -29,8 +30,8 @@ Copy `.env.example` to `.env` and fill in:
 | `DISCORD_BOT_TOKEN` | With Discord sources | Bot must be invited to servers; reads channel messages at runtime |
 | `X_CLIENT_ID` / `X_CLIENT_SECRET` | No | X OAuth 2.0 PKCE for timeline ingestion |
 | `NEXT_PUBLIC_SITE_URL` | Recommended | OAuth callback base (e.g. `https://bowyer.app`) |
-| `OAUTH_ENCRYPTION_KEY` | Recommended | Encrypts OAuth tokens at rest in SQLite |
-| `OAUTH_STATE_SECRET` | No | CSRF signing for OAuth redirects; defaults to `CRON_SECRET` |
+| `OAUTH_ENCRYPTION_KEY` | Required with OAuth | Encrypts OAuth tokens at rest in SQLite |
+| `OAUTH_STATE_SECRET` | Recommended | Independent secret reserved for app-level OAuth state signing |
 
 ### OAuth setup (GitHub, Notion, Discord, X, Telegram)
 
@@ -65,11 +66,17 @@ Set `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `NEXT_PUBLIC_SITE_URL=https:
 2. Set `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME` to the bot handle (no `@`)
 3. Users connect at **Portfolio → Connections**; chat_id is linked to their wallet for `/follow`
 
-**Telegram delivery webhook** (optional but recommended):
+**Telegram delivery and agent-chat webhook**:
 
 ```bash
-curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://bowyer.app/api/telegram/webhook"
+curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+  -d "url=https://bowyer.app/api/telegram/webhook" \
+  -d "secret_token=<TELEGRAM_WEBHOOK_SECRET>"
 ```
+
+Paid subscribers can link Telegram from **Portfolio → Connections**, then use
+`/follow slug`, `/use slug`, and `/ask question`. Free businesses remain
+report-only; use `/latest slug` to read their newest published output.
 
 | `DAILY_SEARCH_LIMIT` / `DAILY_LLM_LIMIT` / `DAILY_SCRAPE_LIMIT` | No | Per-business daily API quotas (defaults 40 / 80 / 20). |
 | `GITHUB_TOKEN` | No | Higher rate limits for live repo stats and GitHub knowledge sources. |

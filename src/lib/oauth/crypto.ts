@@ -3,10 +3,8 @@ import { createCipheriv, createDecipheriv, createHmac, randomBytes } from "node:
 const ALGO = "aes-256-gcm";
 
 function key(): Buffer {
-  const raw =
-    process.env.OAUTH_ENCRYPTION_KEY?.trim() ||
-    process.env.CRON_SECRET?.trim() ||
-    "bowyer-dev-only-change-in-production";
+  const raw = process.env.OAUTH_ENCRYPTION_KEY?.trim();
+  if (!raw) throw new Error("OAUTH_ENCRYPTION_KEY must be configured");
   return createHmac("sha256", "bowyer-oauth").update(raw).digest();
 }
 
@@ -29,42 +27,6 @@ export function decryptSecret(stored: string): string | null {
       decipher.final(),
     ]);
     return dec.toString("utf8");
-  } catch {
-    return null;
-  }
-}
-
-export function signOAuthState(payload: Record<string, string>): string {
-  const secret =
-    process.env.OAUTH_STATE_SECRET?.trim() ||
-    process.env.CRON_SECRET?.trim() ||
-    "bowyer-oauth-state-dev";
-  const body = JSON.stringify(payload);
-  const sig = createHmac("sha256", secret).update(body).digest("hex");
-  return Buffer.from(JSON.stringify({ ...payload, sig })).toString("base64url");
-}
-
-export function verifyOAuthState<T extends Record<string, string>>(
-  token: string,
-  maxAgeMs = 15 * 60 * 1000
-): T | null {
-  try {
-    const secret =
-      process.env.OAUTH_STATE_SECRET?.trim() ||
-      process.env.CRON_SECRET?.trim() ||
-      "bowyer-oauth-state-dev";
-    const parsed = JSON.parse(Buffer.from(token, "base64url").toString("utf8")) as T & {
-      sig?: string;
-      ts?: string;
-    };
-    const { sig, ...payload } = parsed;
-    const ts = payload.ts;
-    if (!sig || !ts) return null;
-    if (Date.now() - Number(ts) > maxAgeMs) return null;
-    const body = JSON.stringify(payload);
-    const expected = createHmac("sha256", secret).update(body).digest("hex");
-    if (sig !== expected) return null;
-    return payload as T;
   } catch {
     return null;
   }

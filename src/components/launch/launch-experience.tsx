@@ -262,7 +262,7 @@ export function LaunchExperience() {
   const [priceUsd, setPriceUsd] = useState(49);
   const [customPrice, setCustomPrice] = useState("");
   const [payoutAddress, setPayoutAddress] = useState("");
-  const { address: walletAddress, connect: connectWallet } = useWallet();
+  const { address: walletAddress, connect: connectWallet, authenticate } = useWallet();
 
   // Default the payout address to the connected wallet.
   useEffect(() => {
@@ -338,6 +338,15 @@ export function LaunchExperience() {
     setSources([...sources, { type, url }]);
     setSourceError(null);
     setActiveSource(null);
+  }
+
+  async function beginOAuth(event: React.MouseEvent<HTMLAnchorElement>, provider: string) {
+    event.preventDefault();
+    if (!walletAddress || !(await authenticate())) {
+      setSourceError("Sign your wallet session before connecting a source.");
+      return;
+    }
+    window.location.assign(`/api/auth/${provider}?wallet=${walletAddress}&returnTo=/launch`);
   }
 
   useEffect(() => {
@@ -465,6 +474,10 @@ export function LaunchExperience() {
     setSubmitting(true);
     setError(null);
     try {
+      if (!walletAddress || !(await authenticate())) {
+        setError("Connect and sign your wallet to launch a business.");
+        return;
+      }
       const res = await fetch("/api/agents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1066,6 +1079,7 @@ export function LaunchExperience() {
                       {walletAddress ? (
                         <a
                           href={`/api/auth/github?wallet=${walletAddress}&returnTo=/launch`}
+                          onClick={(event) => beginOAuth(event, "github")}
                           className="flex h-10 items-center gap-2 rounded-sm border border-border px-4 text-[13px] text-foreground hover:border-white/25"
                         >
                           <Github className="size-4" /> Connect GitHub
@@ -1116,6 +1130,7 @@ export function LaunchExperience() {
                       {walletAddress ? (
                         <a
                           href={`/api/auth/notion?wallet=${walletAddress}&returnTo=/launch`}
+                          onClick={(event) => beginOAuth(event, "notion")}
                           className="flex h-10 items-center gap-2 rounded-sm border border-border px-4 text-[13px] text-foreground hover:border-white/25"
                         >
                           <BookOpen className="size-4" /> Connect Notion
@@ -1160,6 +1175,7 @@ export function LaunchExperience() {
                       {walletAddress ? (
                         <a
                           href={`/api/auth/discord?wallet=${walletAddress}&returnTo=/launch`}
+                          onClick={(event) => beginOAuth(event, "discord")}
                           className="flex h-10 items-center gap-2 rounded-sm border border-border px-4 text-[13px] text-foreground hover:border-white/25"
                         >
                           <MessageCircle className="size-4" /> Connect Discord
@@ -1205,6 +1221,7 @@ export function LaunchExperience() {
                       {walletAddress ? (
                         <a
                           href={`/api/auth/x?wallet=${walletAddress}&returnTo=/launch`}
+                          onClick={(event) => beginOAuth(event, "x")}
                           className="flex h-10 items-center gap-2 rounded-sm border border-border px-4 text-[13px] text-foreground hover:border-white/25"
                         >
                           <MessageCircle className="size-4" /> Connect X

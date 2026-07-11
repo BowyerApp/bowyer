@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { createPkcePair } from "@/lib/oauth/pkce";
-import { signOAuthState, siteUrl } from "@/lib/oauth/crypto";
+import { siteUrl } from "@/lib/oauth/crypto";
 import { isOAuthConfigured } from "@/lib/oauth/providers";
+import { createOAuthState, requireWalletSession } from "@/lib/wallet-auth";
 
 export const runtime = "nodejs";
 
@@ -22,14 +23,18 @@ export async function GET(req: Request) {
   if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
     return NextResponse.json({ ok: false, error: "Connect your wallet first." }, { status: 400 });
   }
-
+  if (!requireWalletSession(req, wallet)) {
+    return NextResponse.json({ ok: false, error: "Sign your wallet session first." }, { status: 401 });
+  }
+  if (!returnTo.startsWith("/")) {
+    return NextResponse.json({ ok: false, error: "Invalid return path." }, { status: 400 });
+  }
   const { verifier, challenge } = createPkcePair();
-  const state = signOAuthState({
-    wallet: wallet.toLowerCase(),
+  const state = createOAuthState({
+    wallet,
     provider: "x",
     returnTo,
-    ts: String(Date.now()),
-    code_verifier: verifier,
+    payload: { code_verifier: verifier },
   });
 
   const redirectUri = `${siteUrl()}/api/auth/x/callback`;

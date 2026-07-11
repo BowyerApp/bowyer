@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAccessToken } from "@/lib/oauth/store";
+import { requireWalletSession } from "@/lib/wallet-auth";
 
 export const runtime = "nodejs";
 
@@ -21,6 +22,9 @@ export async function GET(req: Request) {
   const wallet = searchParams.get("wallet")?.trim() ?? "";
   if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
     return NextResponse.json({ ok: false, error: "wallet required" }, { status: 400 });
+  }
+  if (!requireWalletSession(req, wallet)) {
+    return NextResponse.json({ ok: false, error: "Wallet authentication required" }, { status: 401 });
   }
 
   const userToken = getAccessToken(wallet, "discord");
