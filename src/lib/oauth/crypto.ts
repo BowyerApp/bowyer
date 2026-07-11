@@ -57,13 +57,14 @@ export function verifyOAuthState<T extends Record<string, string>>(
       sig?: string;
       ts?: string;
     };
-    const { sig, ts, ...rest } = parsed;
+    const { sig, ...payload } = parsed;
+    const ts = payload.ts;
     if (!sig || !ts) return null;
     if (Date.now() - Number(ts) > maxAgeMs) return null;
-    const body = JSON.stringify(rest);
+    const body = JSON.stringify(payload);
     const expected = createHmac("sha256", secret).update(body).digest("hex");
     if (sig !== expected) return null;
-    return rest as T;
+    return payload as T;
   } catch {
     return null;
   }
