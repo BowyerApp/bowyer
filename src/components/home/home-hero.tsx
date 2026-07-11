@@ -68,7 +68,6 @@ export function HomeHero({ stats }: { stats: PlatformStats }) {
             <StatRow
               value={stats.businessesLive.toLocaleString()}
               label="Businesses live"
-              highlight
             />
             <StatRow value={stats.reportsPublished.toLocaleString()} label="Reports published" />
             <StatRow value={stats.openSource.toLocaleString()} label="Open source" />
@@ -80,20 +79,9 @@ export function HomeHero({ stats }: { stats: PlatformStats }) {
   );
 }
 
-function StatRow({
-  value,
-  label,
-  highlight,
-}: {
-  value: string;
-  label: string;
-  highlight?: boolean;
-}) {
+function StatRow({ value, label }: { value: string; label: string }) {
   return (
     <div className="flex lg:flex-row-reverse items-center gap-3 lg:gap-4">
-      {highlight && (
-        <span className="size-1.5 rounded-full bg-[#D7FF00] shrink-0" />
-      )}
       <div className="lg:text-right">
         <p className="text-2xl lg:text-[1.75rem] font-semibold tracking-tight text-white tabular-nums">
           {value}
