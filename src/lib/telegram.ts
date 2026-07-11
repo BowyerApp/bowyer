@@ -18,6 +18,25 @@ import { resolveAgentIdentity } from "@/lib/agent-identity";
 import { askAgent, getStoredReports } from "@/lib/agent-runtime";
 
 const API = (token: string) => `https://api.telegram.org/bot${token}`;
+const SITE = "https://bowyer.app";
+
+type InlineKeyboard = {
+  inline_keyboard: { text: string; url?: string; callback_data?: string }[][];
+};
+
+const START_MENU: InlineKeyboard = {
+  inline_keyboard: [
+    [
+      { text: "Subscribe: Whale Hunter", callback_data: "cta:whale" },
+      { text: "Explore trading agents", callback_data: "cta:trading" },
+    ],
+    [
+      { text: "Connect wallet + Telegram", callback_data: "cta:wallet" },
+      { text: "My businesses", callback_data: "cta:agents" },
+    ],
+    [{ text: "Open BOWYER", url: SITE }],
+  ],
+};
 
 export function telegramConfigured(): boolean {
   return Boolean(process.env.TELEGRAM_BOT_TOKEN?.trim());
@@ -50,7 +69,7 @@ export function followBusiness(chatId: string, slug: string): { ok: boolean; mes
   return { ok: true, message: `You will receive ${agent.name} reports here.` };
 }
 
-async function sendMessage(chatId: string, text: string): Promise<void> {
+async function sendMessage(chatId: string, text: string, replyMarkup?: InlineKeyboard): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
   if (!token) return;
   const chunks = text.match(/[\s\S]{1,3900}(?:\s|$)|[\s\S]{1,3900}/g) ?? [text];
@@ -62,6 +81,7 @@ async function sendMessage(chatId: string, text: string): Promise<void> {
         chat_id: chatId,
         text: chunk.trim(),
         disable_web_page_preview: false,
+        ...(replyMarkup && chunks.length === 1 ? { reply_markup: replyMarkup } : {}),
       }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -69,6 +89,99 @@ async function sendMessage(chatId: string, text: string): Promise<void> {
       const detail = await res.text().catch(() => "");
       throw new Error(`Telegram send failed: ${detail.slice(0, 200)}`);
     }
+  }
+}
+
+async function answerCallbackQuery(id: string): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  if (!token) return;
+  await fetch(`${API(token)}/answerCallbackQuery`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ callback_query_id: id }),
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => {});
+}
+
+async function sendStartMenu(chatId: string): Promise<void> {
+  await sendMessage(
+    chatId,
+    [
+      "BOWYER is your autonomous agent workforce.",
+      "",
+      "Subscribe to a business for live reports and paid agent chat. Connect your Robinhood Chain wallet to manage subscriptions and link this Telegram account.",
+      "",
+      "Free businesses deliver published reports. Paid subscriptions unlock direct agent chat.",
+    ].join("\n"),
+    START_MENU
+  );
+}
+
+async function handleMenuAction(chatId: string, data: string): Promise<void> {
+  if (data === "cta:whale") {
+    await sendMessage(
+      chatId,
+      "Whale Hunter watches Robinhood Chain activity and publishes signal reports. Subscribe to unlock direct chat with the agent.",
+      {
+        inline_keyboard: [
+          [{ text: "View Whale Hunter", url: `${SITE}/agents/whale-hunter` }],
+          [{ text: "How paid chat works", callback_data: "cta:wallet" }],
+        ],
+      }
+    );
+    return;
+  }
+  if (data === "cta:trading") {
+    await sendMessage(
+      chatId,
+      "Explore trading intelligence businesses: follow free reports or subscribe to chat with a paid agent.",
+      {
+        inline_keyboard: [
+          [{ text: "Explore marketplace", url: `${SITE}/marketplace` }],
+          [{ text: "Launch a trading agent", url: `${SITE}/launch` }],
+        ],
+      }
+    );
+    return;
+  }
+  if (data === "cta:wallet") {
+    await sendMessage(
+      chatId,
+      "Connect your Robinhood Chain wallet on BOWYER, then link Telegram under Portfolio → Connections. This verifies ownership before subscriptions and paid agent chat are enabled.",
+      {
+        inline_keyboard: [
+          [{ text: "Connect wallet", url: `${SITE}/portfolio` }],
+          [{ text: "Browse businesses", url: `${SITE}/marketplace` }],
+        ],
+      }
+    );
+    return;
+  }
+  if (data === "cta:agents") {
+    const wallet = db()
+      .prepare("SELECT wallet FROM telegram_links WHERE chat_id = ?")
+      .get(chatId) as { wallet: string } | undefined;
+    if (!wallet) {
+      await sendMessage(
+        chatId,
+        "Link Telegram from Portfolio → Connections to see your businesses and use paid chat.",
+        { inline_keyboard: [[{ text: "Link Telegram", url: `${SITE}/portfolio` }]] }
+      );
+      return;
+    }
+    const follows = db()
+      .prepare("SELECT slug FROM telegram_follows WHERE chat_id = ? ORDER BY followed_at DESC")
+      .all(chatId) as { slug: string }[];
+    if (!follows.length) {
+      await sendMessage(
+        chatId,
+        "You are not following any businesses yet.",
+        { inline_keyboard: [[{ text: "Explore businesses", url: `${SITE}/marketplace` }]] }
+      );
+      return;
+    }
+    const lines = follows.map(({ slug }) => `• ${slug}`);
+    await sendMessage(chatId, `Your followed businesses\n\n${lines.join("\n")}\n\nUse /use slug to select one.`);
   }
 }
 
@@ -103,7 +216,14 @@ export async function notifyReportPublished(
 
 export async function handleTelegramUpdate(update: {
   message?: { chat: { id: number }; text?: string };
+  callback_query?: { id: string; data?: string; message?: { chat: { id: number } } };
 }): Promise<void> {
+  const callback = update.callback_query;
+  if (callback?.message?.chat?.id && callback.data) {
+    await answerCallbackQuery(callback.id);
+    await handleMenuAction(String(callback.message.chat.id), callback.data);
+    return;
+  }
   const msg = update.message;
   if (!msg?.text) return;
 
@@ -114,19 +234,12 @@ export async function handleTelegramUpdate(update: {
     .get(chatId) as { wallet: string } | undefined;
 
   if (text.startsWith("/start")) {
-    await sendMessage(
-      chatId,
-      [
-        "BOWYER agent chat",
-        "",
-        "1. Link Telegram in bowyer.app/portfolio → Connections.",
-        "2. /follow agent-slug to receive reports.",
-        "3. /use agent-slug, then ask a paid agent anything.",
-        "",
-        "Free agents deliver published reports only. Paid subscribers can chat with their agents.",
-        "Type /help for commands.",
-      ].join("\n")
-    );
+    await sendStartMenu(chatId);
+    return;
+  }
+
+  if (text.startsWith("/menu")) {
+    await sendStartMenu(chatId);
     return;
   }
 
@@ -226,6 +339,7 @@ export async function handleTelegramUpdate(update: {
       chatId,
       [
         "Commands:",
+        "/menu — subscriptions, wallet, and marketplace options",
         "/follow slug — receive reports",
         "/agents — list your businesses",
         "/use slug — select an agent",
