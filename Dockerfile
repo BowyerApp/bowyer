@@ -36,8 +36,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/better-sqlite3 ./nod
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/bindings ./node_modules/bindings
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
 
-USER nextjs
+# Note: no USER drop — platform volumes (e.g. Railway) mount root-owned, and
+# the container is already isolated. Mount persistent storage at /data.
 EXPOSE 3005
-# Mount persistent storage at /data (docker -v, compose volume, or Railway Volume).
 
 CMD ["node", "server.js"]
