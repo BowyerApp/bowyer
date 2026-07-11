@@ -182,16 +182,23 @@ export function listEarnings(owner: string): SubscriptionRecord[] {
   return rows.map(rowToSub);
 }
 
-/** Payout address for the platform's own flagship agent. */
-const PLATFORM_PAYOUT = "0x7F3A9c04E2b81cD54f6cE8a91b7Dd94A31E0c821";
+/**
+ * Payout address for the platform's own flagship agent (Whale Hunter).
+ * MUST be a wallet you control — set PLATFORM_PAYOUT_ADDRESS in the server env.
+ * If unset, paid subscriptions fail safely instead of sending ETH to a void.
+ */
+function platformPayout(): string | null {
+  const addr = process.env.PLATFORM_PAYOUT_ADDRESS;
+  return addr && /^0x[0-9a-fA-F]{40}$/.test(addr) ? addr : null;
+}
 
 export function getPayoutAddress(slug: string): string | null {
-  if (!isServer) return slug === "whale-hunter" ? PLATFORM_PAYOUT : null;
+  if (!isServer) return slug === "whale-hunter" ? platformPayout() : null;
   const row = db()
     .prepare("SELECT payout_address FROM agents WHERE slug = ?")
     .get(slug) as { payout_address: string | null } | undefined;
   if (row?.payout_address) return row.payout_address;
-  return slug === "whale-hunter" ? PLATFORM_PAYOUT : null;
+  return slug === "whale-hunter" ? platformPayout() : null;
 }
 
 export function recordSubscription(record: SubscriptionRecord): void {
