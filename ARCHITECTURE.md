@@ -1,172 +1,168 @@
-# Agent.fun — Foundation Architecture
+# BOWYER Architecture
 
-## 1. Folder Structure
+BOWYER is a **single Next.js 15 application** (App Router) that hosts the marketplace UI, REST/JSON-RPC APIs, MCP servers, Telegram webhook, and background scheduling. All persistent state lives in **SQLite** via `better-sqlite3`.
+
+**Live:** [bowyer.app](https://bowyer.app) · **Chain:** Robinhood Chain (mainnet `4663`) · **Repo:** [github.com/BowyerApp/bowyer](https://github.com/BowyerApp/bowyer)
+
+## System overview
+
+```mermaid
+flowchart TB
+  subgraph clients [Clients]
+    Browser[Web browser]
+    Telegram[Telegram users]
+    MCP[MCP clients / Cursor]
+    Cron[External cron]
+  end
+
+  subgraph bowyer [BOWYER — Next.js on Railway]
+    UI[React UI / App Router]
+    API[API routes /api/*]
+    MCPRoute[MCP /api/mcp/slug]
+    Runtime[agent-runtime.ts]
+    DB[(SQLite bowyer.db)]
+  end
+
+  subgraph external [External services]
+    RHChain[Robinhood Chain RPC]
+    LLM[LLM providers]
+    Tavily[Tavily / Firecrawl]
+    OAuth[GitHub Notion Discord X]
+    TGBot[Telegram Bot API]
+    RobinhoodMCP[Robinhood Trading MCP]
+  end
+
+  Browser --> UI
+  Browser --> API
+  Telegram --> TGBot
+  TGBot --> API
+  MCP --> MCPRoute
+  Cron --> API
+
+  UI --> API
+  API --> DB
+  MCPRoute --> Runtime
+  API --> Runtime
+  Runtime --> DB
+  Runtime --> LLM
+  Runtime --> Tavily
+  API --> RHChain
+  API --> OAuth
+  API --> RobinhoodMCP
+  Runtime --> TGBot
+```
+
+## Repository layout
 
 ```
 src/
 ├── app/
-│   ├── layout.tsx                 # Geist font, shell, global nav
-│   ├── globals.css                # Design tokens, typography base
-│   ├── page.tsx                   # Redirect → /marketplace
-│   ├── marketplace/
-│   │   └── page.tsx               # Agent discovery (FULL BUILD)
-│   ├── agents/
-│   │   └── [slug]/
-│   │       └── page.tsx           # Agent profile (FULL: whale-hunter)
-│   ├── launch/page.tsx            # Stub
-│   ├── arena/page.tsx             # Stub
-│   └── portfolio/page.tsx         # Stub
-├── components/
-│   ├── layout/
-│   │   ├── site-header.tsx        # Horizontal nav, 1440px container
-│   │   ├── site-footer.tsx
-│   │   └── container.tsx          # max-w-[1440px] mx-auto px-6
-│   ├── ui/
-│   │   ├── button.tsx             # Primary / secondary / ghost
-│   │   ├── badge.tsx
-│   │   ├── divider.tsx
-│   │   └── stat.tsx
-│   ├── typography/
-│   │   └── index.tsx              # PageTitle, SectionTitle, Text, Muted, Label
-│   ├── marketplace/
-│   │   ├── marketplace-toolbar.tsx
-│   │   ├── agent-table.tsx
-│   │   └── agent-table-row.tsx
-│   └── agent/
-│       ├── agent-header.tsx
-│       ├── agent-metrics.tsx
-│       ├── performance-chart.tsx  # Recharts
-│       ├── activity-list.tsx
-│       ├── access-panel.tsx
-│       └── strategy-section.tsx
+│   ├── (site)/          # Marketing, marketplace, agent pages, arena, launch, portfolio
+│   ├── api/             # REST + webhooks + MCP + cron
+│   └── telegram/        # Telegram Mini App page
+├── components/          # React UI by feature
 └── lib/
-    ├── types.ts                   # Agent, Activity, PerformancePoint
-    ├── utils.ts                   # cn, formatters
-    └── data/
-        ├── agents.ts              # Mock agent registry
-        ├── whale-hunter.ts        # Rich profile data
-        └── index.ts               # getAgentBySlug, listAgents
+    ├── agent-runtime.ts # Report generation, askAgent(), scheduling hooks
+    ├── mcp-server.ts    # Per-agent MCP tool definitions
+    ├── telegram.ts      # Bot commands, delivery queue, conversation routing
+    ├── telegram-chat.ts # Chat access, session, message memory
+    ├── data/            # Agent catalog, registry, arena live stats
+    ├── oauth/           # OAuth flows + encrypted token storage
+    ├── db.ts            # SQLite schema + migrations
+    └── …                # chain, payments, promo pricing, token gate, trading
 ```
 
-## 2. Component List
+## Core user flows
 
-| Component | Purpose |
-|-----------|---------|
-| `Container` | 1440px max-width, responsive padding |
-| `SiteHeader` | Logo, nav links, CTA — no sidebar |
-| `SiteFooter` | Minimal legal + links |
-| `Button` | 3 variants, 8–14px radius |
-| `Badge` | Status, category, risk |
-| `Divider` | 1px rgba border, replaces card borders |
-| `Stat` | Label + value pair for metrics |
-| `PageTitle` / `SectionTitle` / `Muted` / `Label` | Typography system |
-| `MarketplaceToolbar` | Search + category filter |
-| `AgentTable` | List layout, not card grid |
-| `AgentTableRow` | Single agent row with key metrics |
-| `AgentHeader` | Name, creator, status, one-line thesis |
-| `AgentMetrics` | Horizontal stat strip |
-| `PerformanceChart` | Recharts line chart, real data only |
-| `ActivityList` | Recent trades / events |
-| `AccessPanel` | Subscribe / buy / invest options |
-| `StrategySection` | What the agent does, plain prose |
+### 1. Discover & subscribe
 
-## 3. Page Hierarchy
+1. User browses `/marketplace` or an agent page `/agents/[slug]`.
+2. **Free agents** — subscribe records a row; no payment.
+3. **Paid agents** — wallet session required; user pays creator payout address on Robinhood Chain; `verify-payment` confirms tx; subscription stored.
+4. **Promo pricing** (`src/lib/promo-pricing.ts`) can make catalog-paid agents free for the first N subscribers (e.g. Robinhood Trading Agent POC).
 
-```
-SiteHeader (all routes)
-├── /marketplace          ← primary discovery (built)
-│   └── AgentTable
-├── /agents/[slug]        ← profile (built: whale-hunter)
-│   ├── AgentHeader
-│   ├── AgentMetrics
-│   ├── PerformanceChart
-│   ├── StrategySection
-│   ├── ActivityList
-│   └── AccessPanel
-├── /launch               ← stub
-├── /arena                ← stub
-└── /portfolio            ← stub
-SiteFooter
-```
+### 2. MCP access
 
-## 4. Data Model
+Each live business exposes **`/api/mcp/{slug}`** (JSON-RPC).
 
-```typescript
-type AgentCategory = "trading" | "defi" | "analytics" | "arbitrage" | "social";
-type AgentStatus = "live" | "beta" | "paused";
-type PricingModel = "subscription" | "one-time" | "invest";
-type RiskLevel = "low" | "medium" | "high";
+- Discovery methods are public.
+- `tools/call` for paid businesses requires signed wallet session + `hasSubscription`.
+- Tools typically include `generate_report`, `get_latest_reports`, `ask`, `get_status`.
 
-interface AgentCreator {
-  name: string;
-  handle: string;
-  verified: boolean;
-}
+Implementation: `src/lib/mcp-server.ts` + `src/app/api/mcp/[slug]/route.ts`.
 
-interface AgentPricing {
-  model: PricingModel;
-  amount: number;
-  currency: "USD" | "USDC";
-  period?: "month" | "year";
-  minInvestment?: number;
-}
+### 3. Launch a business
 
-interface AgentPerformance {
-  totalReturnPct: number;      // e.g. 24.3
-  return30dPct: number;
-  winRatePct: number;
-  maxDrawdownPct: number;
-  sharpeRatio: number;
-  asOf: string;                // ISO date
-}
+`/launch` wizard → `POST /api/agents` → row in `agents` table (summary, LLM config, payout address, knowledge sources).
 
-interface AgentSummary {
-  id: string;
-  slug: string;
-  name: string;
-  tagline: string;
-  category: AgentCategory;
-  status: AgentStatus;
-  riskLevel: RiskLevel;
-  creator: AgentCreator;
-  pricing: AgentPricing;
-  performance: AgentPerformance;
-  subscribers: number;
-  createdAt: string;
-  tags: string[];
-}
+Creators can use **platform models** or **BYOK** (API key encrypted in SQLite). Premium platform models may require `$BOWYER` token balance (`src/lib/token-gate.ts`).
 
-interface AgentProfile extends AgentSummary {
-  description: string;
-  strategy: string;
-  instruments: string[];
-  chainId: 4663;
-  performanceHistory: PerformancePoint[];
-  activity: AgentActivity[];
-}
+### 4. Autonomous publishing
 
-interface PerformancePoint {
-  date: string;
-  value: number;               // cumulative return index, base 100
-}
+- In-process scheduler (`src/lib/scheduler.ts`) or external cron → `POST /api/cron/publish` (Bearer `CRON_SECRET`).
+- `agent-runtime` generates reports via LLM + live context (chain scan, Tavily, etc.).
+- Reports stored in `reports`; Telegram followers notified via durable `telegram_delivery_jobs` queue.
 
-interface AgentActivity {
-  id: string;
-  timestamp: string;
-  type: "trade" | "rebalance" | "signal" | "deposit";
-  summary: string;
-  pnlUsd?: number;
-}
-```
+### 5. Telegram
 
-## 5. Visual Rationale
+- **Webhook:** `POST /api/telegram/webhook` (secret token header).
+- **Conversation-first:** plain messages route to active agent (`telegram-chat.ts`); multi-turn memory in `telegram_messages`.
+- **Commands:** `/menu`, `/follow`, `/use`, `/scan`, etc.
+- **Mini App:** `/telegram` + `POST /api/auth/telegram/webapp` (initData HMAC verification).
 
-**Reference mood:** Linear's typographic clarity + Robinhood's financial confidence + Stripe's information density without ornament.
+### 6. Robinhood Trading Agent
 
-- **Near-black canvas (#0A0A0A)** keeps focus on data; elevated surfaces (#111) only where grouping is necessary.
-- **Lime accent (#C8FF00)** used sparingly for primary actions and positive performance — same family as Robinhood Chain energy without copying their brand.
-- **No cards everywhere:** agent list is a table with row dividers; profile sections separated by 1px lines and whitespace, not boxed panels.
-- **Typography does the work:** Geist at clear size steps (32/24/16/14/12) with tight tracking on headings, relaxed line-height on body.
-- **Motion:** 150–200ms opacity/translate on row hover only — nothing decorative.
-- **Charts:** one Recharts line on the profile page, labeled axes, no sparklines or fake dashboards.
-- **Credibility:** real-sounding strategy copy, plausible metrics, no fake TVL banners or platform-wide stat hero.
+- Web console: `RobinhoodTradingPanel` + `/api/trading/policy`, `/api/trading/decisions`.
+- Connects to Robinhood’s official Agentic Trading MCP (user-authorized).
+- Decision ledger + risk policy stored per wallet in SQLite.
+
+### 7. Arena
+
+- Live leaderboard from DB activity (`src/lib/data/arena-live.ts`, `/api/arena`).
+- Replaces earlier mock data; rankings derived from real reports and match records.
+
+## Data model (SQLite)
+
+| Table / area | Purpose |
+| --- | --- |
+| `agents` | Registered businesses (JSON summary, LLM config, payout address) |
+| `reports` | Published agent output |
+| `subscriptions` | Wallet ↔ business access (optional tx_hash) |
+| `oauth_connections` | Encrypted third-party tokens per wallet |
+| `telegram_*` | Links, follows, sessions, message history, delivery queue |
+| `trading_policies` / `robinhood_connections` | Trading agent state |
+| `oauth_states` | Short-lived OAuth CSRF state |
+
+Database path: `BOWYER_DB_PATH` (production: `/data/bowyer.db` on a mounted volume).
+
+## External integrations
+
+| Integration | Use |
+| --- | --- |
+| Robinhood Chain RPC | Payment verification, token gating (`balanceOf`) |
+| LLM (OpenAI-compatible) | Reports, `ask`, launch validation |
+| Tavily / Firecrawl | Live web grounding for reports |
+| GitHub / Notion / Discord / X OAuth | Knowledge sources + Connections panel |
+| Telegram Bot API | Report delivery + agent chat |
+| Robinhood Trading MCP | Agentic brokerage (user-funded account) |
+
+## Deployment
+
+- **Host:** Railway (recommended) or Docker — **not** serverless (SQLite + long-lived scheduler).
+- **Build:** `next build` → standalone Node server on port 3005.
+- **Secrets:** See `.env.example` and [DEPLOY.md](./DEPLOY.md).
+- **Persistence:** Single replica + volume for SQLite during beta.
+
+## Development provenance
+
+This repository’s **public git history is young** because much of the product was iterated locally and on Railway before being batched to GitHub. The application has been live at bowyer.app since launch week (July 2026). Ongoing work is pushed incrementally to `main`.
+
+For security details see [SECURITY.md](./SECURITY.md).
+
+## SDK
+
+TypeScript and Python client SDKs ship under `sdk/` and are downloadable from `/docs/sdk`. They wrap MCP HTTP calls and subscription helpers.
+
+---
+
+Last updated: 2026-07-15

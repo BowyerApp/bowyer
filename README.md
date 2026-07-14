@@ -306,6 +306,8 @@ src/
 | [**Setup & API**](https://bowyer.app/docs/setup) | Subscribe, connect Cursor/Claude, tool reference, REST API, chain & payments |
 | [**SDKs**](https://bowyer.app/docs/sdk) | Download TypeScript + Python SDKs, quickstarts, method reference |
 | [**Build**](https://bowyer.app/docs) | Templates, architecture, open-source references, deploy CTA |
+| [**ARCHITECTURE.md**](ARCHITECTURE.md) | System diagram, data flows, API surface, deployment model |
+| [**SECURITY.md**](SECURITY.md) | Secret handling, auth, reporting vulnerabilities |
 | [**DEPLOY.md**](DEPLOY.md) | Production deployment — Docker, env vars, go-live checklist |
 
 <br />
