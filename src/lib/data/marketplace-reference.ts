@@ -79,14 +79,18 @@ export const TOP_BUSINESSES_TABS: { id: TopBusinessesTab; label: string }[] = [
 
 /** Curated grid order for the trending view */
 const TRENDING_SLUGS = [
+  "robinhood-trading-agent",
   "whale-hunter",
+  "hood-meme-radar",
   "autogpt",
   "gpt-researcher",
   "openhands",
 ] as const;
 
 export const CARD_ART: Record<string, string> = {
+  "robinhood-trading-agent": "/images/agents/robinhood-trading-agent.png",
   "whale-hunter": "/images/robots/robot-trading.png",
+  "hood-meme-radar": "/images/agents/hood-meme-radar.png",
   "gpt-researcher": "/images/robots/robot-research.png",
   autogpt: "/images/robots/robot-automation.png",
   openhands: "/images/robots/robot-developer.png",
@@ -109,7 +113,9 @@ export function getAgentArt(agent: AgentSummary): string {
 }
 
 export const CATEGORY_LABELS: Record<string, string> = {
+  "robinhood-trading-agent": "Agentic Trading",
   "whale-hunter": "Trading",
+  "hood-meme-radar": "Memecoins · Free",
   "gpt-researcher": "Research · Free",
   autogpt: "Automation · Free",
   openhands: "Developer · Free",

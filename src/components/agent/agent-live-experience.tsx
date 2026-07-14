@@ -1,13 +1,32 @@
 "use client";
 
+import { useRef, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { ArrowUpRight, BadgeCheck } from "lucide-react";
 import { Container } from "@/components/layout/container";
 import { LiveTerminal } from "@/components/agent/live-terminal";
 import { SubscribeButton } from "@/components/agent/subscribe-button";
 import { AccessSetup } from "@/components/agent/access-setup";
+import { RobinhoodTradingPanel } from "@/components/trading/robinhood-trading-panel";
+import { AgentPlayground } from "@/components/agent/agent-playground";
+import type { Agent3DControlHandle } from "@/components/agent/agent-3d-hero";
+import { getAgentArt } from "@/lib/data/marketplace-reference";
+import { getAgentAvatarGlb } from "@/lib/agent-avatars";
+import { effectivePricingForSubscribe, type PromoStatus } from "@/lib/promo-pricing";
 import type { AgentProfile } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import dynamic from "next/dynamic";
+
+const Agent3DHero = dynamic(
+  () => import("@/components/agent/agent-3d-hero").then((m) => m.Agent3DHero),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[220px] w-full animate-pulse rounded-sm border border-border bg-white/[0.03] lg:h-[240px]" />
+    ),
+  }
+);
 
 /** Real, verifiable data for this agent — sourced from the DB and GitHub. */
 export interface RealAgentData {
@@ -33,16 +52,34 @@ export interface RealAgentData {
 export function AgentLiveExperience({
   agent,
   real,
+  promo = null,
 }: {
   agent: AgentProfile;
   real: RealAgentData;
+  promo?: PromoStatus | null;
 }) {
-  const isFreeAgent = agent.pricing.model === "free" || agent.pricing.amount <= 0;
+  const subscribePricing = effectivePricingForSubscribe(agent);
+  const isFreeAgent = subscribePricing.model === "free" || subscribePricing.amount <= 0;
+  const listPriceUsd = subscribePricing.listPriceUsd ?? promo?.listPriceUsd ?? null;
+  const promoActive = Boolean(promo?.active && listPriceUsd);
   const monthly =
     agent.pricing.model === "subscription" ? `$${agent.pricing.amount}/month` : `$${agent.pricing.amount}`;
   const isFlagship = agent.slug === "whale-hunter";
+  const isRobinhoodTrader = agent.slug === "robinhood-trading-agent";
+  const heroArt = getAgentArt(agent);
+  const showHeroArt = heroArt.includes("/images/agents/");
+  const avatarGlb = getAgentAvatarGlb(agent.slug);
+  const avatarControlRef = useRef<Agent3DControlHandle>(null);
+  const [avatarGlbOverride, setAvatarGlbOverride] = useState<string | null>(null);
+  const activeGlb = avatarGlbOverride ?? avatarGlb;
 
-  const subtitle = isFlagship ? "Institutional flow intelligence" : agent.tagline;
+  const subtitle = isRobinhoodTrader
+    ? "Agentic equity intelligence with hard risk controls"
+    : agent.slug === "hood-meme-radar"
+      ? "Robinhood Chain memecoin intelligence on Telegram"
+      : isFlagship
+        ? "Institutional flow intelligence"
+        : agent.tagline;
 
   // Every number here is real: database counts, GitHub stats, or the price.
   const proofMetrics = [
@@ -54,7 +91,7 @@ export function AgentLiveExperience({
           { value: compact(real.github.stars), label: "GitHub stars" },
           { value: compact(real.github.forks), label: "GitHub forks" },
         ]
-      : [{ value: isFreeAgent ? "Free" : monthly, label: "Price" }]),
+      : [{ value: promoActive ? "Free" : isFreeAgent ? "Free" : monthly, label: promoActive ? "POC price" : "Price" }]),
     { value: "4663", label: "Robinhood Chain ID" },
   ].slice(0, 6);
 
@@ -118,7 +155,16 @@ export function AgentLiveExperience({
             </p>
 
             <h1 className="mt-5 text-[44px] sm:text-[56px] font-semibold tracking-[-0.03em] leading-[1.02] text-foreground">
-              {agent.name}
+              {showHeroArt ? (
+                <span className="flex items-center gap-4">
+                  <span className="relative size-14 shrink-0 overflow-hidden rounded-sm border border-white/10 sm:size-16">
+                    <Image src={heroArt} alt="" fill className="object-cover" />
+                  </span>
+                  {agent.name}
+                </span>
+              ) : (
+                agent.name
+              )}
             </h1>
             <p className="mt-3 text-[18px] sm:text-[20px] text-muted tracking-[-0.01em]">
               {subtitle}
@@ -127,6 +173,16 @@ export function AgentLiveExperience({
             <p className="mt-6 max-w-[440px] text-[14px] leading-relaxed text-muted">
               {agent.thesis}
             </p>
+
+            {promoActive && promo && (
+              <div className="mt-6 max-w-[480px] rounded-sm border border-accent/30 bg-accent/[0.06] px-4 py-3 text-left">
+                <p className="text-[13px] font-medium text-foreground">{promo.headline}</p>
+                <p className="mt-1.5 text-[13px] leading-relaxed text-muted">{promo.detail}</p>
+                <p className="mt-2 text-[12px] text-accent tabular-nums">
+                  {promo.spotsRemaining} of {promo.spotsTotal} free spots left
+                </p>
+              </div>
+            )}
 
             <div className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-3 text-[13px]">
               <span className="flex items-center gap-1.5 text-foreground">
@@ -148,7 +204,13 @@ export function AgentLiveExperience({
             </div>
 
             <div className="mt-10 flex flex-wrap items-center gap-5">
-              <SubscribeButton slug={agent.slug} pricing={agent.pricing} />
+              <SubscribeButton slug={agent.slug} pricing={subscribePricing} promo={promo} />
+              <a
+                href="#play"
+                className="text-[13px] text-muted transition-colors hover:text-foreground"
+              >
+                Try it for fun ↓
+              </a>
               <a
                 href="#reports"
                 className="text-[13px] text-muted transition-colors hover:text-foreground"
@@ -158,14 +220,39 @@ export function AgentLiveExperience({
             </div>
           </div>
 
-          <LiveTerminal
-            slug={agent.slug}
-            reportsTotal={real.reportsTotal}
-            subscribers={real.subscribers}
-            lastReportAt={real.lastReportAt}
-            className="w-full lg:h-[520px] lg:self-center"
-          />
+          <div className="flex w-full flex-col gap-5 lg:h-[580px] lg:self-center">
+            {activeGlb && (
+              <Agent3DHero
+                ref={avatarControlRef}
+                glbUrl={activeGlb}
+                agentName={agent.name}
+                className="h-[260px] w-full shrink-0 lg:h-[280px]"
+                fallback={
+                  showHeroArt ? (
+                    <div className="relative h-[260px] w-full overflow-hidden rounded-sm border border-white/10 lg:h-[280px]">
+                      <Image src={heroArt} alt="" fill className="object-cover" />
+                    </div>
+                  ) : undefined
+                }
+              />
+            )}
+            <LiveTerminal
+              slug={agent.slug}
+              reportsTotal={real.reportsTotal}
+              subscribers={real.subscribers}
+              lastReportAt={real.lastReportAt}
+              className="w-full flex-1 min-h-[260px]"
+            />
+          </div>
         </div>
+
+        <AgentPlayground
+          slug={agent.slug}
+          name={agent.name}
+          hasAvatar={!!activeGlb}
+          avatarControlRef={avatarControlRef}
+          onAvatarUploaded={setAvatarGlbOverride}
+        />
       </Container>
 
       {/* 2 · PUBLISHED WORK */}
@@ -276,27 +363,62 @@ export function AgentLiveExperience({
         )}
       </Container>
 
+      {isRobinhoodTrader && (
+        <Container className="mt-24 lg:mt-32" id="trading">
+          <SectionHeading
+            index="04"
+            title="Trading console"
+            sub="Connect Robinhood MCP, configure limits, and review the decision ledger."
+          />
+          <div className="mt-10">
+            <RobinhoodTradingPanel />
+          </div>
+        </Container>
+      )}
+
       {/* 5 · SUBSCRIBE */}
       <Container className="mt-24 lg:mt-32 pb-24" id="subscribe">
         <div className="border-t border-border pt-16 text-center">
-          <p className="text-[13px] text-muted">Full access</p>
-          <p className="mt-4 text-[40px] sm:text-[64px] font-semibold tracking-[-0.03em] text-foreground">
-            {isFreeAgent ? (
-              "Free"
-            ) : (
-              <>
-                {monthly.replace("/month", "")}
-                <span className="text-[20px] font-normal text-muted">/month</span>
-              </>
-            )}
-          </p>
-          <p className="mt-3 text-[14px] text-muted">
-            {isFreeAgent
-              ? "Open source. Every report and output included."
-              : "Every report, on-demand generation, full archive. Cancel anytime."}
-          </p>
+          <p className="text-[13px] text-muted">{promoActive ? "Proof-of-concept access" : "Full access"}</p>
+          {promoActive && listPriceUsd ? (
+            <>
+              <p className="mt-4 text-[28px] sm:text-[36px] font-medium tracking-[-0.02em] text-muted line-through decoration-negative/70 decoration-2">
+                ${listPriceUsd}
+                <span className="text-[16px] font-normal">/month</span>
+              </p>
+              <p className="mt-2 text-[40px] sm:text-[64px] font-semibold tracking-[-0.03em] text-foreground">
+                Free
+              </p>
+              <p className="mt-3 max-w-[520px] mx-auto text-[14px] leading-relaxed text-muted">
+                {promo?.detail} Share your results — we want real proof this agent delivers value for traders.
+              </p>
+              {promo && (
+                <p className="mt-2 text-[13px] text-accent tabular-nums">
+                  {promo.spotsRemaining} of {promo.spotsTotal} spots remaining
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="mt-4 text-[40px] sm:text-[64px] font-semibold tracking-[-0.03em] text-foreground">
+                {isFreeAgent ? (
+                  "Free"
+                ) : (
+                  <>
+                    {monthly.replace("/month", "")}
+                    <span className="text-[20px] font-normal text-muted">/month</span>
+                  </>
+                )}
+              </p>
+              <p className="mt-3 text-[14px] text-muted">
+                {isFreeAgent
+                  ? "Open source. Every report and output included."
+                  : "Every report, on-demand generation, full archive. Cancel anytime."}
+              </p>
+            </>
+          )}
           <div className="mt-8 flex justify-center">
-            <SubscribeButton slug={agent.slug} pricing={agent.pricing} size="lg" />
+            <SubscribeButton slug={agent.slug} pricing={subscribePricing} promo={promo} size="lg" />
           </div>
           <p className="mt-6 text-[12px] text-subtle">
             Informational outputs only — not investment advice.{" "}

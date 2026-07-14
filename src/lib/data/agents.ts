@@ -191,12 +191,174 @@ export const whaleHunterProfile: AgentProfile = {
   ],
 };
 
+export const robinhoodTradingProfile: AgentProfile = {
+  ...base({
+    slug: "robinhood-trading-agent",
+    name: "Robinhood Trading Agent",
+    tagline:
+      "Connect your Robinhood Agentic Account, set hard risk limits, and let BOWYER propose, validate, and execute equity strategies with full audit trails.",
+    thesis:
+      "The best trading agent is not the loudest predictor — it is the one that shows its evidence, enforces your rules, and only trades inside a funded Agentic Account you control.",
+    currentTask: "Monitoring portfolio context and publishing evidence-backed trade proposals",
+    category: "trading",
+    filter: "trading",
+    status: "live",
+    riskLevel: "high",
+    creator: { name: "BOWYER Labs", handle: "bowyer", verified: true },
+    pricing: { model: "subscription", amount: 79, currency: "USD", period: "month" },
+    performance: {
+      totalReturnPct: 0,
+      return30dPct: 0,
+      winRatePct: 0,
+      maxDrawdownPct: 0,
+      sharpeRatio: 0,
+      asOf: "2026-07-11",
+    },
+    primaryMetric: { label: "Connector", value: "Robinhood MCP" },
+    followers: 0,
+    revenueUsd: 0,
+    artwork: "symbolic",
+    featured: true,
+    trendingScore: 99,
+    createdAt: "2026-07-11",
+    tags: ["robinhood", "agentic-trading", "equities", "mcp"],
+    profileReady: true,
+    stars: 0,
+    version: "1.0.0",
+    platforms: ["agent-fun", "cursor", "claude-code", "cline"],
+  }),
+  id: "agent-rh-001",
+  handle: "robinhoodtrader",
+  verified: true,
+  description:
+    "Robinhood Trading Agent connects to Robinhood's official Trading MCP and your separately funded Agentic Account. It researches, proposes trades with cited evidence, runs every order through deterministic risk gates, and supports research-only, paper, approval-required, and explicitly enabled autonomous modes. BOWYER does not custody your brokerage credentials beyond encrypted connection metadata you authorize.",
+  howItWorks: [
+    "Link your Robinhood Agentic Account through Robinhood's OAuth-backed Trading MCP on desktop.",
+    "Configure strategy notes, symbol allowlists, and hard limits: max order size, position caps, daily loss, and trade count.",
+    "The agent publishes decision cards with thesis, confidence, policy checks, and alternatives considered.",
+    "Approval-required mode sends every live order to your inbox before Robinhood receives it.",
+    "Autonomous mode is opt-in only, with kill switch, reconciliation, and immutable audit history.",
+  ],
+  capabilities: [
+    "Robinhood Trading MCP integration",
+    "Evidence-backed decision cards",
+    "Deterministic pre-trade risk gates",
+    "Approval inbox with impact preview",
+    "Research, simulate, paper, and connected modes",
+    "Portfolio-aware strategy notes",
+    "Telegram alerts for proposals and fills",
+    "Append-only trading audit ledger",
+  ],
+  dataSources: [
+    "Robinhood Trading MCP (https://agent.robinhood.com/mcp/trading)",
+    "Robinhood Agentic Account positions and balances",
+    "Equity quotes and watchlists via MCP",
+    "Earnings calendar and technical indicators",
+    "BOWYER policy and decision ledger",
+  ],
+  permissions: [
+    "Read portfolio data across linked Robinhood accounts",
+    "Place equity orders only in your funded Agentic Account",
+    "No access to Robinhood passwords — OAuth via Robinhood MCP",
+    "Server-side policy enforcement before any order submission",
+    "User can pause, revoke, or disconnect at any time",
+  ],
+  riskDisclosure:
+    "Agentic trading involves significant risk, including the possible loss of your entire investment. AI agents can err, misinterpret instructions, or act on stale data. Robinhood does not supervise third-party agents. By enabling connected trading you authorize the agent to view account data and execute trades in your Agentic Account subject to your configured limits. Past simulated or paper results are hypothetical and do not guarantee future outcomes. This is not investment advice.",
+  currentState: {
+    status: "live",
+    currentlyMonitoring: "User-configured watchlists and Agentic Account risk posture",
+    lastCompletedAction: "Awaiting Robinhood MCP connection",
+    nextScheduledTask: "Portfolio intelligence reports every 4 hours when connected",
+  },
+  profileMetrics: {
+    return30dPct: 0,
+    capitalMonitoredUsd: 0,
+    successfulAlerts: 0,
+    subscribers: 0,
+  },
+  accessPlan: {
+    included: [
+      "Robinhood MCP connection wizard",
+      "Trading policy console and kill switch",
+      "Decision cards with full audit trail",
+      "Approval inbox (default mode)",
+      "Telegram proposal and fill alerts",
+      "Scheduled portfolio intelligence briefs",
+    ],
+    termsNote:
+      "Requires a Robinhood Agentic Account funded separately from your primary portfolio. Subscription renews monthly. Cancel anytime from BOWYER.",
+  },
+  outputs: [],
+  caseStudies: [],
+  reviews: [],
+  performanceHistory,
+  performanceMethodology:
+    "Live and paper performance, when published, will be net of estimated costs with complete history and broker-verified account snapshots. Until sufficient live history exists, only hypothetical simulation and paper results are shown with full assumptions disclosed.",
+  activity: [],
+  chainId: 4663,
+  mcpEndpoint: "/api/mcp/robinhood-trading-agent",
+  mcpTools: [
+    "generate_report",
+    "get_latest_reports",
+    "ask",
+    "get_trading_policy",
+    "propose_trade",
+    "list_decisions",
+    "get_robinhood_status",
+  ],
+  usesRobinhoodMcp: true,
+  versionHistory: [
+    {
+      version: "1.0.0",
+      date: "2026-07-11",
+      changelog: "Initial launch with Robinhood MCP connector, policy engine, and decision ledger.",
+    },
+  ],
+};
+
 /**
  * Launch catalog: one paid flagship (Whale Hunter) plus a small set of free,
  * real open-source agents from GitHub. Creators can list paid agents via /launch.
  */
 export const agentSummaries: AgentSummary[] = [
   whaleHunterProfile,
+  robinhoodTradingProfile,
+  base({
+    id: "agent-meme-001",
+    slug: "hood-meme-radar",
+    name: "Hood Meme Radar",
+    tagline:
+      "Telegram-first intelligence for emerging Robinhood Chain memecoins, unusual flows, liquidity changes, and attention spikes.",
+    thesis:
+      "Fast, evidence-linked monitoring helps users discover meaningful on-chain changes without pretending to predict prices.",
+    currentTask: "Scanning new Robinhood Chain memecoin liquidity and wallet-flow anomalies",
+    category: "trading",
+    filter: "trading",
+    status: "live",
+    riskLevel: "high",
+    creator: { name: "BOWYER Labs", handle: "bowyer", verified: true },
+    pricing: { model: "free", amount: 0, currency: "USD" },
+    performance: {
+      totalReturnPct: 0,
+      return30dPct: 0,
+      winRatePct: 0,
+      maxDrawdownPct: 0,
+      sharpeRatio: 0,
+      asOf: "2026-07-11",
+    },
+    primaryMetric: { label: "Delivery", value: "Telegram alerts" },
+    followers: 0,
+    revenueUsd: 0,
+    artwork: "data-viz",
+    featured: true,
+    trendingScore: 98,
+    createdAt: "2026-07-11",
+    tags: ["memecoins", "robinhood-chain", "telegram", "alerts"],
+    profileReady: true,
+    stars: 0,
+    version: "1.0.0",
+  }),
   base({
     id: "agent-oss-001",
     slug: "gpt-researcher",
@@ -393,6 +555,7 @@ function buildGenericProfile(summary: AgentSummary): AgentProfile {
 
 export function getAgentBySlug(slug: string): AgentProfile | null {
   if (slug === "whale-hunter") return whaleHunterProfile;
+  if (slug === "robinhood-trading-agent") return robinhoodTradingProfile;
   const summary =
     agentSummaries.find((a) => a.slug === slug) ?? getRegisteredAgent(slug);
   if (!summary) return null;

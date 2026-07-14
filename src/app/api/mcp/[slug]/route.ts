@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getOrCreateMcpServer, handleMcpJsonRpc } from "@/lib/mcp-server";
 import { GITHUB_REPOS, getAgentSummary } from "@/lib/data/agents";
 import { getRegisteredDescription, hasSubscription } from "@/lib/data/agent-registry";
+import { rateLimit } from "@/lib/rate-limit";
+import { requireWalletSession } from "@/lib/wallet-auth";
 
 export const runtime = "nodejs";
 
@@ -43,6 +45,13 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ slug: string }> }
 ) {
+  const limit = rateLimit(req, "mcp", 30, 60_000);
+  if (!limit.ok) {
+    return NextResponse.json(
+      { jsonrpc: "2.0", error: { code: -32029, message: "Too many requests" }, id: null },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } }
+    );
+  }
   const { slug } = await params;
 
   let body: { jsonrpc?: string; method?: string; id?: string | number; params?: Record<string, unknown> };
@@ -62,22 +71,21 @@ export async function POST(
     );
   }
 
-  // Paid agents: tool calls require an active subscription, identified by the
-  // subscriber's wallet in the x-bowyer-wallet header. Discovery methods
-  // (initialize / tools/list / ping) stay open so MCP clients can connect.
+  // Discovery stays public. Paid tool calls require the signed wallet session
+  // tied to an active subscription; headers alone are not an identity proof.
   if (body.method === "tools/call") {
     const agent = getAgentSummary(slug);
     const isPaid = agent && agent.pricing.model !== "free" && agent.pricing.amount > 0;
     if (isPaid) {
-      const wallet = req.headers.get("x-bowyer-wallet")?.trim() ?? "";
-      if (!/^0x[0-9a-fA-F]{40}$/.test(wallet) || !hasSubscription(slug, wallet)) {
+      const wallet = requireWalletSession(req);
+      if (!wallet || !hasSubscription(slug, wallet)) {
         return NextResponse.json(
           {
             jsonrpc: "2.0",
             error: {
               code: -32003,
               message:
-                "Subscription required. Subscribe on bowyer.app, then send your wallet address in the x-bowyer-wallet header.",
+                "Subscription and signed BOWYER wallet session required. Open the agent on bowyer.app to connect your wallet.",
             },
             id: body.id ?? null,
           },

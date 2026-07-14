@@ -107,6 +107,153 @@
     }
   }
 
+  /* 3D avatar fx — inner stage only, never the page shell */
+  @keyframes avatar-turntable {
+    from { transform: rotateY(0deg); }
+    to { transform: rotateY(360deg); }
+  }
+
+  @keyframes avatar-bob-up {
+    0%, 100% { transform: translateY(0); }
+    40% { transform: translateY(-10px); }
+  }
+
+  @keyframes whale-rise {
+    0% { transform: translate(-50%, 120%) scale(0.6); opacity: 0; }
+    35% { opacity: 1; }
+    100% { transform: translate(-50%, -30%) scale(1); opacity: 0; }
+  }
+
+  @keyframes whale-splash {
+    0% { transform: scale(0.4); opacity: 0.7; }
+    100% { transform: scale(2.2); opacity: 0; }
+  }
+
+  @keyframes sonar-ring {
+    0% { transform: translate(-50%, -50%) scale(0.2); opacity: 0.65; }
+    100% { transform: translate(-50%, -50%) scale(2.4); opacity: 0; }
+  }
+
+  @keyframes radar-sweep {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes bull-glow {
+    0%, 100% { opacity: 0; }
+    40% { opacity: 0.55; }
+  }
+
+  @keyframes insight-flash {
+    0% { opacity: 0; }
+    25% { opacity: 0.45; }
+    100% { opacity: 0; }
+  }
+
+  @keyframes gear-orbit {
+    from { transform: translate(-50%, -50%) rotate(0deg); }
+    to { transform: translate(-50%, -50%) rotate(360deg); }
+  }
+
+  .avatar-fx-whale-bob,
+  .avatar-fx-sonar-bob,
+  .avatar-fx-anim-bob {
+    animation: avatar-bob-up 0.85s ease-in-out;
+  }
+
+  /* removed turntable-boost shell shake — spin is a rigged dance clip now */
+
+  .avatar-fx-whale-splash {
+    position: absolute;
+    left: 50%;
+    bottom: 18%;
+    z-index: 3;
+    width: 120px;
+    height: 120px;
+    margin-left: -60px;
+    border-radius: 9999px;
+    border: 2px solid rgba(34, 211, 238, 0.55);
+    animation: whale-splash 1.6s ease-out forwards;
+    pointer-events: none;
+  }
+
+  .avatar-fx-whale-rise {
+    position: absolute;
+    left: 50%;
+    bottom: 22%;
+    z-index: 4;
+    animation: whale-rise 2s ease-out forwards;
+    pointer-events: none;
+  }
+
+  .avatar-fx-whale-foam {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 3;
+    height: 35%;
+    background: linear-gradient(to top, rgba(34, 211, 238, 0.18), transparent);
+    pointer-events: none;
+  }
+
+  .avatar-fx-sonar {
+    position: absolute;
+    left: 50%;
+    top: 58%;
+    z-index: 3;
+    width: 80px;
+    height: 80px;
+    border-radius: 9999px;
+    border: 1px solid rgba(34, 211, 238, 0.5);
+    animation: sonar-ring 1.8s ease-out forwards;
+    pointer-events: none;
+  }
+
+  .avatar-fx-sonar-2 { animation-delay: 0.35s; }
+  .avatar-fx-sonar-3 { animation-delay: 0.7s; }
+
+  .avatar-fx-radar {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    z-index: 3;
+    width: 140%;
+    height: 140%;
+    margin-left: -70%;
+    margin-top: -70%;
+    background: conic-gradient(from 0deg, transparent 0deg, rgba(184, 255, 46, 0.14) 28deg, transparent 56deg);
+    animation: radar-sweep 1.6s linear forwards;
+    pointer-events: none;
+  }
+
+  .avatar-fx-bull-glow {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    background: radial-gradient(circle at 50% 70%, rgba(184, 255, 46, 0.35), transparent 55%);
+    animation: bull-glow 1.2s ease-out forwards;
+    pointer-events: none;
+  }
+
+  .avatar-fx-flash {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    background: radial-gradient(circle at 50% 40%, rgba(251, 191, 36, 0.35), transparent 60%);
+    animation: insight-flash 1s ease-out forwards;
+    pointer-events: none;
+  }
+
+  .avatar-fx-gear-ring {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    z-index: 3;
+    animation: gear-orbit 1.3s linear forwards;
+    pointer-events: none;
+  }
+
   .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;

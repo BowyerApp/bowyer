@@ -1,7 +1,8 @@
 import { db } from "@/lib/db";
-import { getAgentLlmConfig } from "@/lib/data/agent-registry";
+import { getAgentLlmConfig, getAgentOwnerAddress } from "@/lib/data/agent-registry";
 import { buildSourceContext } from "@/lib/knowledge-sources";
 import { formatChainContext, scanChain } from "@/lib/chain-scanner";
+import { getMemeRadar } from "@/lib/meme-radar";
 import {
   deepResearch,
   formatDeepResearchContext,
@@ -9,16 +10,19 @@ import {
   webSearch,
   webSearchAvailable,
 } from "@/lib/web-search";
-import { recordUsage, usageAllowed } from "@/lib/usage";
+import { platformLlmAllowed, recordPlatformLlm, recordUsage, usageAllowed } from "@/lib/usage";
 import { notifyReportPublished } from "@/lib/telegram";
+import { createSignalFromReport } from "@/lib/signals";
 import {
   fallbackRuntimeLlm,
   isLocalBaseUrl,
+  isPremiumPlatformModelId,
   llmConfigured,
   platformModelIdToModel,
   resolveRuntimeLlm,
   type AgentLlmConfig,
 } from "@/lib/llm-config";
+import { hasPremiumAccess } from "@/lib/token-gate";
 
 /**
  * Real agent runtime. Each agent's MCP tools call an OpenAI-compatible LLM
@@ -89,6 +93,8 @@ function depthParams(description?: string): { temperature: number; maxTokens: nu
   return { temperature: 0.7, maxTokens: 900 };
 }
 
+export type ChatTurn = { role: "user" | "assistant"; content: string };
+
 async function callLlm(
   model: string,
   apiKey: string | undefined,
@@ -96,7 +102,8 @@ async function callLlm(
   system: string,
   user: string,
   temperature: number,
-  maxTokens: number
+  maxTokens: number,
+  history: ChatTurn[] = []
 ): Promise<{ content: string; model: string }> {
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
@@ -108,6 +115,7 @@ async function callLlm(
       model,
       messages: [
         { role: "system", content: system },
+        ...history.map((turn) => ({ role: turn.role, content: turn.content })),
         { role: "user", content: user },
       ],
       temperature,
@@ -134,13 +142,25 @@ async function callLlm(
   return { content, model };
 }
 
+async function effectiveLlmConfig(
+  slug: string,
+  config: AgentLlmConfig | null
+): Promise<AgentLlmConfig | null> {
+  if (config?.mode !== "platform" || !isPremiumPlatformModelId(config.model)) return config;
+  const owner = getAgentOwnerAddress(slug);
+  if (await hasPremiumAccess(owner)) return config;
+  return { mode: "platform", model: "balanced" };
+}
+
 async function chatCompletion(
   slug: string,
   system: string,
   user: string,
-  description?: string
+  description?: string,
+  history: ChatTurn[] = []
 ): Promise<{ content: string; model: string }> {
-  const config = getAgentLlmConfig(slug);
+  const rawConfig = getAgentLlmConfig(slug);
+  const config = await effectiveLlmConfig(slug, rawConfig);
   const primary = resolveRuntimeLlm(config);
   const usedModel =
     config?.mode === "platform" ? platformModelIdToModel(config.model) : primary.model;
@@ -156,6 +176,11 @@ async function chatCompletion(
   if (!usageAllowed(slug, "llm")) {
     throw new Error("Daily LLM quota reached for this business. Try again tomorrow.");
   }
+  const usesPlatformModel = config?.mode !== "custom";
+  if (usesPlatformModel && !platformLlmAllowed()) {
+    throw new Error("Platform model capacity is temporarily full. Try again shortly or use your own API key.");
+  }
+  if (usesPlatformModel) recordPlatformLlm();
 
   try {
     const result = await callLlm(
@@ -165,7 +190,8 @@ async function chatCompletion(
       system,
       user,
       temperature,
-      maxTokens
+      maxTokens,
+      history
     );
     recordUsage(slug, "llm");
     return result;
@@ -180,7 +206,8 @@ async function chatCompletion(
         system,
         user,
         temperature,
-        maxTokens
+        maxTokens,
+        history
       );
       recordUsage(slug, "llm");
       return fb;
@@ -212,6 +239,35 @@ async function buildLiveContext(agent: AgentIdentity, query: string): Promise<st
     } catch {
       // Chain scan unavailable — the agent still has web search below.
     }
+  }
+  if (agent.slug === "hood-meme-radar") {
+    try {
+      const radar = await getMemeRadar();
+      parts.push(
+        [
+          `Live Hood Meme Radar scan (Robinhood Chain ${radar.chainId}, fetched ${radar.scannedAt}):`,
+          `• ${radar.launchCandidates.length} recent contract deployments, ${radar.clusters.length} direct funding clusters`,
+          ...radar.launchCandidates.slice(0, 5).map((item) => `• Forming contract: ${item.txHash.slice(0, 14)}… deployed by ${item.deployer.slice(0, 10)}… · score ${item.score}/100`),
+          ...radar.clusters.slice(0, 5).map((item) => `• Funding cluster: ${item.funder.slice(0, 10)}… → ${item.recipients} addresses · ${item.totalEth} ETH · score ${item.score}/100`),
+          "This data identifies contract deployment and direct funding patterns. It does not establish token liquidity, sellability, or a trading opportunity. Do not invent those facts.",
+        ].join("\n")
+      );
+    } catch {
+      // A missing RPC must not cause reports to fabricate or fail.
+    }
+  }
+  if (agent.slug === "robinhood-trading-agent") {
+    parts.push(
+      [
+        "Robinhood Trading Agent context:",
+        "• Connect only via Robinhood's official Trading MCP (https://agent.robinhood.com/mcp/trading).",
+        "• Order placement is limited to the user's separately funded Agentic Account.",
+        "• Every proposal must cite evidence, include confidence, and pass deterministic policy gates.",
+        "• Default mode is research-only; live execution requires explicit user configuration.",
+        "• Never invent portfolio positions, fills, or account balances — only reference verified MCP data.",
+        "• Include a 'do nothing' alternative when evidence is thin or policy would block the trade.",
+      ].join("\n")
+    );
   }
 
   if (webSearchAvailable()) {
@@ -281,12 +337,13 @@ export async function generateReport(
   const body = String(parsed.body ?? raw);
   const confidence = Math.max(0, Math.min(1, Number(parsed.confidence ?? 0.5)));
 
+  const createdAt = new Date().toISOString();
   const result = db()
     .prepare(
       `INSERT INTO reports (slug, title, body, confidence, model, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(agent.slug, title, body, confidence, usedModel, new Date().toISOString());
+    .run(agent.slug, title, body, confidence, usedModel, createdAt);
 
   const report = {
     id: Number(result.lastInsertRowid),
@@ -295,16 +352,21 @@ export async function generateReport(
     body,
     confidence,
     model: usedModel,
-    createdAt: new Date().toISOString(),
+    createdAt,
   };
 
+  createSignalFromReport(report);
   notifyReportPublished(agent.slug, title, body).catch(() => {});
 
   return report;
 }
 
 /** Answer a free-form question in the agent's voice (used by the ask tool). */
-export async function askAgent(agent: AgentIdentity, question: string): Promise<string> {
+export async function askAgent(
+  agent: AgentIdentity,
+  question: string,
+  history: ChatTurn[] = []
+): Promise<string> {
   const [sourceContext, liveContext] = await Promise.all([
     buildSourceContext(agent.slug),
     buildLiveContext(agent, question),
@@ -315,6 +377,9 @@ export async function askAgent(agent: AgentIdentity, question: string): Promise<
     agent.description ? `About you: ${agent.description}` : "",
     sourceContext,
     liveContext,
+    history.length
+      ? "You are in a Telegram chat. Use the recent conversation for context and stay concise."
+      : "",
     "Answer the subscriber's question directly and concisely in your domain of expertise.",
     `Respond ONLY with a JSON object: {"answer": string}`,
   ]
@@ -325,7 +390,8 @@ export async function askAgent(agent: AgentIdentity, question: string): Promise<
     agent.slug,
     system,
     question,
-    agent.description
+    agent.description,
+    history
   );
   try {
     const parsed = JSON.parse(raw) as { answer?: string };

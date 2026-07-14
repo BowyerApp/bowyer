@@ -4,25 +4,32 @@ import { useState } from "react";
 import { Check } from "lucide-react";
 import { useWallet, usdToEthLabel } from "@/lib/wallet-context";
 import { cn } from "@/lib/utils";
+import type { PromoStatus } from "@/lib/promo-pricing";
 import type { AgentPricing } from "@/lib/types";
 
 type Phase = "idle" | "connecting" | "paying" | "recording" | "done" | "error";
 
+type SubscribePricing = AgentPricing & { listPriceUsd?: number };
+
 interface SubscribeButtonProps {
   slug: string;
-  pricing: AgentPricing;
+  pricing: SubscribePricing;
+  promo?: PromoStatus | null;
   size?: "md" | "lg";
   className?: string;
 }
 
-export function SubscribeButton({ slug, pricing, size = "md", className }: SubscribeButtonProps) {
-  const { address, connect, sendPayment } = useWallet();
+export function SubscribeButton({ slug, pricing, promo, size = "md", className }: SubscribeButtonProps) {
+  const { address, connect, authenticate, sendPayment } = useWallet();
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
 
   const isFree = pricing.model === "free" || pricing.amount <= 0;
+  const promoActive = Boolean(promo?.active && pricing.listPriceUsd);
   const priceLabel = isFree
-    ? "Use for free"
+    ? promoActive
+      ? "Claim free POC access"
+      : "Use for free"
     : `Subscribe · $${pricing.amount}${pricing.model === "subscription" ? "/month" : ""}`;
 
   async function recordSubscription(subscriber: string, txHash?: string) {
@@ -49,6 +56,15 @@ export function SubscribeButton({ slug, pricing, size = "md", className }: Subsc
 
       setPhase("recording");
       let result = await recordSubscription(account);
+
+      // 401 means no signed wallet session yet — sign the login challenge and retry.
+      if (result.status === 401) {
+        setPhase("connecting");
+        const authed = await authenticate();
+        if (!authed) throw new Error("Wallet signature required to subscribe");
+        setPhase("recording");
+        result = await recordSubscription(account);
+      }
 
       // 402 means payment required — pay the creator, then record with the tx hash.
       if (result.status === 402) {
@@ -98,7 +114,11 @@ export function SubscribeButton({ slug, pricing, size = "md", className }: Subsc
       {error && <p className="mt-2 text-[12px] text-negative">{error}</p>}
         {phase === "done" && (
         <p className="mt-2 text-[12px] text-muted">
-          {isFree ? "You now have access to this business. " : "Payment verified on chain — you're in. "}
+          {promoActive
+            ? "You're in the free POC cohort — full access unlocked. "
+            : isFree
+              ? "You now have access to this business. "
+              : "Payment verified on chain — you're in. "}
           <a href="#setup" className="text-accent underline underline-offset-2">
             Set up access ↓
           </a>

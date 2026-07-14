@@ -32,6 +32,12 @@ export const metadata: Metadata = {
       "Build, discover, and grow AI businesses on Robinhood Chain. Your employees never sleep.",
     images: ["/images/og.png"],
   },
+  other: {
+    "virtual-protocol-site-verification": [
+      "9a79c57f82013b3e7c9645d2eb4adc0c",
+      "0014f77c9fb6c65600e8abf2c44f18c1",
+    ],
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

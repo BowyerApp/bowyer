@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { AgentLiveExperience, type RealAgentData } from "@/components/agent/agent-live-experience";
 import { GITHUB_REPOS, getAgentBySlug } from "@/lib/data/agents";
+import { getPromoStatus } from "@/lib/promo-pricing";
 import { getBusinessStats } from "@/lib/data/real-stats";
 import { getStoredReports } from "@/lib/agent-runtime";
 import { getRepoStats } from "@/lib/github";
@@ -54,5 +55,7 @@ export default async function AgentProfilePage({ params }: PageProps) {
       : null,
   };
 
-  return <AgentLiveExperience agent={agent} real={real} />;
+  const promo = getPromoStatus(slug);
+
+  return <AgentLiveExperience agent={agent} real={real} promo={promo} />;
 }

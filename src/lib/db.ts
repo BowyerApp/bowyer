@@ -28,6 +28,8 @@ export function db(): DatabaseT.Database {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     const instance = new Database(dbPath);
     instance.pragma("journal_mode = WAL");
+    instance.pragma("busy_timeout = 5000");
+    instance.pragma("synchronous = NORMAL");
     migrate(instance);
     globalDb.__bowyerDb = instance;
   }
@@ -67,6 +69,19 @@ function migrate(d: DatabaseT.Database) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_reports_slug ON reports (slug, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS signals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      report_id INTEGER NOT NULL UNIQUE,
+      slug TEXT NOT NULL,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      confidence REAL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (report_id) REFERENCES reports(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_signals_slug ON signals (slug, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_subs_subscriber ON subscriptions (subscriber);
     CREATE INDEX IF NOT EXISTS idx_subs_slug ON subscriptions (slug);
     CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents (owner_address);
@@ -111,6 +126,13 @@ function migrate(d: DatabaseT.Database) {
       PRIMARY KEY (slug, day, kind)
     );
 
+    CREATE TABLE IF NOT EXISTS platform_usage_daily (
+      day TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (day, kind)
+    );
+
     CREATE TABLE IF NOT EXISTS oauth_connections (
       wallet TEXT NOT NULL,
       provider TEXT NOT NULL,
@@ -149,6 +171,125 @@ function migrate(d: DatabaseT.Database) {
       slug TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS telegram_preferences (
+      chat_id TEXT PRIMARY KEY,
+      briefings_enabled INTEGER NOT NULL DEFAULT 1,
+      briefing_hour INTEGER NOT NULL DEFAULT 9,
+      alerts_enabled INTEGER NOT NULL DEFAULT 1,
+      last_briefing_date TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS telegram_referrals (
+      code TEXT PRIMARY KEY,
+      referrer_chat_id TEXT NOT NULL,
+      referred_chat_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      claimed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS telegram_sample_progress (
+      chat_id TEXT PRIMARY KEY,
+      reports_opened INTEGER NOT NULL DEFAULT 0,
+      upgrade_prompted INTEGER NOT NULL DEFAULT 0,
+      installed_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS telegram_web_sessions (
+      token_hash TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS telegram_delivery_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id TEXT NOT NULL,
+      text TEXT NOT NULL,
+      reply_markup TEXT,
+      dedupe_key TEXT UNIQUE,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      available_at INTEGER NOT NULL,
+      delivered_at TEXT,
+      failed_at TEXT,
+      last_error TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS telegram_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_telegram_messages_chat_slug
+      ON telegram_messages (chat_id, slug, id);
+
+    CREATE INDEX IF NOT EXISTS idx_telegram_referrals_referrer
+      ON telegram_referrals (referrer_chat_id);
+    CREATE INDEX IF NOT EXISTS idx_telegram_follows_slug
+      ON telegram_follows (slug);
+    CREATE INDEX IF NOT EXISTS idx_telegram_delivery_ready
+      ON telegram_delivery_jobs (delivered_at, failed_at, available_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_tx_hash
+      ON subscriptions (tx_hash) WHERE tx_hash IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS robinhood_connections (
+      wallet TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'disconnected',
+      agentic_account_hint TEXT,
+      access_token_enc TEXT,
+      metadata TEXT,
+      connected_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS trading_policies (
+      wallet TEXT PRIMARY KEY,
+      mode TEXT NOT NULL DEFAULT 'research',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      kill_switch INTEGER NOT NULL DEFAULT 0,
+      max_order_usd REAL NOT NULL DEFAULT 500,
+      max_position_usd REAL NOT NULL DEFAULT 2500,
+      max_daily_loss_usd REAL NOT NULL DEFAULT 250,
+      max_daily_trades INTEGER NOT NULL DEFAULT 5,
+      cash_reserve_usd REAL NOT NULL DEFAULT 500,
+      allowed_symbols TEXT,
+      strategy_notes TEXT,
+      version INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS trading_policy_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet TEXT NOT NULL,
+      policy_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS trade_decisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      side TEXT NOT NULL,
+      thesis TEXT NOT NULL,
+      confidence REAL,
+      policy_version INTEGER NOT NULL,
+      policy_allowed INTEGER NOT NULL DEFAULT 0,
+      policy_reasons TEXT,
+      status TEXT NOT NULL DEFAULT 'proposed',
+      mode TEXT NOT NULL,
+      notional_usd REAL,
+      metadata TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_trade_decisions_wallet
+      ON trade_decisions (wallet, created_at DESC);
   `);
 }
 

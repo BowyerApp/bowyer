@@ -17,6 +17,14 @@ import {
 } from "@/lib/agent-runtime";
 import { getRepoStats } from "@/lib/github";
 import { formatChainContext, scanChain } from "@/lib/chain-scanner";
+import {
+  createTradeDecision,
+  dailyTradeStats,
+  getRobinhoodConnection,
+  getTradingPolicy,
+  listTradeDecisions,
+} from "@/lib/robinhood-trading";
+import { evaluatePolicy, normalizeSymbol } from "@/lib/trading-policy";
 
 export interface McpToolDefinition {
   name: string;
@@ -247,6 +255,133 @@ function buildWhaleHunterServer(ctx: McpAgentContext): McpAgentServer {
   };
 }
 
+/* ---------- Robinhood Trading Agent ---------- */
+
+function buildRobinhoodTradingServer(ctx: McpAgentContext): McpAgentServer {
+  const identity: AgentIdentity = {
+    slug: ctx.slug,
+    name: ctx.name,
+    tagline: ctx.tagline ?? ctx.name,
+    description: ctx.description,
+  };
+
+  return {
+    name: ctx.slug,
+    version: ctx.version ?? "1.0.0",
+    tools: [
+      ...runtimeTools(identity),
+      {
+        name: "get_robinhood_status",
+        description: "Connection status for Robinhood Agentic Account (requires wallet session on HTTP MCP).",
+        inputSchema: { type: "object", properties: { wallet: { type: "string" } }, required: ["wallet"] },
+      },
+      {
+        name: "get_trading_policy",
+        description: "Fetch the user's versioned trading policy and risk limits.",
+        inputSchema: { type: "object", properties: { wallet: { type: "string" } }, required: ["wallet"] },
+      },
+      {
+        name: "propose_trade",
+        description: "Create an evidence-backed trade proposal evaluated against policy gates.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            wallet: { type: "string" },
+            symbol: { type: "string" },
+            side: { type: "string", description: "buy | sell | hold" },
+            thesis: { type: "string" },
+            notionalUsd: { type: "number" },
+            quantity: { type: "number" },
+            confidence: { type: "number" },
+          },
+          required: ["wallet", "symbol", "side", "thesis"],
+        },
+      },
+      {
+        name: "list_decisions",
+        description: "List recent trade decisions from the immutable ledger.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            wallet: { type: "string" },
+            limit: { type: "number" },
+          },
+          required: ["wallet"],
+        },
+      },
+      {
+        name: "get_status",
+        description: `Operational status of ${ctx.name}.`,
+        inputSchema: { type: "object", properties: {} },
+      },
+    ],
+    async callTool(name, args) {
+      const wallet = String(args.wallet ?? "").toLowerCase();
+      if (name === "get_robinhood_status") {
+        if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
+          return { error: "Valid wallet required" };
+        }
+        return getRobinhoodConnection(wallet);
+      }
+      if (name === "get_trading_policy") {
+        if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
+          return { error: "Valid wallet required" };
+        }
+        return getTradingPolicy(wallet);
+      }
+      if (name === "list_decisions") {
+        if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
+          return { error: "Valid wallet required" };
+        }
+        return listTradeDecisions(wallet, Math.min(Number(args.limit ?? 10), 20));
+      }
+      if (name === "propose_trade") {
+        if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
+          return { error: "Valid wallet required" };
+        }
+        const symbol = normalizeSymbol(String(args.symbol ?? ""));
+        const side = String(args.side ?? "hold") as "buy" | "sell" | "hold";
+        const thesis = String(args.thesis ?? "").trim();
+        const policy = getTradingPolicy(wallet);
+        const stats = dailyTradeStats(wallet);
+        const notionalUsd = Number(args.notionalUsd ?? 0);
+        const quantity = Number(args.quantity ?? 1);
+        const check =
+          side === "hold"
+            ? { allowed: true, reasons: [], warnings: ["Hold proposal — no order gate applied."] }
+            : evaluatePolicy(
+                policy,
+                { symbol, side, quantity, notionalUsd, orderType: "market" },
+                { dailyTrades: stats.trades, dailyRealizedLossUsd: stats.realizedLossUsd }
+              );
+        const decision = createTradeDecision({
+          wallet,
+          symbol,
+          side,
+          thesis,
+          confidence: args.confidence !== undefined ? Number(args.confidence) : undefined,
+          policyVersion: policy.version,
+          policyAllowed: check.allowed,
+          policyReasons: check.reasons,
+          mode: policy.mode,
+          notionalUsd: notionalUsd || undefined,
+          metadata: { warnings: check.warnings, source: "mcp" },
+        });
+        return { decision, policyCheck: check };
+      }
+      if (name === "get_status") {
+        return {
+          slug: ctx.slug,
+          name: ctx.name,
+          usesRobinhoodMcp: true,
+          llm: llmAvailable(identity.slug),
+        };
+      }
+      return callRuntimeTool(identity, ctx, name, args);
+    },
+  };
+}
+
 /* ---------- generic server for every other agent ---------- */
 
 function buildGenericServer(ctx: McpAgentContext): McpAgentServer {
@@ -275,6 +410,7 @@ function buildGenericServer(ctx: McpAgentContext): McpAgentServer {
 export function getOrCreateMcpServer(ctx: McpAgentContext | null): McpAgentServer | undefined {
   if (!ctx) return undefined;
   if (ctx.slug === "whale-hunter") return buildWhaleHunterServer(ctx);
+  if (ctx.slug === "robinhood-trading-agent") return buildRobinhoodTradingServer(ctx);
   return buildGenericServer(ctx);
 }
 

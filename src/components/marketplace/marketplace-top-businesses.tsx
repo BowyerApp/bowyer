@@ -2,7 +2,9 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { ArrowRight, BadgeCheck } from "lucide-react";
+import { getAgentAvatarGlb } from "@/lib/agent-avatars";
 import {
   CATEGORY_LABELS,
   getAgentArt,
@@ -13,6 +15,14 @@ import {
 import type { BusinessStats } from "@/lib/data/real-stats";
 import type { AgentSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+const Agent3DTurntable = dynamic(
+  () => import("@/components/agent/agent-3d-turntable").then((m) => m.Agent3DTurntable),
+  {
+    ssr: false,
+    loading: () => <div className="absolute inset-0 animate-pulse bg-white/[0.04]" />,
+  }
+);
 
 interface MarketplaceTopBusinessesProps {
   agents: AgentSummary[];
@@ -147,20 +157,30 @@ function priceLabel(agent: AgentSummary): string {
 
 function LeadCard({ agent, stats }: { agent: AgentSummary; stats?: BusinessStats }) {
   const b = bits(agent, stats);
+  const avatarGlb = getAgentAvatarGlb(agent.slug);
 
   return (
     <Link
       href={`/agents/${agent.slug}`}
       className="group flex flex-col overflow-hidden rounded-[20px] bg-surface transition-colors hover:bg-[#141414] lg:col-span-2"
     >
-      <div className="relative aspect-[16/9] overflow-hidden">
-        <Image
-          src={b.art}
-          alt=""
-          fill
-          className="object-cover transition-transform duration-700 group-hover:scale-[1.02]"
-          sizes="(max-width: 1024px) 100vw, 800px"
-        />
+      <div className="relative aspect-[16/9] overflow-hidden bg-[#0a0a0a]">
+        {avatarGlb ? (
+          <Agent3DTurntable
+            glbUrl={avatarGlb}
+            agentName={agent.name}
+            posterSrc={b.art}
+            className="absolute inset-0"
+          />
+        ) : (
+          <Image
+            src={b.art}
+            alt=""
+            fill
+            className="object-cover transition-transform duration-700 group-hover:scale-[1.02]"
+            sizes="(max-width: 1024px) 100vw, 800px"
+          />
+        )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
         <span className="absolute left-4 top-4 rounded-full bg-black/55 px-2.5 py-1 text-[10.5px] font-medium uppercase tracking-wide text-white/85 backdrop-blur-sm">
           {b.category}
@@ -203,21 +223,31 @@ function LeadCard({ agent, stats }: { agent: AgentSummary; stats?: BusinessStats
 
 function SideCard({ agent, stats }: { agent: AgentSummary; stats?: BusinessStats }) {
   const b = bits(agent, stats);
+  const avatarGlb = getAgentAvatarGlb(agent.slug);
 
   return (
     <Link
       href={`/agents/${agent.slug}`}
       className="group flex flex-1 flex-col overflow-hidden rounded-[20px] bg-surface transition-colors hover:bg-[#141414]"
     >
-      <div className="relative aspect-[16/7] overflow-hidden">
-        <Image
-          src={b.art}
-          alt=""
-          fill
-          className="object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-          sizes="(max-width: 1024px) 100vw, 420px"
-        />
-        <span className="absolute left-3.5 top-3.5 rounded-full bg-black/55 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white/85 backdrop-blur-sm">
+      <div className="relative aspect-[16/7] overflow-hidden bg-[#0a0a0a]">
+        {avatarGlb ? (
+          <Agent3DTurntable
+            glbUrl={avatarGlb}
+            agentName={agent.name}
+            posterSrc={b.art}
+            className="absolute inset-0"
+          />
+        ) : (
+          <Image
+            src={b.art}
+            alt=""
+            fill
+            className="object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+            sizes="(max-width: 1024px) 100vw, 420px"
+          />
+        )}
+        <span className="absolute left-3.5 top-3.5 z-10 rounded-full bg-black/55 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white/85 backdrop-blur-sm">
           {b.category}
         </span>
       </div>

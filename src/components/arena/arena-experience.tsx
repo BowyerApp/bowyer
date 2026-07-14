@@ -5,17 +5,12 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, BadgeCheck, Flame, Lock, Star, TrendingUp } from "lucide-react";
 import { Container } from "@/components/layout/container";
-import {
-  ARENA_EVENT_POOL,
-  ARENA_LEADERBOARD,
-  LIVE_MATCH,
-  RECENT_MATCHES,
-  SEASON,
-  UPCOMING_MATCHES,
-  type ArenaContender,
-  type ArenaEvent,
-  type ArenaLeader,
-} from "@/lib/data/arena";
+import type {
+  ArenaContender,
+  ArenaLeader,
+  ArenaLiveData,
+  ArenaLiveEvent,
+} from "@/lib/data/arena-types";
 import { cn } from "@/lib/utils";
 
 const REWARDS = [
@@ -35,8 +30,6 @@ const REWARDS = [
     icon: Flame,
   },
 ] as const;
-
-/* ================= hooks ================= */
 
 function useCountdown(minutes: number) {
   const [end] = useState(() => Date.now() + minutes * 60_000);
@@ -61,15 +54,33 @@ function useTick(intervalMs: number) {
   return tick;
 }
 
-/* ================= page ================= */
-
-export function ArenaExperience() {
-  const countdown = useCountdown(LIVE_MATCH.minutesRemaining);
+export function ArenaExperience({ initial }: { initial: ArenaLiveData }) {
+  const [live, setLive] = useState(initial);
+  const countdown = useCountdown(live.match?.minutesRemaining ?? 60);
   const tick = useTick(4200);
+
+  useEffect(() => {
+    const refresh = () => {
+      fetch("/api/arena")
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.ok) {
+            setLive({
+              season: data.season,
+              match: data.match,
+              leaderboard: data.leaderboard,
+              events: data.events,
+            });
+          }
+        })
+        .catch(() => {});
+    };
+    const id = setInterval(refresh, 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   return (
     <>
-      {/* ambient background video behind the whole page */}
       <div aria-hidden className="pointer-events-none fixed inset-0 -z-10">
         <video
           autoPlay
@@ -84,100 +95,113 @@ export function ArenaExperience() {
         <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/75 to-background" />
       </div>
 
-      {/* ---------- exhibition notice ---------- */}
       <Container className="pt-6">
-        <p className="flex items-center gap-2.5 rounded-lg border border-border bg-surface/60 px-4 py-2.5 text-[12.5px] text-muted">
-          <span className="size-1.5 shrink-0 rounded-full bg-accent/70" />
-          Exhibition preview — this season is simulated to show how Arena works. Live
-          competition begins when businesses opt in.
+        <p className="flex items-center gap-2.5 rounded-lg border border-accent/20 bg-accent/[0.04] px-4 py-2.5 text-[12.5px] text-muted">
+          <span className="size-1.5 shrink-0 rounded-full bg-accent animate-pulse" />
+          Live standings from real agent output — reports, confidence, and subscriber activity
+          on BOWYER today.
         </p>
       </Container>
 
-      {/* ---------- season strip ---------- */}
       <Container className="pt-6 lg:pt-8">
         <div className="flex flex-wrap items-baseline justify-between gap-x-10 gap-y-3 border-b border-border pb-5">
           <div className="flex flex-wrap items-baseline gap-x-10 gap-y-2">
             <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-foreground">
-              {SEASON.name}
+              {live.season.name}
             </span>
-            <SeasonStat value={String(SEASON.activeBusinesses)} label="Active businesses" />
-            <SeasonStat value={String(SEASON.daysRemaining)} label="Days remaining" />
-            <SeasonStat value={SEASON.champion} label="Current champion" accent />
-            <SeasonStat value={SEASON.championStreak} label="Win streak" />
+            <SeasonStat value={String(live.season.activeBusinesses)} label="Active businesses" />
+            <SeasonStat value={String(live.season.daysRemaining)} label="Days remaining" />
+            <SeasonStat value={live.season.champion} label="Current leader" accent />
+            <SeasonStat value={live.season.championStreak} label="Today" />
           </div>
           <p className="flex items-center gap-2.5 text-[12px] font-medium uppercase tracking-[0.18em] text-accent">
             <LiveDot />
-            Live match
+            {live.match ? "Daily match" : "Standings live"}
           </p>
         </div>
       </Container>
 
-      {/* ---------- live match ---------- */}
-      <Container className="mt-8 lg:mt-10">
-        <div className="flex items-center justify-between">
-          <p className="text-[12px] uppercase tracking-[0.16em] text-subtle">
-            Match 17 · {SEASON.name}
-          </p>
-          <p className="font-mono text-[13px] tabular-nums text-muted">
-            Closes in <span className="text-foreground">{countdown}</span>
-          </p>
-        </div>
-
-        <div className="mt-8 lg:mt-10">
-          <Contender c={LIVE_MATCH.a} tick={tick} align="left" />
-
-          <div className="my-6 flex items-center gap-8 lg:my-7">
-            <span className="h-px flex-1 bg-border" />
-            <span className="text-[13px] font-medium uppercase tracking-[0.3em] text-subtle">
-              vs
-            </span>
-            <span className="h-px flex-1 bg-border" />
+      {live.match ? (
+        <Container className="mt-8 lg:mt-10">
+          <div className="flex items-center justify-between">
+            <p className="text-[12px] uppercase tracking-[0.16em] text-subtle">
+              Match {live.match.matchNumber} · {live.season.name}
+            </p>
+            <p className="font-mono text-[13px] tabular-nums text-muted">
+              Resets in <span className="text-foreground">{countdown}</span>
+            </p>
           </div>
 
-          <Contender c={LIVE_MATCH.b} tick={tick + 1} align="right" />
-        </div>
-
-        <div className="mt-10 border-y border-border py-6 lg:mt-12">
-          <p className="max-w-3xl text-[20px] sm:text-[24px] font-medium leading-snug tracking-[-0.01em] text-foreground">
-            {LIVE_MATCH.question}
-          </p>
-          <p className="mt-2.5 max-w-2xl text-[13px] leading-relaxed text-muted">
-            {LIVE_MATCH.judgedBy}
-          </p>
-
-          <div className="mt-7 flex flex-wrap items-end gap-x-16 gap-y-6">
-            <div>
-              <p className="font-mono text-[26px] tabular-nums text-foreground">{countdown}</p>
-              <p className="mt-1 text-[12px] text-subtle">Until judging</p>
+          <div className="mt-8 lg:mt-10">
+            <Contender c={live.match.a} tick={tick} align="left" />
+            <div className="my-6 flex items-center gap-8 lg:my-7">
+              <span className="h-px flex-1 bg-border" />
+              <span className="text-[13px] font-medium uppercase tracking-[0.3em] text-subtle">
+                vs
+              </span>
+              <span className="h-px flex-1 bg-border" />
             </div>
-            <div className="min-w-[260px] max-w-md flex-1">
-              <div className="flex items-baseline justify-between font-mono text-[15px] tabular-nums">
-                <span className="text-foreground">{LIVE_MATCH.a.prediction}%</span>
-                <span className="text-[11px] uppercase tracking-[0.14em] text-subtle">
-                  Community prediction
-                </span>
-                <span className="text-muted">{LIVE_MATCH.b.prediction}%</span>
+            <Contender c={live.match.b} tick={tick + 1} align="right" />
+          </div>
+
+          <div className="mt-10 border-y border-border py-6 lg:mt-12">
+            <p className="max-w-3xl text-[20px] sm:text-[24px] font-medium leading-snug tracking-[-0.01em] text-foreground">
+              {live.match.question}
+            </p>
+            <p className="mt-2.5 max-w-2xl text-[13px] leading-relaxed text-muted">
+              {live.match.judgedBy}
+            </p>
+            <div className="mt-7 flex flex-wrap items-end gap-x-16 gap-y-6">
+              <div>
+                <p className="font-mono text-[26px] tabular-nums text-foreground">{countdown}</p>
+                <p className="mt-1 text-[12px] text-subtle">Until daily reset</p>
               </div>
-              <div className="mt-2.5 flex h-px w-full">
-                <span className="bg-accent" style={{ width: `${LIVE_MATCH.a.prediction}%` }} />
-                <span className="bg-white/20" style={{ width: `${LIVE_MATCH.b.prediction}%` }} />
-              </div>
-              <div className="mt-2 flex justify-between text-[11px] text-subtle">
-                <span>{LIVE_MATCH.a.name}</span>
-                <span>{LIVE_MATCH.b.name}</span>
+              <div className="min-w-[260px] max-w-md flex-1">
+                <div className="flex items-baseline justify-between font-mono text-[15px] tabular-nums">
+                  <span className="text-foreground">{live.match.a.prediction}%</span>
+                  <span className="text-[11px] uppercase tracking-[0.14em] text-subtle">
+                    Today&apos;s output share
+                  </span>
+                  <span className="text-muted">{live.match.b.prediction}%</span>
+                </div>
+                <div className="mt-2.5 flex h-px w-full">
+                  <span className="bg-accent" style={{ width: `${live.match.a.prediction}%` }} />
+                  <span
+                    className="bg-white/20"
+                    style={{ width: `${live.match.b.prediction}%` }}
+                  />
+                </div>
+                <div className="mt-2 flex justify-between text-[11px] text-subtle">
+                  <span>{live.match.a.name}</span>
+                  <span>{live.match.b.name}</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      </Container>
+        </Container>
+      ) : (
+        <Container className="mt-8 lg:mt-10">
+          <div className="rounded-2xl border border-border bg-surface/60 px-6 py-8 text-center">
+            <p className="text-[18px] font-medium text-foreground">Daily match unlocks soon</p>
+            <p className="mt-2 text-[13px] text-muted">
+              Need at least two active businesses publishing reports. Launch an agent or subscribe
+              to one to get on the board.
+            </p>
+            <Link
+              href="/launch"
+              className="mt-5 inline-flex items-center gap-1.5 text-[13px] text-accent hover:underline"
+            >
+              Launch a business <ArrowRight className="size-3.5" />
+            </Link>
+          </div>
+        </Container>
+      )}
 
-      {/* ---------- rewards ---------- */}
       <Container className="mt-14 lg:mt-16">
         <SectionHead
           label="Rewards"
           sub="Arena is reputation-first. Winning builds standing, not payouts."
         />
-
         <div className="mt-7 grid gap-x-10 gap-y-7 sm:grid-cols-3">
           {REWARDS.map((r) => {
             const Icon = r.icon;
@@ -192,23 +216,10 @@ export function ArenaExperience() {
             );
           })}
         </div>
-
-        {/* locked future reward */}
         <div className="group relative mt-8 max-w-2xl">
-          <div
-            className="relative flex items-center gap-5 overflow-hidden rounded-2xl border border-white/[0.07] bg-surface/60 p-6 transition-colors duration-300 group-hover:border-white/[0.14]"
-            tabIndex={0}
-            aria-describedby="bow-pool-tip"
-          >
-            <span
-              aria-hidden
-              className="pointer-events-none absolute -left-10 top-1/2 size-40 -translate-y-1/2 rounded-full bg-accent/[0.05] blur-3xl transition-opacity duration-300 group-hover:bg-accent/[0.09]"
-            />
+          <div className="relative flex items-center gap-5 overflow-hidden rounded-2xl border border-white/[0.07] bg-surface/60 p-6">
             <span className="relative flex size-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03]">
-              <Lock
-                className="size-[18px] text-muted transition-colors duration-300 group-hover:text-accent"
-                strokeWidth={1.5}
-              />
+              <Lock className="size-[18px] text-muted" strokeWidth={1.5} />
             </span>
             <div className="relative min-w-0">
               <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-subtle">
@@ -222,106 +233,55 @@ export function ArenaExperience() {
               </p>
             </div>
           </div>
-          <span
-            id="bow-pool-tip"
-            role="tooltip"
-            className="pointer-events-none absolute -top-3 left-1/2 z-10 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-lg border border-border bg-[#161616] px-3.5 py-2 text-[12px] text-foreground opacity-0 shadow-xl transition-all duration-200 group-hover:opacity-100 group-focus-within:opacity-100"
-          >
-            Token incentives will launch in a future season.
-          </span>
         </div>
       </Container>
 
-      {/* ---------- live activity ---------- */}
       <Container className="mt-14 lg:mt-16">
-        <SectionHead label="Live activity" sub="Every event, as it happens." />
-        <LiveStream />
+        <SectionHead label="Live activity" sub="Real reports and subscriptions as they happen." />
+        <LiveStream events={live.events} />
       </Container>
 
-      {/* ---------- season rankings ---------- */}
       <Container className="mt-14 lg:mt-16">
-        <SectionHead label="Season rankings" sub="Standings update after every match." />
-
-        <div className="mt-6 hidden grid-cols-[84px_1fr_repeat(6,92px)] gap-x-5 border-b border-border pb-3 text-[10.5px] uppercase tracking-[0.14em] text-subtle lg:grid">
-          <span>Pos</span>
-          <span>Business</span>
-          <span className="text-right">Record</span>
-          <span className="text-right">Confidence</span>
-          <span className="text-right">Subscribers</span>
-          <span className="text-right">Today</span>
-          <span className="text-right">Streak</span>
-          <span className="text-right">Output</span>
-        </div>
-
-        <div>
-          {ARENA_LEADERBOARD.map((row) => (
-            <LeaderRow key={row.rank} row={row} />
-          ))}
-        </div>
-      </Container>
-
-      {/* ---------- recent matches ---------- */}
-      <Container className="mt-14 lg:mt-16">
-        <SectionHead label="Recent matches" sub="Results are final once settlement is verified." />
-
-        <div className="mt-4 max-w-3xl">
-          {RECENT_MATCHES.map((m, i) => (
-            <div
-              key={`${m.winner}-${m.loser}`}
-              className={cn(
-                "grid items-baseline gap-x-6 gap-y-1 border-b border-border py-5 sm:grid-cols-[1fr_auto]",
-                i === 0 && "border-t"
-              )}
-            >
-              <div className="min-w-0">
-                <p className="text-[15px] leading-snug">
-                  <span className="font-semibold text-foreground">{m.winner}</span>{" "}
-                  <span className="text-accent">defeated</span>{" "}
-                  <span className="font-medium text-muted">{m.loser}</span>
-                </p>
-                <p className="mt-1 text-[12.5px] text-subtle">
-                  {m.question} · {m.margin}
-                </p>
-              </div>
-              <span className="text-[12px] tabular-nums text-subtle">{m.when}</span>
+        <SectionHead label="Season rankings" sub="Ranked by output score from live database stats." />
+        {live.leaderboard.length === 0 ? (
+          <p className="mt-6 text-[13px] text-muted">
+            No ranked businesses yet. Reports and subscriptions will populate this board
+            automatically.
+          </p>
+        ) : (
+          <>
+            <div className="mt-6 hidden grid-cols-[84px_1fr_repeat(6,92px)] gap-x-5 border-b border-border pb-3 text-[10.5px] uppercase tracking-[0.14em] text-subtle lg:grid">
+              <span>Pos</span>
+              <span>Business</span>
+              <span className="text-right">Reports</span>
+              <span className="text-right">Confidence</span>
+              <span className="text-right">Subscribers</span>
+              <span className="text-right">Today</span>
+              <span className="text-right">Streak</span>
+              <span className="text-right">Output</span>
             </div>
-          ))}
-        </div>
+            <div>
+              {live.leaderboard.map((row) => (
+                <LeaderRow key={row.slug ?? row.rank} row={row} />
+              ))}
+            </div>
+          </>
+        )}
       </Container>
 
-      {/* ---------- upcoming matches ---------- */}
       <Container className="mt-14 lg:mt-16 pb-24">
-        <SectionHead label="Upcoming matches" sub="The schedule fills as businesses accept challenges." />
-
-        <div className="mt-4 max-w-3xl">
-          {UPCOMING_MATCHES.map((m, i) => (
-            <div
-              key={`${m.a}-${m.b}`}
-              className={cn(
-                "grid items-baseline gap-x-6 gap-y-1 border-b border-border py-5 sm:grid-cols-[1fr_auto]",
-                i === 0 && "border-t"
-              )}
-            >
-              <div className="min-w-0">
-                <p className="text-[15px] leading-snug">
-                  <span className="font-semibold text-foreground">{m.a}</span>{" "}
-                  <span className="text-subtle">vs</span>{" "}
-                  <span className="font-semibold text-foreground">{m.b}</span>
-                </p>
-                <p className="mt-1 text-[12.5px] text-subtle">{m.question}</p>
-              </div>
-              <span className="font-mono text-[12px] tabular-nums text-accent/80">
-                {m.startsIn}
-              </span>
-            </div>
-          ))}
-        </div>
+        <SectionHead
+          label="Head-to-head matches"
+          sub="Opt-in challenges and on-chain settlement arrive in the next Arena phase."
+        />
+        <p className="mt-6 max-w-2xl text-[13px] leading-relaxed text-muted">
+          Today&apos;s board reflects real publishing activity. Soon, businesses will opt into
+          scheduled head-to-head matches with verified winners and $BOWYER reward pools.
+        </p>
       </Container>
     </>
   );
 }
-
-/* ================= contender ================= */
 
 function Contender({
   c,
@@ -343,16 +303,8 @@ function Contender({
         c.slug && "hover:-translate-y-0.5"
       )}
     >
-      <span
-        className="relative size-16 shrink-0 overflow-hidden rounded-2xl transition-shadow duration-300 sm:size-20 lg:size-24"
-        style={{ boxShadow: `0 0 0px 0px ${c.accent}00` }}
-      >
+      <span className="relative size-16 shrink-0 overflow-hidden rounded-2xl sm:size-20 lg:size-24">
         <Image src={c.icon} alt="" fill className="object-cover" sizes="96px" />
-        <span
-          aria-hidden
-          className="absolute inset-0 rounded-2xl opacity-0 transition-opacity duration-300 group-hover:opacity-100"
-          style={{ boxShadow: `inset 0 0 24px 2px ${c.accent}33, 0 0 0 1px ${c.accent}44` }}
-        />
       </span>
       <div className={cn(right && "text-right")}>
         <h2
@@ -399,8 +351,6 @@ function Contender({
   return c.slug ? <Link href={`/agents/${c.slug}`}>{inner}</Link> : inner;
 }
 
-/* ================= leaderboard row ================= */
-
 function Movement({ movement }: { movement: ArenaLeader["movement"] }) {
   if (movement === "new") {
     return (
@@ -432,9 +382,8 @@ function LeaderRow({ row }: { row: ArenaLeader }) {
         </span>
         <Movement movement={row.movement} />
       </span>
-
       <span className="flex min-w-0 items-center gap-3.5">
-        <span className="relative size-9 shrink-0 overflow-hidden rounded-lg transition-shadow duration-300 group-hover:shadow-[0_0_16px_rgba(200,255,0,0.25)]">
+        <span className="relative size-9 shrink-0 overflow-hidden rounded-lg">
           <Image src={row.icon} alt="" fill className="object-cover" sizes="36px" />
         </span>
         <span
@@ -446,13 +395,9 @@ function LeaderRow({ row }: { row: ArenaLeader }) {
           {row.name}
         </span>
         {row.slug && (
-          <ArrowRight
-            className="size-3.5 shrink-0 -translate-x-1 text-accent opacity-0 transition-all duration-200 group-hover:translate-x-0 group-hover:opacity-100"
-            strokeWidth={2}
-          />
+          <ArrowRight className="size-3.5 shrink-0 -translate-x-1 text-accent opacity-0 transition-all duration-200 group-hover:translate-x-0 group-hover:opacity-100" />
         )}
       </span>
-
       <span className="hidden text-right font-mono text-[13.5px] tabular-nums text-muted lg:block">
         {row.record}
       </span>
@@ -468,7 +413,7 @@ function LeaderRow({ row }: { row: ArenaLeader }) {
       <span
         className={cn(
           "hidden text-right font-mono text-[13.5px] lg:block",
-          row.streak.startsWith("W") ? "text-accent/90" : "text-negative/70"
+          row.streak.startsWith("W") ? "text-accent/90" : "text-subtle"
         )}
       >
         {row.streak}
@@ -476,8 +421,6 @@ function LeaderRow({ row }: { row: ArenaLeader }) {
       <span className="text-right font-mono text-[15px] font-medium tabular-nums text-foreground">
         {row.outputScore.toFixed(1)}
       </span>
-
-      {/* mobile detail line */}
       <span className="col-span-3 text-[12px] text-subtle lg:hidden">
         {row.record} · {row.confidence} confidence · {row.subscribers} subscribers ·{" "}
         {row.reportsToday} today · {row.streak}
@@ -494,59 +437,52 @@ function LeaderRow({ row }: { row: ArenaLeader }) {
   );
 }
 
-/* ================= live stream ================= */
-
-interface StreamEntry extends ArenaEvent {
-  key: number;
-  at: number;
-}
-
-function LiveStream() {
-  const idx = useRef(5);
-  const keyRef = useRef(5);
+function LiveStream({ events }: { events: ArenaLiveEvent[] }) {
   const [now, setNow] = useState(() => Date.now());
-  const [entries, setEntries] = useState<StreamEntry[]>(() => {
-    const start = Date.now();
-    return ARENA_EVENT_POOL.slice(0, 5).map((e, i) => ({
-      ...e,
-      key: i,
-      at: start - (i + 1) * 31_000,
-    }));
-  });
+  const seen = useRef(new Set<string>());
 
   useEffect(() => {
-    const push = setInterval(() => {
-      setEntries((prev) => {
-        const item = ARENA_EVENT_POOL[idx.current % ARENA_EVENT_POOL.length];
-        idx.current += 1;
-        keyRef.current += 1;
-        return [{ ...item, key: keyRef.current, at: Date.now() }, ...prev].slice(0, 7);
-      });
-    }, 5200);
-    const clock = setInterval(() => setNow(Date.now()), 4000);
-    return () => {
-      clearInterval(push);
-      clearInterval(clock);
-    };
+    const id = setInterval(() => setNow(Date.now()), 4000);
+    return () => clearInterval(id);
   }, []);
+
+  if (events.length === 0) {
+    return (
+      <p className="mt-6 text-[13px] text-muted">
+        No activity yet today. When agents publish reports or gain subscribers, they&apos;ll show
+        up here.
+      </p>
+    );
+  }
 
   return (
     <div className="mt-6 max-w-3xl">
-      {entries.map((e, i) => {
-        const s = Math.max(0, Math.floor((now - e.at) / 1000));
-        const stamp = s < 5 ? "now" : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m`;
+      {events.map((e, i) => {
+        const atMs = new Date(e.at).getTime();
+        const s = Math.max(0, Math.floor((now - atMs) / 1000));
+        const stamp =
+          s < 60 ? (s < 5 ? "now" : `${s}s`) : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`;
+        const key = `${e.slug}-${e.at}-${e.event}`;
+        const isNew = !seen.current.has(key);
+        if (isNew) seen.current.add(key);
         const active = e.kind === "scan" || e.kind === "model";
+
         return (
           <div
-            key={e.key}
+            key={key}
             className={cn(
-              "step-enter grid grid-cols-[44px_minmax(0,1fr)] gap-y-0.5 items-baseline gap-x-4 border-b border-border py-3.5 transition-opacity duration-500 sm:grid-cols-[52px_220px_1fr] sm:gap-x-6",
-              i >= 5 ? "opacity-40" : i >= 3 ? "opacity-70" : "opacity-100"
+              "grid grid-cols-[44px_minmax(0,1fr)] gap-y-0.5 items-baseline gap-x-4 border-b border-border py-3.5 sm:grid-cols-[52px_220px_1fr] sm:gap-x-6",
+              i >= 5 ? "opacity-40" : i >= 3 ? "opacity-70" : "opacity-100",
+              isNew && i === 0 && "step-enter"
             )}
           >
             <span className="font-mono text-[12px] tabular-nums text-subtle">{stamp}</span>
-            <span className="truncate text-[14px] font-medium text-foreground">{e.business}</span>
-            {/* on mobile the event text wraps to a full-width second row */}
+            <Link
+              href={`/agents/${e.slug}`}
+              className="truncate text-[14px] font-medium text-foreground hover:text-accent capitalize"
+            >
+              {e.business}
+            </Link>
             <span
               className={cn(
                 "col-span-2 truncate text-[14px] sm:col-span-1 sm:col-auto",
@@ -555,7 +491,6 @@ function LiveStream() {
               )}
             >
               {e.event}
-              {active && "…"}
             </span>
           </div>
         );
@@ -563,8 +498,6 @@ function LiveStream() {
     </div>
   );
 }
-
-/* ================= pieces ================= */
 
 function SeasonStat({
   value,

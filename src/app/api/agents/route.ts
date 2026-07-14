@@ -7,8 +7,10 @@ import {
 import { listAgents } from "@/lib/data/agents";
 import { validateCustomLlm } from "@/lib/agent-runtime";
 import { isSafePublicHttpUrl, isValidSourceUrl, SUPPORTED_SOURCE_TYPES } from "@/lib/knowledge-sources";
-import { llmConfigured, sanitizeLlmConfigInput } from "@/lib/llm-config";
+import { llmConfigured, sanitizeLlmConfigInput, isPremiumPlatformModelId } from "@/lib/llm-config";
+import { hasPremiumAccess } from "@/lib/token-gate";
 import { requireWalletSession } from "@/lib/wallet-auth";
+import { rateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -17,9 +19,14 @@ export const runtime = "nodejs";
  * launched by a wallet with ?owner=0x…
  */
 export async function GET(req: Request) {
+  const limit = rateLimit(req, "agents-read", 120, 60_000);
+  if (!limit.ok) return NextResponse.json({ error: "Too many requests" }, { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } });
   const { searchParams } = new URL(req.url);
   const owner = searchParams.get("owner");
   if (owner) {
+    if (!requireWalletSession(req, owner)) {
+      return NextResponse.json({ error: "Wallet session required" }, { status: 401 });
+    }
     return NextResponse.json({ agents: listAgentsByOwner(owner) });
   }
   const agents = listAgents().map((a) => ({
@@ -80,6 +87,20 @@ export async function POST(req: Request) {
 
   const llm = sanitizeLlmConfigInput(body) ?? { mode: "platform" as const, model: "balanced" };
 
+  if (
+    llm.mode === "platform" &&
+    isPremiumPlatformModelId(llm.model) &&
+    !(await hasPremiumAccess(authenticatedWallet))
+  ) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `Premium models require holding $BOWYER in your wallet. Connect the wallet that holds the token and try again.`,
+      },
+      { status: 403 }
+    );
+  }
+
   const missing: string[] = [];
   if (!name) missing.push("name");
   if (!tagline) missing.push("tagline");
@@ -118,6 +139,13 @@ export async function POST(req: Request) {
 
   // Custom LLM: validate key works before storing.
   if (llm?.mode === "custom") {
+    const endpoint = llm.baseUrl?.trim() || "https://api.openai.com/v1";
+    if (!(await isSafePublicHttpUrl(endpoint))) {
+      return NextResponse.json(
+        { ok: false, error: "Custom LLM endpoint must resolve to a safe public HTTPS address." },
+        { status: 400 }
+      );
+    }
     const ok = await validateCustomLlm(llm);
     if (!ok) {
       return NextResponse.json(

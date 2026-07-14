@@ -19,7 +19,7 @@ Copy `.env.example` to `.env` and fill in:
 | `PLATFORM_PAYOUT_ADDRESS` | Yes for paid Whale Hunter | Wallet that receives Whale Hunter subscription payments. If unset, paid subscriptions fail safely. |
 | `TAVILY_API_KEY` | Recommended | Live web search ([tavily.com](https://tavily.com), 1,000 free credits/mo). Grounds every report/answer in real, current sources with citations; research agents run a multi-query deep-research pass. Without it, agents fall back to LLM-only output. |
 | `FIRECRAWL_API_KEY` | No | Website knowledge sources scraped to clean LLM-ready markdown via [firecrawl.dev](https://firecrawl.dev) (500 free credits/mo). Falls back to a plain fetch when unset. |
-| `CRON_SECRET` | Recommended in prod | Secures `POST /api/cron/publish`. Set on Railway cron (every 15 min) when `DISABLE_SCHEDULER=1` on multi-instance deploys. |
+| `CRON_SECRET` | Required in prod | Secures `POST /api/cron/publish`; the endpoint fails closed when absent. Set on Railway cron (every 15 min) when `DISABLE_SCHEDULER=1` on multi-instance deploys. |
 | `DISABLE_SCHEDULER` | No | Set to `1` to disable in-process scheduler; use external cron instead. |
 | `TELEGRAM_BOT_TOKEN` | No | Enables report delivery and paid agent chat. Webhook: `https://bowyer.app/api/telegram/webhook` |
 | `TELEGRAM_WEBHOOK_SECRET` | With Telegram | Required webhook secret; register it with Telegram's `secret_token` parameter |
@@ -81,6 +81,7 @@ report-only; use `/latest slug` to read their newest published output.
 | `DAILY_SEARCH_LIMIT` / `DAILY_LLM_LIMIT` / `DAILY_SCRAPE_LIMIT` | No | Per-business daily API quotas (defaults 40 / 80 / 20). |
 | `GITHUB_TOKEN` | No | Higher rate limits for live repo stats and GitHub knowledge sources. |
 | `BOWYER_DB_PATH` | No | Defaults to `./data/bowyer.db` (Docker: `/data/bowyer.db`). Stores agents, subscriptions, reports, **knowledge sources**, and **per-business LLM config** (including BYOK keys). |
+| `DEXSCREENER_CHAIN_ID` | For Hood Meme Radar market data | DexScreener's Robinhood Chain slug. Confirm it from DexScreener before setting; the scanner intentionally returns no pool rather than cross-chain data when it does not match. |
 
 `NEXT_PUBLIC_BOWYER_NETWORK` is baked in at **build time** — rebuild after
 changing it.
@@ -136,6 +137,25 @@ pm2 start .next/standalone/server.js --name bowyer
       call `ask` on its MCP endpoint and confirm the source is cited
 - [ ] OAuth: GitHub App callback + `GITHUB_CLIENT_*` on Railway; Telegram `/setdomain` + `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME`
 - [ ] Portfolio → Connections: connect GitHub, Notion, Discord, X, and Telegram; verify pickers in `/launch`
+
+## 5. 200–500 tester beta checklist
+
+This deployment supports a **single-replica, controlled beta** after these
+requirements are met. It is not a multi-replica or 1,000-user architecture.
+
+- [ ] Railway has exactly one application replica and a mounted persistent `/data` volume
+- [ ] `CRON_SECRET` is set; use an external 15-minute cron with `DISABLE_SCHEDULER=1` when background publishing is enabled
+- [ ] Primary and fallback LLM providers are configured, with paid quotas sized for scheduled reports and tester traffic
+- [ ] Set `PLATFORM_LLM_RPM` and `PLATFORM_DAILY_LLM_LIMIT` below the purchased provider quota; platform traffic is throttled globally while founders' BYOK traffic is not
+- [ ] Telegram webhook secret is configured; test `/menu`, `/briefing`, `/scan`, Robinhood Trading Agent console, sample-agent delivery, and a paid-agent session
+- [ ] Robinhood Trading Agent: user completes desktop MCP OAuth at `https://agent.robinhood.com/mcp/trading`, funds Agentic Account, configures policy at `/agents/robinhood-trading-agent#trading`
+- [ ] Back up `/data/bowyer.db` before the invite wave and verify restore on a staging service
+- [ ] Monitor Railway CPU, memory, restarts, LLM 429s, Telegram 429s, and SQLite errors during the first 50 users
+- [ ] Do not horizontally scale until publishing and Telegram delivery move to durable queues and the database moves off SQLite
+
+Telegram report delivery is persisted in SQLite with bounded queue draining and
+retry backoff. It improves recovery during the single-replica beta, but it is
+not a replacement for a distributed queue when running multiple replicas.
 
 ## SDK artifacts
 

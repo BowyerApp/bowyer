@@ -2,11 +2,19 @@ import { NextResponse } from "next/server";
 import { getOrCreateMcpServer } from "@/lib/mcp-server";
 import { getAgentSummary } from "@/lib/data/agents";
 import { mcpEndpointForSlug } from "@/lib/mcp-endpoint";
+import { isSafePublicHttpUrl } from "@/lib/knowledge-sources";
+import { rateLimit } from "@/lib/rate-limit";
+import { requireWalletSession } from "@/lib/wallet-auth";
 
 export const runtime = "nodejs";
 
 /** Validate MCP URLs before publish — Smithery CLI publish flow pre-check */
 export async function POST(req: Request) {
+  const limit = rateLimit(req, "mcp-validate", 10, 60_000);
+  if (!limit.ok) return NextResponse.json({ ok: false, error: "Too many requests" }, { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } });
+  if (!requireWalletSession(req)) {
+    return NextResponse.json({ ok: false, error: "Wallet session required" }, { status: 401 });
+  }
   let url: string;
   try {
     const body = await req.json();
@@ -28,6 +36,9 @@ export async function POST(req: Request) {
 
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     return NextResponse.json({ ok: false, error: "URL must use HTTP or HTTPS" }, { status: 400 });
+  }
+  if (!(await isSafePublicHttpUrl(url))) {
+    return NextResponse.json({ ok: false, error: "URL must resolve to a public HTTP(S) address" }, { status: 400 });
   }
 
   // Local BOWYER MCP endpoints resolve instantly
@@ -56,6 +67,7 @@ export async function POST(req: Request) {
     const res = await fetch(url, {
       method: "GET",
       signal: controller.signal,
+      redirect: "error",
       headers: { Accept: "application/json" },
     });
     clearTimeout(timeout);

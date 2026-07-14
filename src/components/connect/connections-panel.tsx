@@ -194,6 +194,28 @@ export function ConnectionsPanel() {
           );
         })}
 
+        <div className="flex flex-col gap-4 bg-background p-7 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-4">
+            <img
+              src="/images/agents/robinhood-trading-agent.png"
+              alt=""
+              className="mt-0.5 size-10 rounded-sm border border-white/10 object-cover"
+            />
+            <div>
+              <p className="text-[15px] font-medium text-foreground">Robinhood Agentic Account</p>
+              <p className="mt-1 text-[13px] text-muted">
+                Connect via Robinhood&apos;s official Trading MCP. Configure limits and approvals in the trading console.
+              </p>
+            </div>
+          </div>
+          <a
+            href="/agents/robinhood-trading-agent#trading"
+            className="flex h-9 shrink-0 items-center rounded-sm bg-accent px-4 text-[13px] font-medium text-background hover:opacity-90"
+          >
+            Open console
+          </a>
+        </div>
+
         {/* Telegram Login Widget */}
         <div className="flex flex-col gap-4 bg-background p-7 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-4">

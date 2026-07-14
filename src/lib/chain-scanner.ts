@@ -21,6 +21,20 @@ export interface ChainTransfer {
   blockNumber: number;
 }
 
+export interface ContractDeployment {
+  txHash: string;
+  deployer: string;
+  valueEth: number;
+  blockNumber: number;
+}
+
+export interface FundingCluster {
+  funder: string;
+  recipients: number;
+  totalEth: number;
+  blockCount: number;
+}
+
 export interface ChainScan {
   chainId: number;
   latestBlock: number;
@@ -28,6 +42,8 @@ export interface ChainScan {
   totalTxs: number;
   notableTransfers: ChainTransfer[];
   topSenders: { address: string; txCount: number; totalEth: number }[];
+  contractDeployments: ContractDeployment[];
+  fundingClusters: FundingCluster[];
   scannedAt: string;
 }
 
@@ -101,7 +117,9 @@ export async function scanChain(): Promise<ChainScan> {
   const blocks = await rpcBatch<RpcBlock>(calls);
 
   const transfers: ChainTransfer[] = [];
+  const deployments: ContractDeployment[] = [];
   const senderStats = new Map<string, { txCount: number; totalEth: number }>();
+  const funding = new Map<string, { recipients: Set<string>; totalEth: number; blocks: Set<number> }>();
   let totalTxs = 0;
 
   for (const block of blocks) {
@@ -109,6 +127,14 @@ export async function scanChain(): Promise<ChainScan> {
     for (const tx of block.transactions ?? []) {
       totalTxs++;
       const valueEth = weiHexToEth(tx.value);
+      if (!tx.to) {
+        deployments.push({
+          txHash: tx.hash,
+          deployer: tx.from,
+          valueEth,
+          blockNumber,
+        });
+      }
       if (valueEth <= 0) continue;
 
       const fromAddr = tx.from.toLowerCase();
@@ -116,6 +142,14 @@ export async function scanChain(): Promise<ChainScan> {
       s.txCount++;
       s.totalEth += valueEth;
       senderStats.set(fromAddr, s);
+
+      if (tx.to) {
+        const cluster = funding.get(fromAddr) ?? { recipients: new Set<string>(), totalEth: 0, blocks: new Set<number>() };
+        cluster.recipients.add(tx.to.toLowerCase());
+        cluster.totalEth += valueEth;
+        cluster.blocks.add(blockNumber);
+        funding.set(fromAddr, cluster);
+      }
 
       if (valueEth >= MIN_NOTABLE_ETH) {
         transfers.push({
@@ -136,6 +170,16 @@ export async function scanChain(): Promise<ChainScan> {
     .map(([address, s]) => ({ address, ...s, totalEth: Math.round(s.totalEth * 1e4) / 1e4 }))
     .sort((a, b) => b.totalEth - a.totalEth)
     .slice(0, 5);
+  const fundingClusters = [...funding.entries()]
+    .filter(([, cluster]) => cluster.recipients.size >= 3)
+    .map(([funder, cluster]) => ({
+      funder,
+      recipients: cluster.recipients.size,
+      totalEth: Math.round(cluster.totalEth * 1e4) / 1e4,
+      blockCount: cluster.blocks.size,
+    }))
+    .sort((a, b) => b.recipients - a.recipients || b.totalEth - a.totalEth)
+    .slice(0, 10);
 
   const scan: ChainScan = {
     chainId: 4663,
@@ -144,6 +188,8 @@ export async function scanChain(): Promise<ChainScan> {
     totalTxs,
     notableTransfers: transfers.slice(0, 10),
     topSenders,
+    contractDeployments: deployments.slice(0, 20),
+    fundingClusters,
     scannedAt: new Date().toISOString(),
   };
 

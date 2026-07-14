@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Container } from "@/components/layout/container";
 import { DocsNav } from "@/components/docs/docs-nav";
+import { BrainModelCatalog } from "@/components/docs/brain-model-catalog";
 
 export const metadata: Metadata = {
   title: "Setup & API — BOWYER Docs",
@@ -188,7 +189,7 @@ export default function SetupDocsPage() {
           {/* ---------------- rest api ---------------- */}
           <Section id="rest" title="5 · REST API">
             <ApiRow method="GET" path="/api/agents" desc="List all businesses. Filter with ?owner=0x… for businesses launched by a wallet." />
-            <ApiRow method="POST" path="/api/agents" desc="Launch a business. Body: name, tagline, category, description, revenueModel, priceUsd, payoutAddress (required if paid), ownerAddress, sources? (website/github/rss URLs), llm? ({ mode: platform, model: fast|balanced|deep } or { mode: custom, apiKey, model, baseUrl? })." />
+            <ApiRow method="POST" path="/api/agents" desc="Launch a business. Body: name, tagline, category, description, revenueModel, priceUsd, payoutAddress (required if paid), ownerAddress, sources? (website/github/rss URLs), llm? ({ mode: platform, model: fast|balanced|deep|mixtral|gemma|qwen } or { mode: custom, apiKey, model, baseUrl? })." />
             <ApiRow method="GET" path="/api/subscriptions?subscriber=0x…" desc="Subscriptions a wallet has bought." />
             <ApiRow method="GET" path="/api/subscriptions?creator=0x…" desc="Payments received by businesses a wallet owns." />
             <ApiRow method="POST" path="/api/subscriptions" desc="Subscribe. Body: slug, subscriber, txHash (paid only — verified on chain before activation)." />
@@ -268,9 +269,27 @@ export default function SetupDocsPage() {
               No API key required. Uses the platform&apos;s hosted LLM (Groq by default):
             </p>
             <ul className="mt-3 flex list-disc flex-col gap-2 pl-5">
-              <li><strong className="text-foreground">Fast</strong> — <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-foreground">llama-3.1-8b-instant</code> for alerts and short answers</li>
-              <li><strong className="text-foreground">Balanced</strong> — <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-foreground">llama-3.3-70b-versatile</code> (recommended)</li>
-              <li><strong className="text-foreground">Deep</strong> — same model with deeper reasoning settings for long-form reports</li>
+              <li><strong className="text-foreground">Llama 3.1 8B Instant</strong> — alerts and short answers</li>
+              <li><strong className="text-foreground">Llama 3.3 70B Versatile</strong> — recommended default</li>
+              <li><strong className="text-foreground">Llama 3.3 Deep</strong> — maximum reasoning depth</li>
+              <li><strong className="text-foreground">Mixtral 8×7B</strong> — multi-step workflows</li>
+              <li><strong className="text-foreground">Gemma 2 9B</strong> — high-volume loops</li>
+              <li><strong className="text-foreground">Qwen 2.5 32B</strong> — structured agent output</li>
+            </ul>
+            <h3 className="mt-6 text-[15px] font-semibold text-foreground">Premium · coming soon</h3>
+            <p className="mt-1.5">
+              Gated by <strong className="text-foreground">$BOWYER</strong> protocol capacity — rolling out with the token launch:
+            </p>
+            <ul className="mt-3 flex list-disc flex-col gap-2 pl-5">
+              <li><strong className="text-foreground">GPT-5.4</strong> · OpenAI flagship reasoning</li>
+              <li><strong className="text-foreground">Grok 3</strong> · real-time X + web signal</li>
+              <li><strong className="text-foreground">Claude Opus 4</strong> · deep multi-source analysis</li>
+              <li><strong className="text-foreground">Fable</strong> · narrative-first agent personas</li>
+              <li><strong className="text-foreground">Gemini 2.5 Pro</strong> · long-context research</li>
+              <li><strong className="text-foreground">DeepSeek R1</strong> · open reasoning chains</li>
+              <li><strong className="text-foreground">OpenAI o3</strong> · high-stakes deliberation</li>
+              <li><strong className="text-foreground">Claude Sonnet 4</strong> · fast premium tier</li>
+              <li><strong className="text-foreground">Mistral Large</strong> · multilingual research</li>
             </ul>
             <h3 className="mt-6 text-[15px] font-semibold text-foreground">Your API key (BYOK)</h3>
             <p className="mt-1.5">

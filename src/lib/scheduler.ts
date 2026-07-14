@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { generateReport, llmAvailable } from "@/lib/agent-runtime";
 import { resolveAgentIdentity } from "@/lib/agent-identity";
 import { listAgents } from "@/lib/data/agents";
-import { notifyReportPublished } from "@/lib/telegram";
+import { processTelegramDeliveryQueue } from "@/lib/telegram";
 
 /**
  * Autonomous publishing — businesses generate reports on a schedule without
@@ -12,6 +12,8 @@ import { notifyReportPublished } from "@/lib/telegram";
 /** Default intervals (hours) for catalog businesses. User-launched default to 24h. */
 const CATALOG_INTERVALS: Record<string, number> = {
   "whale-hunter": 6,
+  "hood-meme-radar": 2,
+  "robinhood-trading-agent": 4,
   "gpt-researcher": 12,
   autogpt: 24,
   openhands: 24,
@@ -94,17 +96,17 @@ export async function runScheduledPublish(slug?: string): Promise<{
       const topic =
         row.topic_template?.trim() ||
         `Scheduled briefing: latest developments in ${identity.tagline}`;
-      const report = await generateReport(identity, topic);
+      await generateReport(identity, topic);
       db()
         .prepare("UPDATE schedules SET last_run_at = ? WHERE slug = ?")
         .run(new Date().toISOString(), row.slug);
       ran.push(row.slug);
-      await notifyReportPublished(row.slug, report.title, report.body).catch(() => {});
     } catch (err) {
       errors.push({ slug: row.slug, error: (err as Error).message });
     }
   }
 
+  await processTelegramDeliveryQueue().catch(() => {});
   return { ran, skipped, errors };
 }
 

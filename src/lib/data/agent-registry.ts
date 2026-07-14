@@ -2,6 +2,13 @@ import type { AgentSummary } from "@/lib/types";
 import type { AgentLlmConfig } from "@/lib/llm-config";
 import { db } from "@/lib/db";
 
+function cryptoStore(): { encryptSecret(value: string): string; decryptSecret(value: string): string | null } {
+  // This module is transitively imported by client catalog components. Hide the
+  // Node crypto dependency from webpack and invoke it only in server DB paths.
+  const req = eval("require") as NodeRequire;
+  return req("../oauth/crypto") as { encryptSecret(value: string): string; decryptSecret(value: string): string | null };
+}
+
 /**
  * SQLite-backed registry for user-launched agents and subscriptions.
  * Data survives server restarts (stored in ./data/bowyer.db).
@@ -167,7 +174,13 @@ export function registerAgent(input: RegisterAgentInput): { slug: string } {
     input.payoutAddress?.toLowerCase() ?? null,
     (input.ownerAddress ?? input.payoutAddress)?.toLowerCase() ?? null,
     input.sources && input.sources.length > 0 ? JSON.stringify(input.sources) : null,
-    input.llm ? JSON.stringify(input.llm) : null
+    input.llm
+      ? JSON.stringify(
+          input.llm.mode === "custom" && input.llm.apiKey
+            ? { ...input.llm, apiKey: cryptoStore().encryptSecret(input.llm.apiKey) }
+            : input.llm
+        )
+      : null
   );
 
   return { slug };
@@ -188,7 +201,6 @@ export function getAgentSources(slug: string): KnowledgeSource[] {
   }
 }
 
-/** LLM config for a user-launched business (null → platform env defaults). */
 export function getAgentLlmConfig(slug: string): AgentLlmConfig | null {
   if (!isServer) return null;
   const row = db()
@@ -196,10 +208,28 @@ export function getAgentLlmConfig(slug: string): AgentLlmConfig | null {
     .get(slug) as { llm_config: string | null } | undefined;
   if (!row?.llm_config) return null;
   try {
-    return JSON.parse(row.llm_config) as AgentLlmConfig;
+    const config = JSON.parse(row.llm_config) as AgentLlmConfig;
+    if (config.mode !== "custom" || !config.apiKey) return config;
+    const decrypted = cryptoStore().decryptSecret(config.apiKey);
+    if (decrypted) return { ...config, apiKey: decrypted };
+
+    // Safely migrate legacy plaintext entries the first time they are read.
+    const encrypted = cryptoStore().encryptSecret(config.apiKey);
+    db()
+      .prepare("UPDATE agents SET llm_config = ? WHERE slug = ?")
+      .run(JSON.stringify({ ...config, apiKey: encrypted }), slug);
+    return config;
   } catch {
     return null;
   }
+}
+
+export function getAgentOwnerAddress(slug: string): string | null {
+  if (!isServer) return null;
+  const row = db()
+    .prepare("SELECT owner_address FROM agents WHERE slug = ?")
+    .get(slug) as { owner_address: string | null } | undefined;
+  return row?.owner_address ?? null;
 }
 
 export function listAgentsByOwner(owner: string): AgentSummary[] {
@@ -304,6 +334,14 @@ export function hasSubscription(slug: string, subscriber: string): boolean {
       )
       .get(slug, subscriber.toLowerCase())
   );
+}
+
+export function countActiveSubscriptionsForAgent(slug: string): number {
+  if (!isServer) return 0;
+  const row = db()
+    .prepare("SELECT COUNT(*) AS n FROM subscriptions WHERE slug = ? AND active = 1")
+    .get(slug) as { n: number };
+  return row.n;
 }
 
 /** Whether a tx hash has already been used to pay for a subscription. */

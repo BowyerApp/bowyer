@@ -32,7 +32,8 @@ import {
   Zap,
 } from "lucide-react";
 import { Container } from "@/components/layout/container";
-import { BYOK_PROVIDERS, PLATFORM_MODELS, llmConfigSummary } from "@/lib/llm-config";
+import { BYOK_PROVIDERS, PLATFORM_MODELS_PREMIUM, PLATFORM_MODELS_STANDARD, llmConfigSummary } from "@/lib/llm-config";
+import { PlatformModelAccordion } from "@/components/launch/platform-model-accordion";
 import { shortAddress, useWallet } from "@/lib/wallet-context";
 import { cn } from "@/lib/utils";
 
@@ -263,6 +264,22 @@ export function LaunchExperience() {
   const [customPrice, setCustomPrice] = useState("");
   const [payoutAddress, setPayoutAddress] = useState("");
   const { address: walletAddress, connect: connectWallet, authenticate } = useWallet();
+  const [premiumUnlocked, setPremiumUnlocked] = useState(false);
+  const [premiumMinBalance, setPremiumMinBalance] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!walletAddress) {
+      setPremiumUnlocked(false);
+      return;
+    }
+    fetch(`/api/token/gate?wallet=${walletAddress}`)
+      .then((r) => r.json())
+      .then((d) => {
+        setPremiumUnlocked(Boolean(d.unlocked));
+        setPremiumMinBalance(d.minBalance ?? null);
+      })
+      .catch(() => setPremiumUnlocked(false));
+  }, [walletAddress]);
 
   // Default the payout address to the connected wallet.
   useEffect(() => {
@@ -780,48 +797,40 @@ export function LaunchExperience() {
 
             {llmMode === "platform" ? (
               <>
-                <div className="mt-6 grid gap-3 sm:grid-cols-3">
-                  {PLATFORM_MODELS.map((m) => (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => setModel(m.id)}
-                      className={cn(
-                        "rounded-2xl border p-4 text-left transition-colors",
-                        model === m.id
-                          ? "border-accent/70 bg-accent/[0.05]"
-                          : "border-border bg-surface hover:border-white/25"
-                      )}
-                    >
-                      <span className="flex items-center justify-between gap-2">
-                        <span className="flex items-center gap-2">
-                          <Brain
-                            className={cn(
-                              "size-4",
-                              model === m.id ? "text-accent" : "text-muted"
-                            )}
-                            strokeWidth={1.75}
-                          />
-                          <span className="text-[14px] font-semibold text-foreground">
-                            {m.name}
-                          </span>
-                        </span>
-                        <span className="text-[10px] uppercase tracking-wide text-subtle">
-                          {m.badge}
-                        </span>
-                      </span>
-                      <span className="mt-1.5 block text-[12px] leading-relaxed text-muted">
-                        {m.blurb}
-                      </span>
-                      <span className="mt-2 block font-mono text-[10.5px] text-subtle">
-                        {m.model}
-                      </span>
-                    </button>
-                  ))}
+                <p className="mt-6 text-[11px] font-medium uppercase tracking-[0.14em] text-subtle">
+                  Available now
+                </p>
+                <div className="mt-3">
+                  <PlatformModelAccordion
+                    models={PLATFORM_MODELS_STANDARD}
+                    selectedId={model}
+                    onSelect={setModel}
+                  />
                 </div>
+
+                <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.14em] text-subtle">
+                  Premium · $BOWYER holders
+                </p>
+                <p className="mt-1 text-[12px] text-muted">
+                  {premiumUnlocked
+                    ? "Your wallet holds enough $BOWYER — frontier models unlocked."
+                    : premiumMinBalance
+                      ? `Hold at least ${premiumMinBalance} $BOWYER to unlock Opus, Grok, GPT class, and Fable.`
+                      : "Connect a wallet that holds $BOWYER to unlock frontier models."}
+                </p>
+                <div className="mt-3">
+                  <PlatformModelAccordion
+                    models={PLATFORM_MODELS_PREMIUM}
+                    selectedId={model}
+                    onSelect={setModel}
+                    selectable={premiumUnlocked}
+                    tokenGated
+                  />
+                </div>
+
                 <p className="mt-4 text-[12px] text-subtle">
-                  Powered by BOWYER&apos;s LLM — no key required. Usage limits apply on the free
-                  tier.
+                  Free tier models stay free. Premium models require $BOWYER in the wallet that
+                  launches the business.
                 </p>
               </>
             ) : (

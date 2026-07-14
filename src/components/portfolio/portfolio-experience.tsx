@@ -39,11 +39,30 @@ export function PortfolioExperience() {
 }
 
 function PortfolioExperienceInner() {
-  const { address } = useWallet();
+  const { address, authenticate } = useWallet();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [tab, setTab] = useState<TabId>("briefing");
   const [oauthNotice, setOauthNotice] = useState<string | null>(null);
+  const [sessionReady, setSessionReady] = useState(false);
+
+  useEffect(() => {
+    if (!address) {
+      setSessionReady(false);
+      return;
+    }
+    let cancelled = false;
+    authenticate()
+      .then((ok) => {
+        if (!cancelled) setSessionReady(ok);
+      })
+      .catch(() => {
+        if (!cancelled) setSessionReady(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [address, authenticate]);
 
   useEffect(() => {
     const oauth = searchParams.get("oauth");
@@ -133,27 +152,28 @@ function PortfolioExperienceInner() {
       )}
 
       {tab === "briefing" && <MorningBriefing />}
-      {tab === "businesses" && <MyBusinesses address={address} />}
-      {tab === "subscriptions" && <MySubscriptions address={address} />}
+      {tab === "businesses" && <MyBusinesses address={address} sessionReady={sessionReady} />}
+      {tab === "subscriptions" && <MySubscriptions address={address} sessionReady={sessionReady} />}
       {tab === "connections" && <ConnectionsPanel />}
-      {tab === "earnings" && <Earnings address={address} />}
+      {tab === "earnings" && <Earnings address={address} sessionReady={sessionReady} />}
     </>
   );
 }
 
 /* ================= my businesses ================= */
 
-function MyBusinesses({ address }: { address: string }) {
+function MyBusinesses({ address, sessionReady }: { address: string; sessionReady: boolean }) {
   const [agents, setAgents] = useState<AgentSummary[] | null>(null);
 
   useEffect(() => {
+    if (!sessionReady) return;
     fetch(`/api/agents?owner=${address}`)
       .then((r) => r.json())
       .then((d) => setAgents(d.agents ?? []))
       .catch(() => setAgents([]));
-  }, [address]);
+  }, [address, sessionReady]);
 
-  if (agents === null) return <PanelLoading />;
+  if (!sessionReady || agents === null) return <PanelLoading />;
 
   if (agents.length === 0) {
     return (
@@ -243,17 +263,19 @@ function CopyEndpoint({ slug }: { slug: string }) {
 
 /* ================= subscriptions ================= */
 
-function MySubscriptions({ address }: { address: string }) {
+function MySubscriptions({ address, sessionReady }: { address: string; sessionReady: boolean }) {
+  const { authenticate } = useWallet();
   const [subs, setSubs] = useState<SubscriptionRow[] | null>(null);
 
   useEffect(() => {
+    if (!sessionReady) return;
     fetch(`/api/subscriptions?subscriber=${address}`)
       .then((r) => r.json())
       .then((d) => setSubs(d.subscriptions ?? []))
       .catch(() => setSubs([]));
-  }, [address]);
+  }, [address, sessionReady]);
 
-  if (subs === null) return <PanelLoading />;
+  if (!sessionReady || subs === null) return <PanelLoading />;
 
   if (subs.length === 0) {
     return (
@@ -302,6 +324,7 @@ function MySubscriptions({ address }: { address: string }) {
             <CancelSubscription
               slug={s.slug}
               subscriber={address}
+              authenticate={authenticate}
               onCancelled={() => setSubs((prev) => prev?.filter((x) => x !== s) ?? null)}
             />
           </div>
@@ -314,10 +337,12 @@ function MySubscriptions({ address }: { address: string }) {
 function CancelSubscription({
   slug,
   subscriber,
+  authenticate,
   onCancelled,
 }: {
   slug: string;
   subscriber: string;
+  authenticate: () => Promise<boolean>;
   onCancelled: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -328,11 +353,18 @@ function CancelSubscription({
       onClick={async () => {
         setBusy(true);
         try {
-          const res = await fetch("/api/subscriptions", {
+          let res = await fetch("/api/subscriptions", {
             method: "DELETE",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ slug, subscriber }),
           });
+          if (res.status === 401 && (await authenticate())) {
+            res = await fetch("/api/subscriptions", {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ slug, subscriber }),
+            });
+          }
           if (res.ok) onCancelled();
         } finally {
           setBusy(false);
@@ -347,17 +379,18 @@ function CancelSubscription({
 
 /* ================= earnings ================= */
 
-function Earnings({ address }: { address: string }) {
+function Earnings({ address, sessionReady }: { address: string; sessionReady: boolean }) {
   const [earnings, setEarnings] = useState<SubscriptionRow[] | null>(null);
 
   useEffect(() => {
+    if (!sessionReady) return;
     fetch(`/api/subscriptions?creator=${address}`)
       .then((r) => r.json())
       .then((d) => setEarnings(d.subscriptions ?? []))
       .catch(() => setEarnings([]));
-  }, [address]);
+  }, [address, sessionReady]);
 
-  if (earnings === null) return <PanelLoading />;
+  if (!sessionReady || earnings === null) return <PanelLoading />;
 
   const total = earnings.reduce((sum, e) => sum + e.amountUsd, 0);
   const paying = earnings.filter((e) => e.amountUsd > 0);

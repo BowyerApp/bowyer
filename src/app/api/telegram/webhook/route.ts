@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
-import { handleTelegramUpdate, telegramConfigured } from "@/lib/telegram";
+import { ensureTelegramMenu, handleTelegramUpdate, telegramConfigured } from "@/lib/telegram";
 
 export const runtime = "nodejs";
 
@@ -24,6 +24,7 @@ export async function POST(req: Request) {
   try {
     const update = await req.json();
     // Telegram expects a fast acknowledgement; LLM replies may take much longer.
+    void ensureTelegramMenu().catch(() => {});
     void handleTelegramUpdate(update).catch((err) => {
       console.error("Telegram update failed", err);
     });
