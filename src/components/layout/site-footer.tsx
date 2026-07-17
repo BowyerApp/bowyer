@@ -63,6 +63,14 @@ export function SiteFooter() {
             >
               X / Twitter
             </a>
+            <a
+              href={`https://dexscreener.com/robinhood/${TOKEN_CA}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-foreground transition-colors duration-150"
+            >
+              $BOWYER Chart
+            </a>
           </div>
         </div>
         <p className="mt-10 pt-6 border-t border-border meta-text">

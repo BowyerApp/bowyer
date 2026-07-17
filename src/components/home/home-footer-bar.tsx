@@ -1,6 +1,10 @@
 import { Leaf } from "lucide-react";
 import { ScrollToExplore } from "@/components/home/scroll-to-explore";
 
+const TOKEN_CA =
+  process.env.NEXT_PUBLIC_BOWYER_TOKEN_ADDRESS?.trim() ||
+  "0xaF4C10fEf50059d1e3E8aB1C80E46DB6A76098B4";
+
 export function HomeFooterBar() {
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-white/[0.06] bg-[#050505]/90 backdrop-blur-md">
@@ -39,7 +43,14 @@ export function HomeFooterBar() {
             GitHub
           </a>
           <span className="w-px h-3 bg-white/10" />
-          <span>Open Source</span>
+          <a
+            href={`https://dexscreener.com/robinhood/${TOKEN_CA}`}
+            target="_blank"
+            rel="noreferrer"
+            className="hover:text-white transition-colors normal-case tracking-normal font-medium"
+          >
+            $BOWYER
+          </a>
         </div>
 
         <ScrollToExplore />
