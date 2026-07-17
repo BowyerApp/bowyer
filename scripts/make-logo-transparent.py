@@ -1,8 +1,10 @@
 """Remove the black background from the BOWYER logo, preserving glow edges."""
+from pathlib import Path
 from PIL import Image
 
-SRC = "/Users/jamison/.cursor/projects/Users-jamison-untitled-folder-8/assets/BOWYER-97f2b3be-5466-4580-8500-41193272ccc6.png"
-OUT = "public/images/bowyer-logo.png"
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "assets" / "bowyer-logo-raw.png"
+OUT = ROOT / "public" / "images" / "bowyer-logo.png"
 
 img = Image.open(SRC).convert("RGBA")
 px = img.load()
@@ -37,9 +39,9 @@ print(f"saved {OUT} {img.size}")
 side = max(img.size)
 icon = Image.new("RGBA", (side, side), (0, 0, 0, 0))
 icon.paste(img, ((side - img.size[0]) // 2, (side - img.size[1]) // 2))
-icon.save("public/images/bowyer-icon.png")
+icon.save(ROOT / "public" / "images" / "bowyer-icon.png")
 print(f"saved public/images/bowyer-icon.png {icon.size}")
 
 # 32px favicon
-icon.resize((64, 64), Image.LANCZOS).save("src/app/icon.png")
+icon.resize((64, 64), Image.LANCZOS).save(ROOT / "src" / "app" / "icon.png")
 print("saved src/app/icon.png (64x64)")

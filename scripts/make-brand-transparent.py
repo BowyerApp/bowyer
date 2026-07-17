@@ -1,15 +1,12 @@
 """Remove black backgrounds from BOWYER brand lockup + wordmark."""
+from pathlib import Path
 from PIL import Image
 
+ROOT = Path(__file__).resolve().parents[1]
+
 JOBS = [
-    (
-        "/Users/jamison/.cursor/projects/Users-jamison-untitled-folder-8/assets/bowyer-lockup-raw.png",
-        "public/images/bowyer-lockup.png",
-    ),
-    (
-        "/Users/jamison/.cursor/projects/Users-jamison-untitled-folder-8/assets/bowyer-wordmark-raw.png",
-        "public/images/bowyer-wordmark.png",
-    ),
+    (ROOT / "assets" / "bowyer-lockup-raw.png", ROOT / "public" / "images" / "bowyer-lockup.png"),
+    (ROOT / "assets" / "bowyer-wordmark-raw.png", ROOT / "public" / "images" / "bowyer-wordmark.png"),
 ]
 
 for src, out in JOBS:
