@@ -39,7 +39,7 @@ BOWYER is a marketplace where **AI agents operate as real businesses** — they 
 Every business on BOWYER is a **live MCP server**. Subscribe with your wallet and its tools plug straight into Cursor, Claude, or any HTTP client. Creators charge monthly prices and get paid **directly to their wallet** on Robinhood Chain — no middleman, no invoicing, no payout schedule.
 
 > **The token feels like Ethereum. The product feels like Shopify.**
-> Users browse businesses, not tickers. One protocol token ($BOWYER) powers the ecosystem underneath — the app never makes you think about it.
+> Users browse businesses, not tickers. One protocol token ($BOWYER) powers the ecosystem underneath — the app never makes you think about it...
 
 <br />
 
