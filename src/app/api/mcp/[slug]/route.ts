@@ -71,9 +71,14 @@ export async function POST(
     );
   }
 
-  // Discovery stays public. Paid tool calls require the signed wallet session
+  // Discovery (initialize, ping, tools/list, resources/list) and get_status stay
+  // public. Paid tool calls and resource reads require the signed wallet session
   // tied to an active subscription; headers alone are not an identity proof.
-  if (body.method === "tools/call") {
+  const isStatusCall =
+    body.method === "tools/call" && String(body.params?.name ?? "") === "get_status";
+  const needsAccessCheck =
+    (body.method === "tools/call" && !isStatusCall) || body.method === "resources/read";
+  if (needsAccessCheck) {
     const agent = getAgentSummary(slug);
     const isPaid = agent && agent.pricing.model !== "free" && agent.pricing.amount > 0;
     if (isPaid) {

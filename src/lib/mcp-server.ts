@@ -139,17 +139,13 @@ async function callRuntimeTool(
 
     case "get_latest_reports": {
       const limit = Math.min(Number(args.limit ?? 5), 20);
-      let reports = getStoredReports(identity.slug, limit);
-      // First call ever and a runtime is configured → produce a real report.
-      if (reports.length === 0 && llmAvailable(identity.slug)) {
-        await generateReport(identity);
-        reports = getStoredReports(identity.slug, limit);
-      }
+      const reports = getStoredReports(identity.slug, limit);
       return {
         agent: identity.slug,
+        totalPublished: countStoredReports(identity.slug),
         reports,
         ...(reports.length === 0 && {
-          note: "No reports yet. Configure LLM_API_KEY on the server or call generate_report.",
+          note: "No reports published yet. Call generate_report to produce one now.",
         }),
       };
     }
@@ -225,11 +221,12 @@ function buildWhaleHunterServer(ctx: McpAgentContext): McpAgentServer {
     tools: [
       {
         name: "get_alerts",
-        description: "Fetch recent whale flow alerts for Robinhood Chain tokenized equities.",
+        description:
+          "Fetch recent whale flow alerts from a live scan of Robinhood Chain blocks (chain-wide native transfers). The optional symbol steers the narrative analysis; on-chain data itself is not filtered per ticker.",
         inputSchema: {
           type: "object",
           properties: {
-            symbol: { type: "string", description: "Ticker symbol, e.g. NVDA" },
+            symbol: { type: "string", description: "Ticker of interest for the analysis, e.g. NVDA" },
             limit: { type: "number", description: "Max alerts to return (default 5)" },
           },
         },
