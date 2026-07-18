@@ -228,6 +228,21 @@ function migrate(d: DatabaseT.Database) {
     CREATE INDEX IF NOT EXISTS idx_telegram_messages_chat_slug
       ON telegram_messages (chat_id, slug, id);
 
+    CREATE TABLE IF NOT EXISTS mcp_webhooks (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL,
+      url TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_delivery_at TEXT,
+      last_status INTEGER,
+      failure_count INTEGER NOT NULL DEFAULT 0,
+      UNIQUE (slug, url)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mcp_webhooks_slug
+      ON mcp_webhooks (slug, active);
+
     CREATE INDEX IF NOT EXISTS idx_telegram_referrals_referrer
       ON telegram_referrals (referrer_chat_id);
     CREATE INDEX IF NOT EXISTS idx_telegram_follows_slug

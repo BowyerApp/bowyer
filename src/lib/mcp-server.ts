@@ -10,13 +10,17 @@
 
 import {
   askAgent,
+  countStoredReports,
   generateReport,
+  getStoredReport,
   getStoredReports,
   llmAvailable,
   type AgentIdentity,
 } from "@/lib/agent-runtime";
+import { listWebhooks, registerWebhook, unregisterWebhook } from "@/lib/mcp-webhooks";
 import { getRepoStats } from "@/lib/github";
 import { formatChainContext, scanChain } from "@/lib/chain-scanner";
+import { getMemeRadar, scanTokenRisk } from "@/lib/meme-radar";
 import {
   createTradeDecision,
   dailyTradeStats,
@@ -89,14 +93,31 @@ function runtimeTools(identity: AgentIdentity): McpToolDefinition[] {
     },
     {
       name: "subscribe_webhook",
-      description: "Register a webhook URL for real-time output delivery.",
+      description:
+        "Register a public HTTPS webhook URL. It receives a JSON POST for every report this agent publishes (event: report.published). Registration is persisted; repeated delivery failures deactivate it.",
       inputSchema: {
         type: "object",
         properties: {
-          url: { type: "string", description: "HTTPS webhook endpoint" },
+          url: { type: "string", description: "Public HTTPS webhook endpoint" },
         },
         required: ["url"],
       },
+    },
+    {
+      name: "unsubscribe_webhook",
+      description: "Deactivate a webhook registration by its subscription ID.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          subscriptionId: { type: "string", description: "ID returned by subscribe_webhook" },
+        },
+        required: ["subscriptionId"],
+      },
+    },
+    {
+      name: "list_webhooks",
+      description: "List active webhook registrations for this agent.",
+      inputSchema: { type: "object", properties: {} },
     },
   ];
 }
@@ -146,7 +167,7 @@ async function callRuntimeTool(
         agent: identity.slug,
         status: "live",
         runtime: llmAvailable(identity.slug) ? "llm" : "unconfigured",
-        reportsPublished: getStoredReports(identity.slug, 20).length,
+        reportsPublished: countStoredReports(identity.slug),
         ...(github && {
           github: {
             repo: github.fullName,
@@ -160,12 +181,27 @@ async function callRuntimeTool(
       };
     }
 
-    case "subscribe_webhook":
+    case "subscribe_webhook": {
+      const hook = registerWebhook(identity.slug, String(args.url ?? ""));
       return {
         status: "registered",
-        url: args.url,
-        subscriptionId: `sub_${crypto.randomUUID().slice(0, 8)}`,
+        subscriptionId: hook.id,
+        url: hook.url,
+        agent: identity.slug,
+        event: "report.published",
+        note: "Persisted. Your endpoint receives a JSON POST each time this agent publishes a report. Five consecutive failures deactivate the registration.",
       };
+    }
+
+    case "unsubscribe_webhook": {
+      const removed = unregisterWebhook(identity.slug, String(args.subscriptionId ?? ""));
+      return removed
+        ? { status: "unsubscribed", subscriptionId: args.subscriptionId }
+        : { status: "not_found", subscriptionId: args.subscriptionId };
+    }
+
+    case "list_webhooks":
+      return { agent: identity.slug, webhooks: listWebhooks(identity.slug) };
 
     default:
       throw new Error(`Unknown tool: ${toolName}`);
@@ -249,6 +285,57 @@ function buildWhaleHunterServer(ctx: McpAgentContext): McpAgentServer {
             ? "Raw on-chain scan. Configure an LLM for narrative analysis."
             : "Chain RPC unavailable and no LLM configured.",
         };
+      }
+      return callRuntimeTool(identity, ctx, name, args);
+    },
+  };
+}
+
+/* ---------- hood meme radar: structured tools + runtime ---------- */
+
+function buildMemeRadarServer(ctx: McpAgentContext): McpAgentServer {
+  const identity: AgentIdentity = {
+    slug: "hood-meme-radar",
+    name: ctx.name,
+    tagline: ctx.tagline ?? "Memecoin launch detection on Robinhood Chain",
+    description: ctx.description,
+  };
+
+  return {
+    name: "hood-meme-radar",
+    version: ctx.version ?? "1.1.0",
+    tools: [
+      {
+        name: "get_radar",
+        description:
+          "Live radar over recent Robinhood Chain blocks: new contract deployments enriched with token metadata and DexScreener market data (price, liquidity, volume), plus coordinated funding clusters. Returns block range and contract addresses.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "scan_token",
+        description:
+          "Contract-level risk scan of a specific token address: bytecode presence, ERC-20 metadata, supply, DexScreener pool (price/liquidity/volume/5m flow), and explicit risk flags. Honest about checks it cannot perform.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            address: { type: "string", description: "Token contract address (0x…)" },
+          },
+          required: ["address"],
+        },
+      },
+      {
+        name: "get_status",
+        description: `Current operational status of ${ctx.name}.`,
+        inputSchema: { type: "object", properties: {} },
+      },
+      ...runtimeTools(identity),
+    ],
+    async callTool(name, args) {
+      if (name === "get_radar") {
+        return getMemeRadar();
+      }
+      if (name === "scan_token") {
+        return scanTokenRisk(String(args.address ?? ""));
       }
       return callRuntimeTool(identity, ctx, name, args);
     },
@@ -410,6 +497,7 @@ function buildGenericServer(ctx: McpAgentContext): McpAgentServer {
 export function getOrCreateMcpServer(ctx: McpAgentContext | null): McpAgentServer | undefined {
   if (!ctx) return undefined;
   if (ctx.slug === "whale-hunter") return buildWhaleHunterServer(ctx);
+  if (ctx.slug === "hood-meme-radar") return buildMemeRadarServer(ctx);
   if (ctx.slug === "robinhood-trading-agent") return buildRobinhoodTradingServer(ctx);
   return buildGenericServer(ctx);
 }
@@ -439,7 +527,7 @@ export async function handleMcpJsonRpc(
         id,
         result: {
           protocolVersion: "2024-11-05",
-          capabilities: { tools: {} },
+          capabilities: { tools: {}, resources: {} },
           serverInfo: { name: server.name, version: server.version },
         },
       };
@@ -473,6 +561,45 @@ export async function handleMcpJsonRpc(
           error: { code: -32602, message: err instanceof Error ? err.message : "Tool call failed" },
         };
       }
+    }
+
+    case "resources/list": {
+      const reports = getStoredReports(server.name, 20);
+      return {
+        id,
+        result: {
+          resources: reports.map((r) => ({
+            uri: `bowyer://${server.name}/reports/${r.id}`,
+            name: r.title,
+            description: `Report published ${r.createdAt}`,
+            mimeType: "text/markdown",
+          })),
+        },
+      };
+    }
+
+    case "resources/read": {
+      const uri = String(params?.uri ?? "");
+      const match = uri.match(/^bowyer:\/\/([\w-]+)\/reports\/(\d+)$/);
+      if (!match || match[1] !== server.name) {
+        return { id, error: { code: -32602, message: `Unknown resource: ${uri}` } };
+      }
+      const report = getStoredReport(server.name, Number(match[2]));
+      if (!report) {
+        return { id, error: { code: -32602, message: `Resource not found: ${uri}` } };
+      }
+      return {
+        id,
+        result: {
+          contents: [
+            {
+              uri,
+              mimeType: "text/markdown",
+              text: `# ${report.title}\n\n${report.body}\n\n_Published ${report.createdAt}${report.model ? ` · model ${report.model}` : ""}_`,
+            },
+          ],
+        },
+      };
     }
 
     case "ping":

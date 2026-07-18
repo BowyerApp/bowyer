@@ -39,6 +39,16 @@ async function call(address: string, data: string): Promise<string | null> {
   }
 }
 
+/** Parse an RPC hex quantity, treating empty ("0x") or malformed results as null. */
+function hexToBigInt(hex: string | null): bigint | null {
+  if (!hex || hex === "0x") return null;
+  try {
+    return BigInt(hex);
+  } catch {
+    return null;
+  }
+}
+
 export interface TokenRiskScan {
   address: string;
   name: string | null;
@@ -131,7 +141,8 @@ export async function scanTokenRisk(address: string): Promise<TokenRiskScan> {
   }
   const name = nameRaw ? dynamicString(nameRaw) : null;
   const symbol = symbolRaw ? dynamicString(symbolRaw) : null;
-  const decimals = decimalsRaw ? Number(BigInt(decimalsRaw)) : null;
+  const decimalsBig = hexToBigInt(decimalsRaw);
+  const decimals = decimalsBig !== null ? Number(decimalsBig) : null;
   if (!name || !symbol || decimals == null || !Number.isSafeInteger(decimals) || decimals > 36) {
     flags.push("Token metadata is incomplete or non-standard");
     score += 20;
@@ -149,7 +160,7 @@ export async function scanTokenRisk(address: string): Promise<TokenRiskScan> {
       score += 20;
     }
   }
-  const supply = supplyRaw ? BigInt(supplyRaw).toString() : null;
+  const supply = hexToBigInt(supplyRaw)?.toString() ?? null;
   const riskScore = Math.min(100, score);
   return {
     address: normalized,
@@ -171,23 +182,92 @@ export async function scanTokenRisk(address: string): Promise<TokenRiskScan> {
   };
 }
 
+/** Blocks to scan for the radar — deeper than the default whale window. */
+const RADAR_SCAN_BLOCKS = 120;
+/** How many recent deployments to enrich with contract/token/market data. */
+const ENRICH_LIMIT = 8;
+
+export interface RadarCandidate {
+  txHash: string;
+  deployer: string;
+  valueEth: number;
+  blockNumber: number;
+  contractAddress: string | null;
+  token: { name: string | null; symbol: string | null; decimals: number | null } | null;
+  market: TokenRiskScan["market"];
+  lifecycle: "forming" | "trading";
+  score: number;
+}
+
+async function contractAddressFor(txHash: string): Promise<string | null> {
+  try {
+    const receipt = await rpc<{ contractAddress?: string | null }>(
+      "eth_getTransactionReceipt",
+      [txHash]
+    );
+    return receipt?.contractAddress?.toLowerCase() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function tokenMetadata(address: string) {
+  const [nameRaw, symbolRaw, decimalsRaw] = await Promise.all([
+    call(address, "0x06fdde03"),
+    call(address, "0x95d89b41"),
+    call(address, "0x313ce567"),
+  ]);
+  const name = nameRaw ? dynamicString(nameRaw) : null;
+  const symbol = symbolRaw ? dynamicString(symbolRaw) : null;
+  const decimalsBig = hexToBigInt(decimalsRaw);
+  const decimals = decimalsBig !== null ? Number(decimalsBig) : null;
+  if (!name && !symbol) return null;
+  return { name, symbol, decimals: Number.isSafeInteger(decimals) ? decimals : null };
+}
+
 export async function getMemeRadar() {
-  const chain = await scanChain();
-  const launchCandidates = chain.contractDeployments.map((deployment) => ({
-    ...deployment,
-    lifecycle: "forming" as const,
-    score: Math.min(100, 35 + (deployment.valueEth >= 0.5 ? 25 : 0)),
-  }));
+  const chain = await scanChain(RADAR_SCAN_BLOCKS);
+
+  const launchCandidates: RadarCandidate[] = await Promise.all(
+    chain.contractDeployments.slice(0, ENRICH_LIMIT).map(async (deployment) => {
+      const contractAddress = await contractAddressFor(deployment.txHash);
+      const [token, market] = contractAddress
+        ? await Promise.all([tokenMetadata(contractAddress), getDexPair(contractAddress)])
+        : [null, null];
+      let score = 35 + (deployment.valueEth >= 0.5 ? 25 : 0);
+      if (token?.symbol) score += 10;
+      if (market) score += Math.min(20, Math.floor((market.liquidityUsd ?? 0) / 5_000));
+      return {
+        ...deployment,
+        contractAddress,
+        token,
+        market,
+        lifecycle: market ? ("trading" as const) : ("forming" as const),
+        score: Math.min(100, score),
+      };
+    })
+  );
+
   const clusters = chain.fundingClusters.map((cluster) => ({
     ...cluster,
     lifecycle: "coordinated-funding" as const,
     score: Math.min(100, cluster.recipients * 12 + (cluster.totalEth >= 1 ? 15 : 0)),
   }));
+
   return {
     chainId: chain.chainId,
     scannedAt: chain.scannedAt,
-    methodology: "EVM-native contract-deployment and direct funding-cluster detection. No price prediction or trade execution.",
-    launchCandidates,
+    blockRange: {
+      from: chain.latestBlock - chain.blocksScanned + 1,
+      to: chain.latestBlock,
+      blocksScanned: chain.blocksScanned,
+    },
+    methodology:
+      "EVM contract-deployment detection over recent Robinhood Chain blocks, enriched with token metadata (eth_call) and DexScreener market data where a pool exists. Funding clusters are direct native-transfer fan-outs. No price prediction or trade execution.",
+    launchCandidates: launchCandidates.sort((a, b) => b.score - a.score),
     clusters,
+    unavailableChecks: [
+      "Holder distribution and dev-wallet sell tracing require an indexer for Robinhood Chain; use scan_token on a specific address for contract-level risk flags.",
+    ],
   };
 }

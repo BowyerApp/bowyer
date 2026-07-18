@@ -57,7 +57,7 @@ interface RpcBlock {
   }[];
 }
 
-let scanCache: { at: number; scan: ChainScan } | null = null;
+const scanCaches = new Map<number, { at: number; scan: ChainScan }>();
 
 // The public Robinhood Chain RPC returns 403 without a User-Agent.
 const RPC_HEADERS = {
@@ -102,13 +102,15 @@ function weiHexToEth(hex: string): number {
   return Number((wei * BigInt(1_000_000)) / BigInt(1e18)) / 1_000_000;
 }
 
-/** Scan recent Robinhood Chain blocks. Cached for 60s. */
-export async function scanChain(): Promise<ChainScan> {
-  if (scanCache && Date.now() - scanCache.at < CACHE_TTL_MS) return scanCache.scan;
+/** Scan recent Robinhood Chain blocks. Cached for 60s per window size. */
+export async function scanChain(blockWindow: number = SCAN_BLOCKS): Promise<ChainScan> {
+  const window = Math.max(1, Math.min(blockWindow, 200));
+  const cached = scanCaches.get(window);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.scan;
 
   const latestHex = await rpc<string>("eth_blockNumber", []);
   const latest = parseInt(latestHex, 16);
-  const from = Math.max(0, latest - SCAN_BLOCKS + 1);
+  const from = Math.max(0, latest - window + 1);
 
   const calls = [];
   for (let n = from; n <= latest; n++) {
@@ -193,7 +195,7 @@ export async function scanChain(): Promise<ChainScan> {
     scannedAt: new Date().toISOString(),
   };
 
-  scanCache = { at: Date.now(), scan };
+  scanCaches.set(window, { at: Date.now(), scan });
   return scan;
 }
 

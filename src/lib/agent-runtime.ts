@@ -12,6 +12,7 @@ import {
 } from "@/lib/web-search";
 import { platformLlmAllowed, recordPlatformLlm, recordUsage, usageAllowed } from "@/lib/usage";
 import { notifyReportPublished } from "@/lib/telegram";
+import { deliverReportWebhooks } from "@/lib/mcp-webhooks";
 import { createSignalFromReport } from "@/lib/signals";
 import {
   fallbackRuntimeLlm,
@@ -81,6 +82,21 @@ export function getStoredReports(slug: string, limit = 5): AgentReport[] {
     .prepare("SELECT * FROM reports WHERE slug = ? ORDER BY created_at DESC LIMIT ?")
     .all(slug, Math.min(limit, 20)) as ReportRow[];
   return rows.map(rowToReport);
+}
+
+/** Total reports ever published by an agent (not capped like getStoredReports). */
+export function countStoredReports(slug: string): number {
+  const row = db()
+    .prepare("SELECT COUNT(*) AS n FROM reports WHERE slug = ?")
+    .get(slug) as { n: number };
+  return row.n;
+}
+
+export function getStoredReport(slug: string, id: number): AgentReport | null {
+  const row = db()
+    .prepare("SELECT * FROM reports WHERE slug = ? AND id = ?")
+    .get(slug, id) as ReportRow | undefined;
+  return row ? rowToReport(row) : null;
 }
 
 function depthParams(description?: string): { temperature: number; maxTokens: number } {
@@ -246,10 +262,19 @@ async function buildLiveContext(agent: AgentIdentity, query: string): Promise<st
       parts.push(
         [
           `Live Hood Meme Radar scan (Robinhood Chain ${radar.chainId}, fetched ${radar.scannedAt}):`,
+          `• Blocks scanned: ${radar.blockRange.from}–${radar.blockRange.to} (${radar.blockRange.blocksScanned} blocks)`,
           `• ${radar.launchCandidates.length} recent contract deployments, ${radar.clusters.length} direct funding clusters`,
-          ...radar.launchCandidates.slice(0, 5).map((item) => `• Forming contract: ${item.txHash.slice(0, 14)}… deployed by ${item.deployer.slice(0, 10)}… · score ${item.score}/100`),
+          ...radar.launchCandidates.slice(0, 6).map((item) => {
+            const label = item.token?.symbol
+              ? `${item.token.symbol}${item.token.name ? ` (${item.token.name})` : ""}`
+              : "unidentified contract";
+            const marketLine = item.market
+              ? ` · price $${item.market.priceUsd ?? "?"} · liq $${item.market.liquidityUsd?.toLocaleString() ?? "?"} · 24h vol $${item.market.volume24h?.toLocaleString() ?? "?"} · ${item.market.url}`
+              : " · no DEX pool found yet";
+            return `• ${item.lifecycle === "trading" ? "Trading" : "Forming"}: ${label} at ${item.contractAddress ?? "address pending"} · deployed by ${item.deployer.slice(0, 10)}… block ${item.blockNumber} · score ${item.score}/100${marketLine}`;
+          }),
           ...radar.clusters.slice(0, 5).map((item) => `• Funding cluster: ${item.funder.slice(0, 10)}… → ${item.recipients} addresses · ${item.totalEth} ETH · score ${item.score}/100`),
-          "This data identifies contract deployment and direct funding patterns. It does not establish token liquidity, sellability, or a trading opportunity. Do not invent those facts.",
+          "Cite the contract addresses, block range, and market figures above when relevant. Holder distribution and dev-sell tracing are NOT available — say so if asked. Never invent liquidity, holders, or sellability facts beyond this data.",
         ].join("\n")
       );
     } catch {
@@ -357,6 +382,11 @@ export async function generateReport(
 
   createSignalFromReport(report);
   notifyReportPublished(agent.slug, title, body).catch(() => {});
+  deliverReportWebhooks(agent.slug, {
+    reportId: report.id,
+    title,
+    createdAt,
+  }).catch(() => {});
 
   return report;
 }
