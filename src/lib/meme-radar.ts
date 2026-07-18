@@ -5,17 +5,37 @@ const HEADERS = { "Content-Type": "application/json", "User-Agent": "Mozilla/5.0
 const TIMEOUT_MS = 12_000;
 const DEXSCREENER_CHAIN_ID = process.env.DEXSCREENER_CHAIN_ID?.trim() || "robinhood";
 
+const RPC_RETRY_DELAYS_MS = [1000, 3000];
+
 async function rpc<T>(method: string, params: unknown[]): Promise<T> {
-  const res = await fetch(rpcUrl(), {
-    method: "POST",
-    headers: HEADERS,
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`RPC ${method}: HTTP ${res.status}`);
-  const body = (await res.json()) as { result?: T; error?: { message?: string } };
-  if (body.error || body.result === undefined) throw new Error(body.error?.message ?? `RPC ${method} failed`);
-  return body.result;
+  let lastError: Error = new Error(`RPC ${method} failed`);
+  for (let attempt = 0; attempt <= RPC_RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const res = await fetch(rpcUrl(), {
+        method: "POST",
+        headers: HEADERS,
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      if (res.status === 429 || res.status >= 500) {
+        lastError = new Error(`RPC ${method}: HTTP ${res.status}`);
+      } else if (!res.ok) {
+        throw new Error(`RPC ${method}: HTTP ${res.status}`);
+      } else {
+        const body = (await res.json()) as { result?: T; error?: { message?: string } };
+        if (body.error || body.result === undefined)
+          throw new Error(body.error?.message ?? `RPC ${method} failed`);
+        return body.result;
+      }
+    } catch (err) {
+      if (err instanceof Error && /HTTP 4(?!29)/.test(err.message)) throw err;
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+    if (attempt < RPC_RETRY_DELAYS_MS.length) {
+      await new Promise((r) => setTimeout(r, RPC_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+  throw lastError;
 }
 
 function dynamicString(hex: string): string | null {
@@ -49,6 +69,135 @@ function hexToBigInt(hex: string | null): bigint | null {
   }
 }
 
+/** EIP-1967 implementation storage slot. */
+const EIP1967_IMPL_SLOT =
+  "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+
+export interface ProxyInfo {
+  type: "eip1167" | "eip1967";
+  implementation: string;
+  implementationBytecodeBytes: number;
+}
+
+/** Detect minimal (EIP-1167) and transparent (EIP-1967) proxies and resolve the implementation. */
+async function resolveProxy(address: string, code: string): Promise<ProxyInfo | null> {
+  // EIP-1167: 363d3d373d3d3d363d73<20-byte impl>5af43d82803e903d91602b57fd5bf3
+  const minimal = code
+    .toLowerCase()
+    .match(/^0x363d3d373d3d3d363d73([0-9a-f]{40})5af43d82803e903d91602b57fd5bf3$/);
+  let type: ProxyInfo["type"] | null = null;
+  let implementation: string | null = null;
+  if (minimal) {
+    type = "eip1167";
+    implementation = `0x${minimal[1]}`;
+  } else {
+    try {
+      const raw = await rpc<string>("eth_getStorageAt", [address, EIP1967_IMPL_SLOT, "latest"]);
+      const impl = raw && raw.length === 66 ? `0x${raw.slice(26)}` : null;
+      if (impl && impl !== `0x${"0".repeat(40)}`) {
+        type = "eip1967";
+        implementation = impl;
+      }
+    } catch {
+      // Not a proxy or storage read unavailable.
+    }
+  }
+  if (!type || !implementation) return null;
+  let implBytes = 0;
+  try {
+    const implCode = await rpc<string>("eth_getCode", [implementation, "latest"]);
+    implBytes = Math.max(0, (implCode.length - 2) / 2);
+  } catch {
+    implBytes = 0;
+  }
+  return { type, implementation, implementationBytecodeBytes: implBytes };
+}
+
+/* ---------- holder distribution via Blockscout ---------- */
+
+const BLOCKSCOUT_API =
+  process.env.BLOCKSCOUT_API_BASE?.trim() ||
+  "https://robinhoodchain.blockscout.com/api/v2";
+
+export interface HolderInfo {
+  count: number | null;
+  topHolders: { address: string; pct: number; isContract: boolean; label: string | null }[];
+  top10Pct: number | null;
+  source: string;
+}
+
+interface BlockscoutHolder {
+  address?: {
+    hash?: string;
+    is_contract?: boolean;
+    name?: string | null;
+    proxy_type?: string | null;
+  };
+  value?: string;
+}
+
+/** Top-holder distribution from the Robinhood Chain Blockscout indexer. */
+async function getHolderInfo(address: string, totalSupply: bigint | null): Promise<HolderInfo | null> {
+  try {
+    const [infoRes, holdersRes] = await Promise.all([
+      fetch(`${BLOCKSCOUT_API}/tokens/${address}`, {
+        headers: { "User-Agent": "bowyer-meme-radar" },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      }),
+      fetch(`${BLOCKSCOUT_API}/tokens/${address}/holders`, {
+        headers: { "User-Agent": "bowyer-meme-radar" },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      }),
+    ]);
+    if (!holdersRes.ok) return null;
+    const info = infoRes.ok
+      ? ((await infoRes.json()) as { holders_count?: string; total_supply?: string })
+      : {};
+    const holdersBody = (await holdersRes.json()) as { items?: BlockscoutHolder[] };
+    const supply =
+      totalSupply ?? (info.total_supply ? hexSafeBigInt(info.total_supply) : null);
+
+    const items = (holdersBody.items ?? []).slice(0, 10);
+    const topHolders = items
+      .filter((h) => h.address?.hash && h.value)
+      .map((h) => {
+        let pct = 0;
+        try {
+          if (supply && supply > BigInt(0)) {
+            pct = Number((BigInt(h.value!) * BigInt(10_000)) / supply) / 100;
+          }
+        } catch {
+          pct = 0;
+        }
+        return {
+          address: h.address!.hash!,
+          pct,
+          isContract: Boolean(h.address?.is_contract),
+          label: h.address?.name ?? h.address?.proxy_type ?? null,
+        };
+      });
+    const top10Pct = topHolders.length
+      ? Math.round(topHolders.reduce((sum, h) => sum + h.pct, 0) * 100) / 100
+      : null;
+    return {
+      count: info.holders_count ? Number(info.holders_count) : null,
+      topHolders,
+      top10Pct,
+      source: BLOCKSCOUT_API,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function hexSafeBigInt(value: string): bigint | null {
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
 export interface TokenRiskScan {
   address: string;
   name: string | null;
@@ -56,6 +205,8 @@ export interface TokenRiskScan {
   decimals: number | null;
   supply: string | null;
   bytecodeBytes: number;
+  proxy: ProxyInfo | null;
+  holders: HolderInfo | null;
   riskScore: number;
   riskLevel: "low" | "medium" | "high" | "critical";
   flags: string[];
@@ -117,7 +268,7 @@ async function getDexPair(address: string): Promise<TokenRiskScan["market"]> {
   }
 }
 
-/** Generic EVM contract inspection. It intentionally does not claim honeypot or liquidity results without a compatible provider. */
+/** Contract inspection with proxy resolution and Blockscout holder data. It does not claim honeypot or sell-tax results without a simulator. */
 export async function scanTokenRisk(address: string): Promise<TokenRiskScan> {
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error("A valid EVM token address is required");
   const normalized = address.toLowerCase();
@@ -132,13 +283,29 @@ export async function scanTokenRisk(address: string): Promise<TokenRiskScan> {
   const bytecodeBytes = Math.max(0, (code.length - 2) / 2);
   const flags: string[] = [];
   let score = 0;
+
+  // A small contract may be a proxy — resolve before judging bytecode size.
+  const proxy = bytecodeBytes > 0 ? await resolveProxy(normalized, code) : null;
+
   if (bytecodeBytes === 0) {
     flags.push("No contract bytecode at this address");
     score = 100;
+  } else if (proxy) {
+    flags.push(
+      `${proxy.type === "eip1167" ? "Minimal proxy (EIP-1167)" : "Upgradeable proxy (EIP-1967)"} → implementation ${proxy.implementation} (${proxy.implementationBytecodeBytes} bytes)`
+    );
+    if (proxy.implementationBytecodeBytes === 0) {
+      flags.push("Proxy implementation has no bytecode — critical");
+      score += 60;
+    } else if (proxy.type === "eip1967") {
+      flags.push("Upgradeable — implementation logic can change after launch");
+      score += 15;
+    }
   } else if (bytecodeBytes < 200) {
     flags.push("Very small contract bytecode — inspect manually");
     score += 35;
   }
+
   const name = nameRaw ? dynamicString(nameRaw) : null;
   const symbol = symbolRaw ? dynamicString(symbolRaw) : null;
   const decimalsBig = hexToBigInt(decimalsRaw);
@@ -160,8 +327,36 @@ export async function scanTokenRisk(address: string): Promise<TokenRiskScan> {
       score += 20;
     }
   }
-  const supply = hexToBigInt(supplyRaw)?.toString() ?? null;
+
+  const supplyBig = hexToBigInt(supplyRaw);
+  const holders = await getHolderInfo(normalized, supplyBig);
+  if (holders) {
+    const topNonPool = holders.topHolders.filter((h) => !h.isContract);
+    const biggestWallet = topNonPool[0];
+    if (biggestWallet && biggestWallet.pct >= 20) {
+      flags.push(
+        `Single wallet ${biggestWallet.address.slice(0, 10)}… holds ${biggestWallet.pct}% of supply`
+      );
+      score += 25;
+    }
+    if ((holders.count ?? Infinity) < 50) {
+      flags.push(`Only ${holders.count} holders`);
+      score += 15;
+    }
+  }
+
+  const supply = supplyBig?.toString() ?? null;
   const riskScore = Math.min(100, score);
+  const unavailableChecks = [
+    "Honeypot and sell-tax simulation require a compatible transaction simulator.",
+    "This scan is not a safety guarantee.",
+  ];
+  if (!holders) {
+    unavailableChecks.unshift(
+      "Holder distribution unavailable — Blockscout indexer did not return data for this address."
+    );
+  }
+
   return {
     address: normalized,
     name,
@@ -169,21 +364,19 @@ export async function scanTokenRisk(address: string): Promise<TokenRiskScan> {
     decimals: Number.isSafeInteger(decimals) ? decimals : null,
     supply,
     bytecodeBytes,
+    proxy,
+    holders,
     riskScore,
     riskLevel: riskScore >= 75 ? "critical" : riskScore >= 45 ? "high" : riskScore >= 20 ? "medium" : "low",
     flags,
     market,
-    unavailableChecks: [
-      "Liquidity lock ownership requires a Robinhood Chain-compatible indexer.",
-      "Honeypot and sell-tax simulation require a compatible transaction simulator.",
-      "This scan is contract metadata and bytecode presence only — not a safety guarantee.",
-    ],
+    unavailableChecks,
     scannedAt: new Date().toISOString(),
   };
 }
 
 /** Blocks to scan for the radar — deeper than the default whale window. */
-const RADAR_SCAN_BLOCKS = 120;
+const RADAR_SCAN_BLOCKS = 200;
 /** How many recent deployments to enrich with contract/token/market data. */
 const ENRICH_LIMIT = 8;
 
@@ -228,25 +421,25 @@ async function tokenMetadata(address: string) {
 export async function getMemeRadar() {
   const chain = await scanChain(RADAR_SCAN_BLOCKS);
 
-  const launchCandidates: RadarCandidate[] = await Promise.all(
-    chain.contractDeployments.slice(0, ENRICH_LIMIT).map(async (deployment) => {
-      const contractAddress = await contractAddressFor(deployment.txHash);
-      const [token, market] = contractAddress
-        ? await Promise.all([tokenMetadata(contractAddress), getDexPair(contractAddress)])
-        : [null, null];
-      let score = 35 + (deployment.valueEth >= 0.5 ? 25 : 0);
-      if (token?.symbol) score += 10;
-      if (market) score += Math.min(20, Math.floor((market.liquidityUsd ?? 0) / 5_000));
-      return {
-        ...deployment,
-        contractAddress,
-        token,
-        market,
-        lifecycle: market ? ("trading" as const) : ("forming" as const),
-        score: Math.min(100, score),
-      };
-    })
-  );
+  // Enrich sequentially — a parallel burst of receipt/metadata calls trips the RPC rate limit.
+  const launchCandidates: RadarCandidate[] = [];
+  for (const deployment of chain.contractDeployments.slice(0, ENRICH_LIMIT)) {
+    const contractAddress = await contractAddressFor(deployment.txHash);
+    const [token, market] = contractAddress
+      ? await Promise.all([tokenMetadata(contractAddress), getDexPair(contractAddress)])
+      : [null, null];
+    let score = 35 + (deployment.valueEth >= 0.5 ? 25 : 0);
+    if (token?.symbol) score += 10;
+    if (market) score += Math.min(20, Math.floor((market.liquidityUsd ?? 0) / 5_000));
+    launchCandidates.push({
+      ...deployment,
+      contractAddress,
+      token,
+      market,
+      lifecycle: market ? ("trading" as const) : ("forming" as const),
+      score: Math.min(100, score),
+    });
+  }
 
   const clusters = chain.fundingClusters.map((cluster) => ({
     ...cluster,
@@ -267,7 +460,7 @@ export async function getMemeRadar() {
     launchCandidates: launchCandidates.sort((a, b) => b.score - a.score),
     clusters,
     unavailableChecks: [
-      "Holder distribution and dev-wallet sell tracing require an indexer for Robinhood Chain; use scan_token on a specific address for contract-level risk flags.",
+      "Dev-wallet sell tracing is not available. Use scan_token on a specific address for holder distribution and contract-level risk flags.",
     ],
   };
 }

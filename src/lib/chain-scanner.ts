@@ -65,13 +65,46 @@ const RPC_HEADERS = {
   "User-Agent": "Mozilla/5.0 bowyer-runtime",
 };
 
+const RETRY_DELAYS_MS = [1000, 3000, 7000];
+/** Blocks per batched RPC request — small enough to stay under rate limits. */
+const BATCH_CHUNK_SIZE = 25;
+/** Pause between sequential batch chunks to avoid tripping the rate limit. */
+const INTER_CHUNK_DELAY_MS = 300;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** POST with retry on 429/5xx so a transient rate limit doesn't fail the scan. */
+async function rpcFetch(body: string): Promise<Response> {
+  let lastError: Error = new Error("RPC request failed");
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const res = await fetch(rpcUrl(), {
+        method: "POST",
+        headers: RPC_HEADERS,
+        body,
+        signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
+      });
+      if (res.status !== 429 && res.status < 500) return res;
+      lastError = new Error(`RPC: HTTP ${res.status}`);
+      if (attempt < RETRY_DELAYS_MS.length) {
+        const retryAfter = Number(res.headers.get("retry-after"));
+        const wait =
+          Number.isFinite(retryAfter) && retryAfter > 0
+            ? Math.min(retryAfter * 1000, 15_000)
+            : RETRY_DELAYS_MS[attempt];
+        await sleep(wait);
+        continue;
+      }
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < RETRY_DELAYS_MS.length) await sleep(RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  throw lastError;
+}
+
 async function rpc<T>(method: string, params: unknown[]): Promise<T> {
-  const res = await fetch(rpcUrl(), {
-    method: "POST",
-    headers: RPC_HEADERS,
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
-  });
+  const res = await rpcFetch(JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }));
   if (!res.ok) throw new Error(`RPC ${method}: HTTP ${res.status}`);
   const json = (await res.json()) as { result?: T; error?: { message: string } };
   if (json.error) throw new Error(`RPC ${method}: ${json.error.message}`);
@@ -80,20 +113,25 @@ async function rpc<T>(method: string, params: unknown[]): Promise<T> {
 }
 
 async function rpcBatch<T>(calls: { method: string; params: unknown[] }[]): Promise<T[]> {
-  const res = await fetch(rpcUrl(), {
-    method: "POST",
-    headers: RPC_HEADERS,
-    body: JSON.stringify(
-      calls.map((c, i) => ({ jsonrpc: "2.0", id: i, method: c.method, params: c.params }))
-    ),
-    signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`RPC batch: HTTP ${res.status}`);
-  const json = (await res.json()) as { id: number; result?: T }[];
-  return json
-    .sort((a, b) => a.id - b.id)
-    .map((r) => r.result)
-    .filter((r): r is T => r !== undefined && r !== null);
+  const results: T[] = [];
+  for (let i = 0; i < calls.length; i += BATCH_CHUNK_SIZE) {
+    if (i > 0) await sleep(INTER_CHUNK_DELAY_MS);
+    const chunk = calls.slice(i, i + BATCH_CHUNK_SIZE);
+    const res = await rpcFetch(
+      JSON.stringify(
+        chunk.map((c, j) => ({ jsonrpc: "2.0", id: j, method: c.method, params: c.params }))
+      )
+    );
+    if (!res.ok) throw new Error(`RPC batch: HTTP ${res.status}`);
+    const json = (await res.json()) as { id: number; result?: T }[];
+    results.push(
+      ...json
+        .sort((a, b) => a.id - b.id)
+        .map((r) => r.result)
+        .filter((r): r is T => r !== undefined && r !== null)
+    );
+  }
+  return results;
 }
 
 function weiHexToEth(hex: string): number {

@@ -274,7 +274,7 @@ async function buildLiveContext(agent: AgentIdentity, query: string): Promise<st
             return `• ${item.lifecycle === "trading" ? "Trading" : "Forming"}: ${label} at ${item.contractAddress ?? "address pending"} · deployed by ${item.deployer.slice(0, 10)}… block ${item.blockNumber} · score ${item.score}/100${marketLine}`;
           }),
           ...radar.clusters.slice(0, 5).map((item) => `• Funding cluster: ${item.funder.slice(0, 10)}… → ${item.recipients} addresses · ${item.totalEth} ETH · score ${item.score}/100`),
-          "Cite the contract addresses, block range, and market figures above when relevant. Holder distribution and dev-sell tracing are NOT available — say so if asked. Never invent liquidity, holders, or sellability facts beyond this data.",
+          "Cite the contract addresses, block range, and market figures above when relevant. Holder distribution is available per-token via the scan_token tool; dev-sell tracing is NOT available — say so if asked. Never invent liquidity, holders, or sellability facts beyond this data.",
         ].join("\n")
       );
     } catch {

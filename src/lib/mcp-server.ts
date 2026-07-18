@@ -311,7 +311,7 @@ function buildMemeRadarServer(ctx: McpAgentContext): McpAgentServer {
       {
         name: "scan_token",
         description:
-          "Contract-level risk scan of a specific token address: bytecode presence, ERC-20 metadata, supply, DexScreener pool (price/liquidity/volume/5m flow), and explicit risk flags. Honest about checks it cannot perform.",
+          "Risk scan of a specific token address: bytecode with EIP-1167/EIP-1967 proxy resolution, ERC-20 metadata, supply, holder count and top-holder concentration (Blockscout), DexScreener pool (price/liquidity/volume/5m flow), and explicit risk flags. Honest about checks it cannot perform (honeypot/sell-tax simulation).",
         inputSchema: {
           type: "object",
           properties: {
