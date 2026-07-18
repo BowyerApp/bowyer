@@ -30,9 +30,30 @@ const network =
 
 export const ACTIVE_CHAIN = CHAINS[network];
 
-/** Server-side RPC endpoint (override with CHAIN_RPC_URL, e.g. an Alchemy key). */
+/**
+ * Server-side RPC endpoint pool.
+ * - CHAIN_RPC_URLS: comma-separated list of endpoints (e.g. Alchemy + ArrowRPC + public),
+ *   rotated round-robin so retries after a 429 land on a different provider.
+ * - CHAIN_RPC_URL: single endpoint override (kept for backwards compatibility).
+ * - Falls back to the rate-limited public RPC when neither is set.
+ */
+let rpcCursor = 0;
+
+function rpcPool(): string[] {
+  const multi = process.env.CHAIN_RPC_URLS?.trim();
+  if (multi) {
+    const urls = multi.split(",").map((u) => u.trim()).filter(Boolean);
+    if (urls.length > 0) return urls;
+  }
+  const single = process.env.CHAIN_RPC_URL?.trim();
+  return single ? [single] : [...ACTIVE_CHAIN.rpcUrls];
+}
+
 export function rpcUrl(): string {
-  return process.env.CHAIN_RPC_URL ?? ACTIVE_CHAIN.rpcUrls[0];
+  const pool = rpcPool();
+  const url = pool[rpcCursor % pool.length];
+  rpcCursor = (rpcCursor + 1) % pool.length;
+  return url;
 }
 
 /** Conversion rate for pricing USD amounts in native ETH. */
