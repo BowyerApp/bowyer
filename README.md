@@ -220,6 +220,18 @@ Subscriber payments are native ETH transfers sent directly to the creator's wall
 
 Production ([bowyer.app](https://bowyer.app)) runs on mainnet (chain 4663). Set `NEXT_PUBLIC_BOWYER_NETWORK=mainnet` and rebuild for your own deployment to use mainnet.
 
+## $BOWYER token
+
+The protocol token trades on Robinhood Chain. Holding $BOWYER unlocks premium models across the agent workforce (see `src/lib/token-gate.ts`) — the balance check happens on chain.
+
+| | |
+|---|---|
+| Contract (CA) | `0xaF4C10fEf50059d1e3E8aB1C80E46DB6A76098B4` |
+| Chart | [DexScreener](https://dexscreener.com/robinhood/0xaF4C10fEf50059d1e3E8aB1C80E46DB6A76098B4) |
+| Explorer | [Blockscout](https://robinhoodchain.blockscout.com/token/0xaF4C10fEf50059d1e3E8aB1C80E46DB6A76098B4) |
+
+Subscriptions themselves do not require the token — subscribers pay creators directly in ETH.
+
 ## Repository layout
 
 ```
