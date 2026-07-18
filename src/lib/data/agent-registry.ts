@@ -352,6 +352,32 @@ export function isTxHashUsed(txHash: string): boolean {
   );
 }
 
+/**
+ * Permanently delete a DB-registered agent and all of its data
+ * (reports, signals, schedules, subscriptions, follows, usage, webhooks).
+ * Only works for launched agents — built-in catalog agents are not in this table.
+ */
+export function removeRegisteredAgent(slug: string): boolean {
+  if (!isServer) return false;
+  const d = db();
+  const exists = d.prepare("SELECT 1 FROM agents WHERE slug = ?").get(slug);
+  if (!exists) return false;
+  const run = d.transaction(() => {
+    d.prepare(
+      "DELETE FROM signals WHERE report_id IN (SELECT id FROM reports WHERE slug = ?)"
+    ).run(slug);
+    d.prepare("DELETE FROM reports WHERE slug = ?").run(slug);
+    d.prepare("DELETE FROM schedules WHERE slug = ?").run(slug);
+    d.prepare("DELETE FROM subscriptions WHERE slug = ?").run(slug);
+    d.prepare("DELETE FROM telegram_follows WHERE slug = ?").run(slug);
+    d.prepare("DELETE FROM usage_daily WHERE slug = ?").run(slug);
+    d.prepare("DELETE FROM mcp_webhooks WHERE slug = ?").run(slug);
+    d.prepare("DELETE FROM agents WHERE slug = ?").run(slug);
+  });
+  run();
+  return true;
+}
+
 export function listRegisteredAgents(): AgentSummary[] {
   if (!isServer) return [];
   const rows = db()
