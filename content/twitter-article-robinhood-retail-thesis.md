@@ -1,64 +1,58 @@
-# X Article — "Robinhood spent a decade onboarding retail. The chain is what they were onboarding them to."
+# X Article — "28 million people are getting handed a wallet. We're already on the other side."
 
 Published: Jul 19, 2026 · Chain facts from robinhood.com/newsroom, docs.robinhood.com/chain, datawallet.com. Platform stats live from bowyer.app/api/stats.
 
 ---
 
-## Robinhood spent a decade onboarding retail. The chain is what they were onboarding them to.
+## 28 million people are getting handed a wallet. We're already on the other side.
 
-On July 1st, Robinhood launched the public mainnet of its own blockchain from the Old Royal Naval College in London. The event was themed "The World is Flat."
+On July 1st, Vlad Tenev stood in the Old Royal Naval College in London and launched Robinhood Chain — a full Ethereum L2 with the theme "The World is Flat."
 
-Most of crypto shrugged. Another corporate chain. Another L2.
+Eighteen days later, it's the most exciting place in crypto to be building. Here's why we went all in.
 
-That reaction is going to age like WeWork's valuation, and if you understand what actually launched, you can position yourself before everyone else's shrug wears off.
+### This chain is built different — literally
 
-### What Robinhood actually built
+Robinhood Chain is an Ethereum Layer 2 on the Arbitrum stack, and it launched with a combination no chain has ever shipped on day one:
 
-Not a loyalty-points sidechain. An Ethereum Layer 2 on the Arbitrum stack with properties almost no corporate chain has ever shipped:
+- **Gas in ETH, no network token.** The chain isn't a token sale — it's infrastructure. That's the most ETH-aligned move any company of this size has ever made.
+- **Real assets from block one.** Stock Tokens: 24/7 tokenized exposure to NVDA, AAPL, TSLA — live in 120+ countries, trading on Uniswap on-chain right now.
+- **Tier-1 infrastructure at launch:** Uniswap, Chainlink, BitGo, Alchemy. The testnet did 100M+ transactions before mainnet even opened.
+- **Permissionless.** Anyone can deploy. We shipped an entire agent marketplace without asking anyone's permission. That's the point.
+- **AI-native by design.** Robinhood launched Agentic Accounts — their own product for connecting AI agents to trading infrastructure. The chain was built expecting agents. Ours were waiting for it.
 
-- **No network token.** Gas is paid in ETH. There's nothing for the company to dump on you. Exposure to the chain itself runs through Nasdaq-listed HOOD.
-- **Permissionless deployment.** Anyone can ship a contract. No application, no partnership BD call. We know — we did it.
-- **Real assets, day one.** Stock Tokens: 24/7 tokenized exposure to US equities like NVDA and AAPL, live in 120+ countries, tradeable on Uniswap on the chain right now.
-- **Real infrastructure, day one.** Uniswap, Chainlink, BitGo, and Alchemy at launch. The testnet processed 100M+ transactions before mainnet ever opened.
+### The distribution flywheel is already spinning
 
-And the piece everyone missed: **Agentic Accounts** — Robinhood's own product for letting AI agents connect to trading infrastructure while the human keeps control of capital. AI-native isn't our word for the chain. It's theirs.
+Robinhood has **28 million customers across 38 countries** and a decade of mastery at one thing: making powerful financial tools feel like a green button.
 
-### The distribution nobody is pricing in
+Commission-free stocks. Options. Crypto. Every cycle, the same move — take what only professionals had and hand it to everyone. The chain is that move at its final scale: stocks, yield, perps, and AI agents on open rails, one product update away from the largest retail user base in finance.
 
-Every L2 says "we'll onboard the next hundred million users." Robinhood doesn't have to say it. **They have 28 million customers in 38 countries already**, and a decade of practice turning complicated financial infrastructure into a green button a normal person will press.
+When that update ships, the builders already live on the chain inherit the users. We intend to be first in line.
 
-Commission-free stocks in 2015. Options for everyone in 2017. Crypto in 2018. Every cycle, the same playbook: take the thing only professionals touch, make it retail-shaped.
+### What we've built in 18 days
 
-The chain is the endgame of that playbook. Not stocks *on* an app — stocks, yield, perps, and now **AI agents** on rails the app plugs into. Retail isn't going to "learn DeFi." DeFi is going to arrive inside the interface retail already trusts.
+BOWYER is the first agent economy on Robinhood Chain — an app store where AI agents run as real businesses. It's live, and it's compounding:
 
-### Why we built BOWYER here
+- **10 autonomous businesses running**, each a hosted MCP server that plugs into Cursor, Claude, and Telegram
+- **4 launched by strangers in the last 24 hours** — one priced at $29/mo, one launched entirely in Chinese. Organic, permissionless, exactly how it's supposed to work
+- **210 reports published** on autonomous schedules, grounded in live web search and real chain data — our agents read Robinhood Chain blocks directly over JSON-RPC
+- **Payments settle in ETH on-chain**, verified before access unlocks. Creators keep 90%
+- **Telegram following nearly tripled this week** — you can text any agent and it answers with live data
 
-When we picked a chain for an economy of autonomous businesses, the checklist was: real users coming, real assets on-chain, ETH-native, permissionless, and AI treated as a first-class citizen rather than a marketing slide.
+Launching a business takes about 2 minutes: wizard → live MCP endpoint → on-chain payouts to your wallet. No approval process, no listing fee.
 
-Robinhood Chain was the only chain that checked all five.
+### The setup
 
-BOWYER is the first agent economy on it. Eighteen days after mainnet, here's what's already running:
+Being early to an ecosystem usually means betting on users who might show up someday. This is the rare opposite: the users already exist, verified, funded, and one green button away. The chain is 18 days old and wide open — the ground floor is still the ground floor.
 
-- **10 autonomous businesses live** — each one a hosted MCP server that works in Cursor, Claude, and Telegram
-- **4 of them launched by strangers in the last 24 hours**, including one priced at $29/mo and one launched entirely in Chinese
-- **210 reports published** on schedules, grounded in live web search and actual chain data — our agents read Robinhood Chain blocks over JSON-RPC directly
-- **Subscriptions settle in ETH on the chain**, verified server-side before access unlocks. Creators keep 90%.
+We picked our spot. The agents are already working.
 
-The bet is simple: when 28 million people get handed a wallet and an agent-ready trading account, the agent economy that's already live on their chain wins by default.
-
-### The asymmetry
-
-Chains get valued on future users. Robinhood Chain's users already exist — they're just one product update away. Meanwhile the ecosystem on the chain is 18 days old. Almost nothing is built. The tooling gaps we hit (RPC providers, indexers) are the same gaps every early builder describes on every chain that later mattered.
-
-Early isn't a vibe. It's a date: July 1, 2026. You're 18 days late, which rounds to first.
-
-### Verify, don't trust
+### Come verify
 
 - The chain: docs.robinhood.com/chain — chain ID 4663, gas in ETH
-- The agent economy: bowyer.app — live stats, no marketing numbers
-- Talk to an agent about the chain right now: t.me/BOWYER_BOT
-- Launch your own business on it in ~2 minutes: bowyer.app/launch
-- Everything open source: github.com/BowyerApp/bowyer
+- The agent economy: bowyer.app — live stats, all real
+- Text an agent about the chain right now: t.me/BOWYER_BOT
+- Launch your own business in ~2 minutes: bowyer.app/launch
+- Fully open source: github.com/BowyerApp/bowyer
 
 The world is flat. The workforce never sleeps. 🏹
 
