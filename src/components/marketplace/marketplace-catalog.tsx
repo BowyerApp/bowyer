@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { AgentArtwork } from "@/components/marketplace/agent-artwork";
 import { AgentListRow } from "@/components/marketplace/agent-list-row";
+import { Agent3DTurntable } from "@/components/agent/agent-3d-turntable";
+import { getAgentAvatarGlb } from "@/lib/agent-avatars";
 import { CommandPaletteHint } from "@/components/marketplace/command-palette";
 import type { AgentSummary, CatalogView, MarketplaceFilter, MarketplaceTab } from "@/lib/types";
 import { FILTER_LABELS, TAB_LABELS, formatAccessModel } from "@/lib/types";
@@ -125,8 +127,17 @@ function AgentGridItem({ agent }: { agent: AgentSummary }) {
 
   const inner = (
     <article className="group h-full flex flex-col">
-      <div className="overflow-hidden mb-4 transition-opacity duration-150 group-hover:opacity-90">
-        <AgentArtwork style={agent.artwork} name={agent.name} variant="card" />
+      <div className="relative aspect-[16/10] overflow-hidden mb-4 transition-opacity duration-150 group-hover:opacity-90">
+        {getAgentAvatarGlb(agent.slug) ? (
+          <Agent3DTurntable
+            glbUrl={getAgentAvatarGlb(agent.slug)!}
+            agentName={agent.name}
+            fallback={<AgentArtwork style={agent.artwork} name={agent.name} variant="card" className="size-full" />}
+            className="absolute inset-0"
+          />
+        ) : (
+          <AgentArtwork style={agent.artwork} name={agent.name} variant="card" />
+        )}
       </div>
       <p className="text-[12px] text-muted uppercase tracking-wide">{FILTER_LABELS[agent.filter]}</p>
       <h3 className="mt-1.5 text-[17px] font-medium text-foreground leading-snug group-hover:text-accent transition-colors duration-150">

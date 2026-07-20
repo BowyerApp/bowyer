@@ -5,6 +5,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, ChevronLeft, ChevronRight } from "lucide-react";
 import { CATEGORY_LABELS, getAgentArt } from "@/lib/data/marketplace-reference";
+import { Agent3DTurntable } from "@/components/agent/agent-3d-turntable";
+import { getAgentAvatarGlb } from "@/lib/agent-avatars";
 import type { BusinessStats } from "@/lib/data/real-stats";
 import type { AgentSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -74,15 +76,24 @@ export function DiscoverySection({ agents, stats }: DiscoverySectionProps) {
               className="group relative overflow-hidden rounded-[24px] border border-white/[0.07]"
             >
               <div className="relative aspect-[16/10] sm:aspect-[16/9]">
-                <Image
-                  src="/images/robots/robot-whale-hero.png"
-                  alt={featured.name}
-                  fill
-                  className="object-cover transition-transform duration-700 group-hover:scale-[1.02]"
-                  sizes="(min-width: 1024px) 60vw, 100vw"
-                  priority
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/35 to-transparent" />
+                {getAgentAvatarGlb(featured.slug) ? (
+                  <Agent3DTurntable
+                    glbUrl={getAgentAvatarGlb(featured.slug)!}
+                    agentName={featured.name}
+                    posterSrc="/images/robots/robot-whale-hero.png"
+                    className="absolute inset-0"
+                  />
+                ) : (
+                  <Image
+                    src="/images/robots/robot-whale-hero.png"
+                    alt={featured.name}
+                    fill
+                    className="object-cover transition-transform duration-700 group-hover:scale-[1.02]"
+                    sizes="(min-width: 1024px) 60vw, 100vw"
+                    priority
+                  />
+                )}
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black via-black/35 to-transparent" />
               </div>
 
               <div className="absolute inset-x-0 bottom-0 p-7 sm:p-9">
@@ -223,14 +234,23 @@ function CatalogRow({
             className="group w-[210px] shrink-0 snap-start"
           >
             <span className="relative block aspect-square overflow-hidden rounded-2xl border border-white/[0.06]">
-              <Image
-                src={getAgentArt(agent)}
-                alt={agent.name}
-                fill
-                className="object-cover transition-transform duration-500 group-hover:scale-[1.04]"
-                sizes="210px"
-              />
-              <span className="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent" />
+              {getAgentAvatarGlb(agent.slug) ? (
+                <Agent3DTurntable
+                  glbUrl={getAgentAvatarGlb(agent.slug)!}
+                  agentName={agent.name}
+                  posterSrc={getAgentArt(agent)}
+                  className="absolute inset-0"
+                />
+              ) : (
+                <Image
+                  src={getAgentArt(agent)}
+                  alt={agent.name}
+                  fill
+                  className="object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+                  sizes="210px"
+                />
+              )}
+              <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent" />
               <span className="absolute left-3.5 top-3.5 flex items-center rounded-full bg-black/55 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-white/85 backdrop-blur-sm">
                 Live
               </span>

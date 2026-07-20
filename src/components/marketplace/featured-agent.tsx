@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { AgentArtwork } from "@/components/marketplace/agent-artwork";
+import { Agent3DTurntable } from "@/components/agent/agent-3d-turntable";
+import { getAgentAvatarGlb } from "@/lib/agent-avatars";
 import { Button } from "@/components/ui/button";
 import type { AgentSummary } from "@/lib/types";
 import { FILTER_LABELS, formatAccessModel } from "@/lib/types";
@@ -57,7 +59,18 @@ export function FeaturedAgent({ agent }: FeaturedAgentProps) {
           className="block transition-opacity duration-150 hover:opacity-95"
           tabIndex={agent.profileReady ? 0 : -1}
         >
-          <AgentArtwork style={agent.artwork} name={agent.name} variant="hero" />
+          {getAgentAvatarGlb(agent.slug) ? (
+            <div className="relative aspect-[16/10] lg:min-h-[360px]">
+              <Agent3DTurntable
+                glbUrl={getAgentAvatarGlb(agent.slug)!}
+                agentName={agent.name}
+                fallback={<AgentArtwork style={agent.artwork} name={agent.name} variant="hero" className="size-full" />}
+                className="absolute inset-0"
+              />
+            </div>
+          ) : (
+            <AgentArtwork style={agent.artwork} name={agent.name} variant="hero" />
+          )}
         </Link>
       </div>
     </section>

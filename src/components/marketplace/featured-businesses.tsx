@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { AgentCategoryArt } from "@/components/marketplace/category-art";
+import { Agent3DTurntable } from "@/components/agent/agent-3d-turntable";
+import { getAgentAvatarGlb } from "@/lib/agent-avatars";
 import type { AgentSummary } from "@/lib/types";
 import { formatAccessModel } from "@/lib/types";
 import { formatNumber, formatUsd } from "@/lib/utils";
@@ -77,7 +79,18 @@ function FeaturedEditorial({ agent, reverse }: { agent: AgentSummary; reverse: b
         href={href}
         className={`block min-h-[320px] lg:min-h-[480px] ${reverse ? "lg:[direction:ltr]" : ""}`}
       >
-        <AgentCategoryArt agent={agent} size="feature" className="h-full min-h-[inherit]" />
+        {getAgentAvatarGlb(agent.slug) ? (
+          <div className="relative h-full min-h-[inherit]">
+            <Agent3DTurntable
+              glbUrl={getAgentAvatarGlb(agent.slug)!}
+              agentName={agent.name}
+              fallback={<AgentCategoryArt agent={agent} size="feature" className="size-full" />}
+              className="absolute inset-0"
+            />
+          </div>
+        ) : (
+          <AgentCategoryArt agent={agent} size="feature" className="h-full min-h-[inherit]" />
+        )}
       </Link>
     </article>
   );

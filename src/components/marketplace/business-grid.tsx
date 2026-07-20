@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { AgentCategoryArt } from "@/components/marketplace/category-art";
+import { Agent3DTurntable } from "@/components/agent/agent-3d-turntable";
+import { getAgentAvatarGlb } from "@/lib/agent-avatars";
 import type { AgentSummary } from "@/lib/types";
 import { formatAccessModel } from "@/lib/types";
 import { formatNumber, formatUsd } from "@/lib/utils";
@@ -46,7 +48,18 @@ function BusinessCard({ agent }: { agent: AgentSummary }) {
   const inner = (
     <article className="group flex flex-col h-full">
       <div className="overflow-hidden mb-6 transition-opacity duration-200 group-hover:opacity-85">
-        <AgentCategoryArt agent={agent} size="card" className="aspect-[4/5] sm:aspect-[3/4]" />
+        {getAgentAvatarGlb(agent.slug) ? (
+          <div className="relative aspect-[4/5] sm:aspect-[3/4]">
+            <Agent3DTurntable
+              glbUrl={getAgentAvatarGlb(agent.slug)!}
+              agentName={agent.name}
+              fallback={<AgentCategoryArt agent={agent} size="card" className="size-full" />}
+              className="absolute inset-0"
+            />
+          </div>
+        ) : (
+          <AgentCategoryArt agent={agent} size="card" className="aspect-[4/5] sm:aspect-[3/4]" />
+        )}
       </div>
       <h3 className="text-[22px] sm:text-[24px] font-semibold tracking-[-0.02em] text-foreground leading-tight group-hover:text-accent transition-colors duration-150">
         {agent.name}

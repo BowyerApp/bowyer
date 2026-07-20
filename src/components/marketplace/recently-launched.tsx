@@ -4,6 +4,8 @@ import { useRef } from "react";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { AgentCategoryArt } from "@/components/marketplace/category-art";
+import { Agent3DTurntable } from "@/components/agent/agent-3d-turntable";
+import { getAgentAvatarGlb } from "@/lib/agent-avatars";
 import type { AgentSummary } from "@/lib/types";
 import { formatAccessModel } from "@/lib/types";
 import { formatUsd } from "@/lib/utils";
@@ -67,7 +69,18 @@ function RecentlyLaunchedCard({ agent }: { agent: AgentSummary }) {
       href={href}
       className="snap-start shrink-0 w-[280px] sm:w-[300px] group block"
     >
-      <AgentCategoryArt agent={agent} size="carousel" className="aspect-[4/3] mb-4" />
+      {getAgentAvatarGlb(agent.slug) ? (
+        <div className="relative aspect-[4/3] mb-4 overflow-hidden">
+          <Agent3DTurntable
+            glbUrl={getAgentAvatarGlb(agent.slug)!}
+            agentName={agent.name}
+            fallback={<AgentCategoryArt agent={agent} size="carousel" className="size-full" />}
+            className="absolute inset-0"
+          />
+        </div>
+      ) : (
+        <AgentCategoryArt agent={agent} size="carousel" className="aspect-[4/3] mb-4" />
+      )}
       <h3 className="text-[17px] font-medium text-foreground group-hover:text-accent transition-colors duration-150">
         {agent.name}
       </h3>

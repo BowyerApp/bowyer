@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 
@@ -11,22 +12,30 @@ const Agent3DHero = dynamic(
 interface Agent3DTurntableProps {
   glbUrl: string;
   agentName: string;
-  posterSrc: string;
+  /** Poster image path used as fallback when 3D fails to load. */
+  posterSrc?: string;
+  /** Custom fallback node — wins over posterSrc when provided. */
+  fallback?: ReactNode;
   className?: string;
 }
 
-/** Compact 3D preview for marketplace cards — falls back to poster image. */
+/** Compact 3D preview for marketplace cards — falls back to poster/artwork. */
 export function Agent3DTurntable({
   glbUrl,
   agentName,
   posterSrc,
+  fallback,
   className,
 }: Agent3DTurntableProps) {
-  const fallback = (
-    <div className="relative size-full">
-      <Image src={posterSrc} alt={agentName} fill className="object-cover" />
-    </div>
-  );
+  const fallbackNode =
+    fallback ??
+    (posterSrc ? (
+      <div className="relative size-full">
+        <Image src={posterSrc} alt={agentName} fill className="object-cover" />
+      </div>
+    ) : (
+      <div className="size-full bg-white/[0.03]" />
+    ));
 
   return (
     <div className={className}>
@@ -35,7 +44,7 @@ export function Agent3DTurntable({
         agentName={agentName}
         variant="card"
         className="size-full border-0"
-        fallback={fallback}
+        fallback={fallbackNode}
       />
     </div>
   );
