@@ -277,8 +277,22 @@ function EditBusinessForm({
   const [tagline, setTagline] = useState(agent.tagline);
   const [price, setPrice] = useState(String(agent.pricing.amount ?? 0));
   const [payout, setPayout] = useState("");
+  const [interval, setInterval_] = useState("");
+  const [savedInterval, setSavedInterval] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/agents/${agent.slug}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (typeof d.intervalHours === "number") {
+          setSavedInterval(d.intervalHours);
+          setInterval_(String(d.intervalHours));
+        }
+      })
+      .catch(() => {});
+  }, [agent.slug]);
 
   const save = async () => {
     setBusy(true);
@@ -289,6 +303,10 @@ function EditBusinessForm({
     const priceNum = Number(price);
     if (Number.isFinite(priceNum) && priceNum !== agent.pricing.amount) payload.priceUsd = priceNum;
     if (payout.trim()) payload.payoutAddress = payout.trim();
+    const intervalNum = Number(interval);
+    if (interval.trim() && Number.isFinite(intervalNum) && intervalNum !== savedInterval) {
+      payload.intervalHours = intervalNum;
+    }
     if (Object.keys(payload).length === 0) {
       setBusy(false);
       setError("Nothing changed.");
@@ -337,7 +355,17 @@ function EditBusinessForm({
             className={inputClass}
           />
         </label>
-        <label className="flex flex-col gap-1.5 sm:col-span-2">
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[11px] uppercase tracking-wide text-subtle">Publish every (hours, 2–168)</span>
+          <input
+            value={interval}
+            onChange={(e) => setInterval_(e.target.value.replace(/[^0-9]/g, ""))}
+            inputMode="numeric"
+            placeholder={savedInterval === null ? "Loading…" : undefined}
+            className={inputClass}
+          />
+        </label>
+        <label className="flex flex-col gap-1.5">
           <span className="text-[11px] uppercase tracking-wide text-subtle">Tagline</span>
           <input value={tagline} onChange={(e) => setTagline(e.target.value)} maxLength={140} className={inputClass} />
         </label>

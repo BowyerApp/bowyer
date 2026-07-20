@@ -46,6 +46,32 @@ export function ensureSchedules(): void {
   }
 }
 
+/** Creator-configurable cadence bounds: floor protects LLM costs, cap is one week. */
+export const MIN_INTERVAL_HOURS = 2;
+export const MAX_INTERVAL_HOURS = 168;
+
+export function getScheduleIntervalHours(slug: string): number {
+  ensureSchedules();
+  const row = db()
+    .prepare("SELECT interval_hours FROM schedules WHERE slug = ?")
+    .get(slug) as { interval_hours: number } | undefined;
+  return row?.interval_hours ?? DEFAULT_INTERVAL_HOURS;
+}
+
+export function setScheduleIntervalHours(slug: string, hours: number): boolean {
+  if (!Number.isFinite(hours)) return false;
+  const clamped = Math.min(Math.max(Math.round(hours), MIN_INTERVAL_HOURS), MAX_INTERVAL_HOURS);
+  ensureSchedules();
+  db()
+    .prepare(
+      `INSERT INTO schedules (slug, interval_hours, enabled, topic_template)
+       VALUES (?, ?, 1, NULL)
+       ON CONFLICT (slug) DO UPDATE SET interval_hours = excluded.interval_hours`
+    )
+    .run(slug, clamped);
+  return true;
+}
+
 function dueSchedules(): ScheduleRow[] {
   ensureSchedules();
   const rows = db()

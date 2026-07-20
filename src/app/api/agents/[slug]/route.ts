@@ -7,6 +7,12 @@ import {
   type KnowledgeSource,
 } from "@/lib/data/agent-registry";
 import { isValidSourceUrl, SUPPORTED_SOURCE_TYPES } from "@/lib/knowledge-sources";
+import {
+  getScheduleIntervalHours,
+  setScheduleIntervalHours,
+  MIN_INTERVAL_HOURS,
+  MAX_INTERVAL_HOURS,
+} from "@/lib/scheduler";
 import { requireWalletSession } from "@/lib/wallet-auth";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -44,6 +50,24 @@ function requireOwner(req: Request, slug: string): { ok: true } | { ok: false; r
   return { ok: true };
 }
 
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ slug: string }> }
+) {
+  const limit = rateLimit(req, "agent-manage", 30, 60_000);
+  if (!limit.ok) {
+    return NextResponse.json({ ok: false, error: "Too many requests" }, { status: 429 });
+  }
+  const { slug } = await params;
+  const auth = requireOwner(req, slug);
+  if (!auth.ok) return auth.res;
+  return NextResponse.json({
+    ok: true,
+    agent: getRegisteredAgent(slug),
+    intervalHours: getScheduleIntervalHours(slug),
+  });
+}
+
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ slug: string }> }
@@ -63,6 +87,7 @@ export async function PATCH(
     priceUsd?: number;
     payoutAddress?: string;
     sources?: KnowledgeSource[];
+    intervalHours?: number;
   };
   try {
     body = await req.json();
@@ -92,6 +117,23 @@ export async function PATCH(
     }
   }
 
+  if (body.intervalHours !== undefined) {
+    if (
+      !Number.isFinite(body.intervalHours) ||
+      body.intervalHours < MIN_INTERVAL_HOURS ||
+      body.intervalHours > MAX_INTERVAL_HOURS
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `intervalHours must be between ${MIN_INTERVAL_HOURS} and ${MAX_INTERVAL_HOURS}`,
+        },
+        { status: 400 }
+      );
+    }
+    setScheduleIntervalHours(slug, body.intervalHours);
+  }
+
   const updated = updateRegisteredAgent(slug, {
     name: body.name,
     tagline: body.tagline,
@@ -103,7 +145,11 @@ export async function PATCH(
   if (!updated) {
     return NextResponse.json({ ok: false, error: "Update failed" }, { status: 500 });
   }
-  return NextResponse.json({ ok: true, agent: getRegisteredAgent(slug) });
+  return NextResponse.json({
+    ok: true,
+    agent: getRegisteredAgent(slug),
+    intervalHours: getScheduleIntervalHours(slug),
+  });
 }
 
 export async function DELETE(
