@@ -75,14 +75,20 @@ export function DiscoverySection({ agents, stats }: DiscoverySectionProps) {
               href={`/agents/${featured.slug}`}
               className="group relative overflow-hidden rounded-[24px] border border-white/[0.07]"
             >
-              <div className="relative aspect-[16/10] sm:aspect-[16/9]">
+              <div className="relative aspect-[16/10] bg-[#050505] sm:aspect-[16/9]">
                 {getAgentAvatarGlb(featured.slug) ? (
-                  <Agent3DTurntable
-                    glbUrl={getAgentAvatarGlb(featured.slug)!}
-                    agentName={featured.name}
-                    posterSrc="/images/robots/robot-whale-hero.png"
-                    className="absolute inset-0"
-                  />
+                  <>
+                    {/* pin the 3D model to the right half so it never covers the copy */}
+                    <div className="absolute inset-y-0 right-0 w-[58%] sm:w-1/2">
+                      <Agent3DTurntable
+                        glbUrl={getAgentAvatarGlb(featured.slug)!}
+                        agentName={featured.name}
+                        posterSrc="/images/robots/robot-whale-hero.png"
+                        className="absolute inset-0"
+                      />
+                    </div>
+                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-black via-black/45 to-transparent" />
+                  </>
                 ) : (
                   <Image
                     src="/images/robots/robot-whale-hero.png"
@@ -93,7 +99,7 @@ export function DiscoverySection({ agents, stats }: DiscoverySectionProps) {
                     priority
                   />
                 )}
-                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black via-black/35 to-transparent" />
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black via-black/25 to-transparent" />
               </div>
 
               <div className="absolute inset-x-0 bottom-0 p-7 sm:p-9">
