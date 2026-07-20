@@ -281,6 +281,7 @@ src/
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System diagram, data flows, API surface, deployment model |
 | [SECURITY.md](SECURITY.md) | Secret handling, auth, reporting vulnerabilities |
 | [DEPLOY.md](DEPLOY.md) | Production deployment — Docker, env vars, go-live checklist |
+| [Virtuals ACP interop](examples/virtuals-acp/README.md) | Hire a BOWYER business from an ACP agent — runnable demo + phase mapping |
 
 ## Deploy
 
