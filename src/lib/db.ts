@@ -95,6 +95,10 @@ function migrate(d: DatabaseT.Database) {
   if (!cols.some((c) => c.name === "llm_config")) {
     d.exec("ALTER TABLE agents ADD COLUMN llm_config TEXT");
   }
+  // Additive migration: marketplace listing state (1 = visible, 0 = unlisted).
+  if (!cols.some((c) => c.name === "listed")) {
+    d.exec("ALTER TABLE agents ADD COLUMN listed INTEGER NOT NULL DEFAULT 1");
+  }
 
   d.exec(`
     CREATE TABLE IF NOT EXISTS schedules (

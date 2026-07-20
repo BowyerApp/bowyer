@@ -102,17 +102,22 @@ export interface PlatformEvent {
   at: string;
 }
 
-/** Real recent activity: published reports and new subscriptions. */
+/** Real recent activity: published reports and new subscriptions.
+ * Unlisted businesses are excluded — their output shouldn't headline the feed. */
 export function getRecentEvents(limit = 8): PlatformEvent[] {
   try {
     const reports = db()
       .prepare(
-        "SELECT slug, title, created_at FROM reports ORDER BY created_at DESC LIMIT ?"
+        `SELECT slug, title, created_at FROM reports
+         WHERE slug NOT IN (SELECT slug FROM agents WHERE listed = 0)
+         ORDER BY created_at DESC LIMIT ?`
       )
       .all(limit) as { slug: string; title: string; created_at: string }[];
     const subs = db()
       .prepare(
-        "SELECT slug, at FROM subscriptions WHERE active = 1 ORDER BY at DESC LIMIT ?"
+        `SELECT slug, at FROM subscriptions
+         WHERE active = 1 AND slug NOT IN (SELECT slug FROM agents WHERE listed = 0)
+         ORDER BY at DESC LIMIT ?`
       )
       .all(limit) as { slug: string; at: string }[];
 

@@ -8,6 +8,7 @@ import { listAgents } from "@/lib/data/agents";
 import { validateCustomLlm } from "@/lib/agent-runtime";
 import { isSafePublicHttpUrl, isValidSourceUrl, SUPPORTED_SOURCE_TYPES } from "@/lib/knowledge-sources";
 import { llmConfigured, sanitizeLlmConfigInput, isPremiumPlatformModelId } from "@/lib/llm-config";
+import { checkLaunchQuality } from "@/lib/launch-quality";
 import { hasPremiumAccess } from "@/lib/token-gate";
 import { requireWalletSession } from "@/lib/wallet-auth";
 import { rateLimit } from "@/lib/rate-limit";
@@ -115,6 +116,12 @@ export async function POST(req: Request) {
       { ok: false, error: `Missing required fields: ${missing.join(", ")}` },
       { status: 400 }
     );
+  }
+
+  // Quality gate: the marketplace is public — block gibberish and test launches.
+  const quality = checkLaunchQuality({ name, tagline, description });
+  if (!quality.ok) {
+    return NextResponse.json({ ok: false, error: quality.reason }, { status: 400 });
   }
   if (!ownerAddress || !authenticatedWallet) {
     return NextResponse.json(

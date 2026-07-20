@@ -431,9 +431,37 @@ export function removeRegisteredAgent(slug: string): boolean {
 export function listRegisteredAgents(): AgentSummary[] {
   if (!isServer) return [];
   const rows = db()
-    .prepare("SELECT * FROM agents ORDER BY created_at DESC")
+    .prepare("SELECT * FROM agents WHERE listed = 1 ORDER BY created_at DESC")
     .all() as AgentRow[];
   return rows.map(rowToSummary);
+}
+
+/** Marketplace visibility. Unlisted businesses keep working for their owner and
+ * existing subscribers, but disappear from listings, stats, and activity. */
+export function setAgentListed(slug: string, listed: boolean): boolean {
+  if (!isServer) return false;
+  const res = db()
+    .prepare("UPDATE agents SET listed = ? WHERE slug = ?")
+    .run(listed ? 1 : 0, slug);
+  return res.changes > 0;
+}
+
+export function isAgentListed(slug: string): boolean {
+  if (!isServer) return true;
+  const row = db()
+    .prepare("SELECT listed FROM agents WHERE slug = ?")
+    .get(slug) as { listed: number } | undefined;
+  // Catalog agents (not in DB) are always listed.
+  return row ? row.listed === 1 : true;
+}
+
+/** All DB slugs that are currently unlisted (for filtering activity feeds). */
+export function listUnlistedSlugs(): string[] {
+  if (!isServer) return [];
+  const rows = db().prepare("SELECT slug FROM agents WHERE listed = 0").all() as {
+    slug: string;
+  }[];
+  return rows.map((r) => r.slug);
 }
 
 export function getRegisteredAgent(slug: string): AgentSummary | null {

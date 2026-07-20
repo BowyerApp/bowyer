@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { generateReport, llmAvailable } from "@/lib/agent-runtime";
 import { resolveAgentIdentity } from "@/lib/agent-identity";
+import { isAgentListed } from "@/lib/data/agent-registry";
 import { listAgents } from "@/lib/data/agents";
 import { processTelegramDeliveryQueue } from "@/lib/telegram";
 
@@ -109,6 +110,12 @@ export async function runScheduledPublish(slug?: string): Promise<{
   for (const row of targets) {
     const identity = resolveAgentIdentity(row.slug);
     if (!identity) {
+      skipped.push(row.slug);
+      continue;
+    }
+
+    // Unlisted businesses don't publish on a schedule — no LLM spend on junk.
+    if (!isAgentListed(row.slug)) {
       skipped.push(row.slug);
       continue;
     }
