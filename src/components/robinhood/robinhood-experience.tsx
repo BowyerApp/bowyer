@@ -135,26 +135,28 @@ function PathPulse({ path, delay = 0 }: { path: string; delay?: number }) {
 }
 
 function InfrastructureVisual() {
-  const reduced = useReducedMotion();
-
-  // Geometry on a 560x480 canvas.
-  // Robot center: (280,190) · Robinhood node: (95,80) · Bowyer node: (465,80)
-  // Modules row y=400, x = 70 / 210 / 350 / 490
-  const linkRobinhood = "M 280 190 L 95 96";
-  const linkBowyer = "M 280 190 L 465 96";
+  // Geometry on a 560x540 canvas.
+  // Central robot portrait: rect(196,120 → 364,330) · nodes top corners · modules row y=470
+  const linkRobinhood = "M 236 132 L 95 92";
+  const linkBowyer = "M 324 132 L 465 92";
   const moduleLinks = [
-    "M 465 112 C 465 260, 70 300, 70 388",
-    "M 465 112 C 465 280, 210 320, 210 388",
-    "M 465 112 C 465 300, 350 330, 350 388",
-    "M 465 112 L 490 388",
+    "M 236 310 C 190 390, 70 410, 70 470",
+    "M 262 330 C 248 400, 210 425, 210 470",
+    "M 298 330 C 312 400, 350 425, 350 470",
+    "M 324 310 C 370 390, 490 410, 490 470",
   ];
 
   return (
     <div className="relative mx-auto w-full max-w-[560px]">
       {/* very subtle ambient light */}
-      <div className="pointer-events-none absolute left-1/2 top-1/3 h-[320px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent/[0.05] blur-[100px]" />
+      <div className="pointer-events-none absolute left-1/2 top-[40%] h-[340px] w-[440px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent/[0.05] blur-[100px]" />
 
-      <svg viewBox="0 0 560 480" className="relative w-full" role="img" aria-label="Diagram: your agent connects to Robinhood for execution and BOWYER for intelligence">
+      <svg
+        viewBox="0 0 560 540"
+        className="relative w-full"
+        role="img"
+        aria-label="Diagram: your agent connects to Robinhood for execution and BOWYER for intelligence"
+      >
         {/* connection lines */}
         {[linkRobinhood, linkBowyer, ...moduleLinks].map((d) => (
           <path key={d} d={d} fill="none" stroke="#232623" strokeWidth="1" />
@@ -169,7 +171,7 @@ function InfrastructureVisual() {
         {/* Robinhood node */}
         <g>
           <rect x="20" y="52" width="150" height="60" rx="10" fill="#0c0d0c" stroke="#262926" />
-          <text x="95" y="79" textAnchor="middle" className="fill-[#f2f2f0]" fontSize="13" fontWeight="600" letterSpacing="0.06em">
+          <text x="95" y="79" textAnchor="middle" fill="#f2f2f0" fontSize="13" fontWeight="600" letterSpacing="0.06em">
             ROBINHOOD
           </text>
           <text x="95" y="97" textAnchor="middle" fill="#6b6f6a" fontSize="9.5" letterSpacing="0.18em">
@@ -194,9 +196,9 @@ function InfrastructureVisual() {
           const w = Math.max(label.length * 7.2 + 28, 76);
           return (
             <g key={label}>
-              <rect x={cx - w / 2} y={388} width={w} height={38} rx="8" fill="#0c0d0c" stroke="#232623" />
-              <circle cx={cx - w / 2 + 14} cy={407} r="2.5" fill="#c8ff00" />
-              <text x={cx + 6} y={411} textAnchor="middle" fill="#a3a7a1" fontSize="10.5" letterSpacing="0.04em">
+              <rect x={cx - w / 2} y={470} width={w} height={38} rx="8" fill="#0c0d0c" stroke="#232623" />
+              <circle cx={cx - w / 2 + 14} cy={489} r="2.5" fill="#c8ff00" />
+              <text x={cx + 6} y={493} textAnchor="middle" fill="#a3a7a1" fontSize="10.5" letterSpacing="0.04em">
                 {label}
               </text>
             </g>
@@ -204,24 +206,21 @@ function InfrastructureVisual() {
         })}
       </svg>
 
-      {/* central robot (HTML overlay so we can use the real render) */}
-      <div className="absolute left-1/2 top-[39.5%] -translate-x-1/2 -translate-y-1/2">
-        <div className="relative flex size-[104px] items-center justify-center overflow-hidden rounded-full border border-[#2a2d29] bg-[#0b0c0a] shadow-[0_0_50px_-12px_rgba(200,255,0,0.3)]">
-          <Image
-            src="/images/launch-robot.png"
-            alt="BOWYER robot"
-            fill
-            sizes="104px"
-            className="object-cover object-top"
-          />
-          {/* visor glow */}
-          <motion.div
-            className="absolute inset-x-4 top-[38%] h-[3px] rounded-full bg-accent/80 blur-[1.5px]"
-            animate={reduced ? undefined : { opacity: [0.5, 1, 0.5] }}
-            transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
-          />
-        </div>
-        <p className="mt-2.5 text-center text-[10px] font-medium uppercase tracking-[0.18em] text-subtle">
+      {/* central robot portrait — positioned in SVG coordinate space via percentages */}
+      <div
+        className="absolute overflow-hidden rounded-2xl border border-[#242724] bg-[#0a0b0a] shadow-[0_0_70px_-18px_rgba(200,255,0,0.28)]"
+        style={{ left: "35%", top: "22.2%", width: "30%", height: "38.9%" }}
+      >
+        <Image
+          src="/images/robinhood/robot-hero.png"
+          alt="BOWYER robot"
+          fill
+          sizes="(max-width: 1024px) 40vw, 220px"
+          className="object-cover"
+          priority
+        />
+        <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/80 to-transparent" />
+        <p className="absolute inset-x-0 bottom-2.5 text-center text-[9.5px] font-medium uppercase tracking-[0.22em] text-white/70">
           Your agent
         </p>
       </div>
