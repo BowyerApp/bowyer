@@ -232,6 +232,56 @@ export function getAgentOwnerAddress(slug: string): string | null {
   return row?.owner_address ?? null;
 }
 
+export interface UpdateAgentInput {
+  name?: string;
+  tagline?: string;
+  description?: string;
+  priceUsd?: number;
+  payoutAddress?: string;
+  sources?: KnowledgeSource[];
+}
+
+/**
+ * Update an owner's launched business. The slug (and its MCP endpoint) stays
+ * stable so existing subscribers and integrations keep working.
+ * Caller is responsible for verifying the requester owns the agent.
+ */
+export function updateRegisteredAgent(slug: string, input: UpdateAgentInput): boolean {
+  if (!isServer) return false;
+  const d = db();
+  const row = d.prepare("SELECT * FROM agents WHERE slug = ?").get(slug) as AgentRow | undefined;
+  if (!row) return false;
+
+  const summary = JSON.parse(row.summary) as AgentSummary;
+  if (input.name?.trim()) summary.name = input.name.trim().slice(0, 60);
+  if (input.tagline?.trim()) summary.tagline = input.tagline.trim().slice(0, 140);
+  if (input.description?.trim()) summary.thesis = input.description.trim().slice(0, 140);
+  if (input.priceUsd !== undefined && Number.isFinite(input.priceUsd) && input.priceUsd >= 0) {
+    summary.pricing =
+      input.priceUsd <= 0
+        ? { model: "free", amount: 0, currency: "USD" }
+        : { model: "subscription", amount: Math.min(input.priceUsd, 10_000), currency: "USD", period: "month" };
+  }
+
+  const sets: string[] = ["summary = ?"];
+  const values: unknown[] = [JSON.stringify(summary)];
+  if (input.description?.trim()) {
+    sets.push("description = ?");
+    values.push(input.description.trim().slice(0, 4000));
+  }
+  if (input.payoutAddress && /^0x[0-9a-fA-F]{40}$/.test(input.payoutAddress)) {
+    sets.push("payout_address = ?");
+    values.push(input.payoutAddress.toLowerCase());
+  }
+  if (input.sources) {
+    sets.push("sources = ?");
+    values.push(input.sources.length > 0 ? JSON.stringify(input.sources.slice(0, 8)) : null);
+  }
+  values.push(slug);
+  d.prepare(`UPDATE agents SET ${sets.join(", ")} WHERE slug = ?`).run(...values);
+  return true;
+}
+
 export function listAgentsByOwner(owner: string): AgentSummary[] {
   if (!isServer) return [];
   const rows = db()

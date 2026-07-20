@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowRight, ArrowUpRight, Copy, Check } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Copy, Check, Pencil, X } from "lucide-react";
 import { Container } from "@/components/layout/container";
 import { ConnectGate } from "@/components/layout/wallet-button";
 import { MorningBriefing } from "@/components/portfolio/morning-briefing";
@@ -163,7 +163,9 @@ function PortfolioExperienceInner() {
 /* ================= my businesses ================= */
 
 function MyBusinesses({ address, sessionReady }: { address: string; sessionReady: boolean }) {
+  const { authenticate } = useWallet();
   const [agents, setAgents] = useState<AgentSummary[] | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
 
   useEffect(() => {
     if (!sessionReady) return;
@@ -196,35 +198,58 @@ function MyBusinesses({ address, sessionReady }: { address: string; sessionReady
 
       <div className="mt-8 max-w-3xl">
         {agents.map((a, i) => (
-          <div
-            key={a.slug}
-            className={cn(
-              "grid items-center gap-x-6 gap-y-2 border-b border-border py-5 sm:grid-cols-[1fr_auto_auto]",
-              i === 0 && "border-t"
+          <div key={a.slug} className={cn("border-b border-border", i === 0 && "border-t")}>
+            <div className="grid items-center gap-x-6 gap-y-2 py-5 sm:grid-cols-[1fr_auto_auto]">
+              <div className="min-w-0">
+                <Link
+                  href={`/agents/${a.slug}`}
+                  className="text-[16px] font-medium text-foreground transition-colors hover:text-accent"
+                >
+                  {a.name}
+                </Link>
+                <p className="mt-0.5 truncate text-[12.5px] text-muted">{a.tagline}</p>
+              </div>
+              <span className="text-[13px] tabular-nums text-muted">
+                {a.pricing.model === "free" ? "Free" : `$${a.pricing.amount}/mo`}
+              </span>
+              <div className="flex items-center gap-4">
+                <CopyEndpoint slug={a.slug} />
+                <button
+                  type="button"
+                  onClick={() => setEditing(editing === a.slug ? null : a.slug)}
+                  className={cn(
+                    "flex items-center gap-1.5 text-[12px] transition-colors",
+                    editing === a.slug ? "text-accent" : "text-subtle hover:text-foreground"
+                  )}
+                >
+                  {editing === a.slug ? (
+                    <X className="size-3.5" strokeWidth={1.75} />
+                  ) : (
+                    <Pencil className="size-3.5" strokeWidth={1.75} />
+                  )}
+                  Edit
+                </button>
+                <Link
+                  href={`/agents/${a.slug}`}
+                  className="flex size-8 items-center justify-center rounded-full bg-white/[0.06] text-muted transition-colors hover:bg-accent hover:text-background"
+                  aria-label={`Open ${a.name}`}
+                >
+                  <ArrowRight className="size-3.5" strokeWidth={2} />
+                </Link>
+              </div>
+            </div>
+            {editing === a.slug && (
+              <EditBusinessForm
+                agent={a}
+                authenticate={authenticate}
+                onSaved={(updated) => {
+                  setAgents((prev) =>
+                    prev?.map((x) => (x.slug === updated.slug ? updated : x)) ?? null
+                  );
+                  setEditing(null);
+                }}
+              />
             )}
-          >
-            <div className="min-w-0">
-              <Link
-                href={`/agents/${a.slug}`}
-                className="text-[16px] font-medium text-foreground transition-colors hover:text-accent"
-              >
-                {a.name}
-              </Link>
-              <p className="mt-0.5 truncate text-[12.5px] text-muted">{a.tagline}</p>
-            </div>
-            <span className="text-[13px] tabular-nums text-muted">
-              {a.pricing.model === "free" ? "Free" : `$${a.pricing.amount}/mo`}
-            </span>
-            <div className="flex items-center gap-4">
-              <CopyEndpoint slug={a.slug} />
-              <Link
-                href={`/agents/${a.slug}`}
-                className="flex size-8 items-center justify-center rounded-full bg-white/[0.06] text-muted transition-colors hover:bg-accent hover:text-background"
-                aria-label={`Open ${a.name}`}
-              >
-                <ArrowRight className="size-3.5" strokeWidth={2} />
-              </Link>
-            </div>
           </div>
         ))}
       </div>
@@ -236,6 +261,111 @@ function MyBusinesses({ address, sessionReady }: { address: string; sessionReady
         Launch another business <ArrowUpRight className="size-3.5" strokeWidth={1.75} />
       </Link>
     </Container>
+  );
+}
+
+function EditBusinessForm({
+  agent,
+  authenticate,
+  onSaved,
+}: {
+  agent: AgentSummary;
+  authenticate: () => Promise<boolean>;
+  onSaved: (updated: AgentSummary) => void;
+}) {
+  const [name, setName] = useState(agent.name);
+  const [tagline, setTagline] = useState(agent.tagline);
+  const [price, setPrice] = useState(String(agent.pricing.amount ?? 0));
+  const [payout, setPayout] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    const payload: Record<string, unknown> = {};
+    if (name.trim() && name.trim() !== agent.name) payload.name = name.trim();
+    if (tagline.trim() && tagline.trim() !== agent.tagline) payload.tagline = tagline.trim();
+    const priceNum = Number(price);
+    if (Number.isFinite(priceNum) && priceNum !== agent.pricing.amount) payload.priceUsd = priceNum;
+    if (payout.trim()) payload.payoutAddress = payout.trim();
+    if (Object.keys(payload).length === 0) {
+      setBusy(false);
+      setError("Nothing changed.");
+      return;
+    }
+    try {
+      const send = () =>
+        fetch(`/api/agents/${agent.slug}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      let res = await send();
+      if (res.status === 401 || res.status === 403) {
+        if (await authenticate()) res = await send();
+      }
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setError(data.error ?? "Update failed. Try again.");
+        return;
+      }
+      onSaved(data.agent as AgentSummary);
+    } catch {
+      setError("Network error. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inputClass =
+    "h-10 w-full rounded-sm border border-border bg-white/[0.03] px-3 text-[13px] text-foreground outline-none transition-colors focus:border-accent/50";
+
+  return (
+    <div className="mb-5 rounded-sm border border-border bg-white/[0.02] p-4">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[11px] uppercase tracking-wide text-subtle">Name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} className={inputClass} />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[11px] uppercase tracking-wide text-subtle">Price (USD / month, 0 = free)</span>
+          <input
+            value={price}
+            onChange={(e) => setPrice(e.target.value.replace(/[^0-9.]/g, ""))}
+            inputMode="decimal"
+            className={inputClass}
+          />
+        </label>
+        <label className="flex flex-col gap-1.5 sm:col-span-2">
+          <span className="text-[11px] uppercase tracking-wide text-subtle">Tagline</span>
+          <input value={tagline} onChange={(e) => setTagline(e.target.value)} maxLength={140} className={inputClass} />
+        </label>
+        <label className="flex flex-col gap-1.5 sm:col-span-2">
+          <span className="text-[11px] uppercase tracking-wide text-subtle">Payout address (leave blank to keep current)</span>
+          <input
+            value={payout}
+            onChange={(e) => setPayout(e.target.value.trim())}
+            placeholder="0x…"
+            className={cn(inputClass, "font-mono")}
+          />
+        </label>
+      </div>
+      {error && <p className="mt-3 text-[12.5px] text-negative">{error}</p>}
+      <div className="mt-4 flex items-center gap-3">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={save}
+          className="flex h-9 items-center rounded-sm bg-accent px-5 text-[13px] font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          {busy ? "Saving…" : "Save changes"}
+        </button>
+        <p className="text-[11.5px] text-subtle">
+          Your MCP endpoint and existing subscribers are unaffected by edits.
+        </p>
+      </div>
+    </div>
   );
 }
 
