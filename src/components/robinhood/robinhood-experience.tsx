@@ -97,134 +97,121 @@ export function RobinhoodHero() {
         </motion.div>
 
         <motion.div
-          initial={reduced ? undefined : { opacity: 0, scale: 0.98 }}
+          initial={reduced ? undefined : { opacity: 0, scale: 0.985 }}
           animate={reduced ? undefined : { opacity: 1, scale: 1 }}
-          transition={{ duration: 0.7, ease: EASE, delay: 0.35 }}
+          transition={{ duration: 0.9, ease: EASE, delay: 0.3 }}
         >
-          <InfrastructureVisual />
+          <CinematicRobot />
         </motion.div>
       </div>
     </section>
   );
 }
 
-/* ---------------- infrastructure visual ---------------- */
+/* ---------------- cinematic robot visual ---------------- */
 
-const MODULES = ["Research", "Macro", "Token Radar", "Market Intelligence"];
-
-/** Pulse that travels along an SVG path every few seconds. */
-function PathPulse({ path, delay = 0 }: { path: string; delay?: number }) {
+/**
+ * Full-bleed robot render with minimal editorial callouts — no boxes, no
+ * diagram chrome. The render's own black background feathers into the page.
+ */
+function CinematicRobot() {
   const reduced = useReducedMotion();
-  if (reduced) return null;
-  return (
-    <motion.circle
-      r="2.5"
-      fill="#c8ff00"
-      initial={{ offsetDistance: "0%", opacity: 0 }}
-      animate={{ offsetDistance: ["0%", "100%"], opacity: [0, 1, 1, 0] }}
-      transition={{
-        duration: 1.6,
-        ease: "easeInOut",
-        repeat: Infinity,
-        repeatDelay: 2.4,
-        delay,
-      }}
-      style={{ offsetPath: `path("${path}")` }}
-    />
-  );
-}
-
-function InfrastructureVisual() {
-  // Geometry on a 560x540 canvas.
-  // Central robot portrait: rect(196,120 → 364,330) · nodes top corners · modules row y=470
-  const linkRobinhood = "M 236 132 L 95 92";
-  const linkBowyer = "M 324 132 L 465 92";
-  const moduleLinks = [
-    "M 236 310 C 190 390, 70 410, 70 470",
-    "M 262 330 C 248 400, 210 425, 210 470",
-    "M 298 330 C 312 400, 350 425, 350 470",
-    "M 324 310 C 370 390, 490 410, 490 470",
-  ];
 
   return (
-    <div className="relative mx-auto w-full max-w-[560px]">
-      {/* very subtle ambient light */}
-      <div className="pointer-events-none absolute left-1/2 top-[40%] h-[340px] w-[440px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent/[0.05] blur-[100px]" />
-
-      <svg
-        viewBox="0 0 560 540"
-        className="relative w-full"
-        role="img"
-        aria-label="Diagram: your agent connects to Robinhood for execution and BOWYER for intelligence"
-      >
-        {/* connection lines */}
-        {[linkRobinhood, linkBowyer, ...moduleLinks].map((d) => (
-          <path key={d} d={d} fill="none" stroke="#232623" strokeWidth="1" />
-        ))}
-
-        {/* pulses */}
-        <PathPulse path={linkRobinhood} delay={0.5} />
-        <PathPulse path={linkBowyer} delay={1.8} />
-        <PathPulse path={moduleLinks[1]} delay={3.1} />
-        <PathPulse path={moduleLinks[2]} delay={4.2} />
-
-        {/* Robinhood node */}
-        <g>
-          <rect x="20" y="52" width="150" height="60" rx="10" fill="#0c0d0c" stroke="#262926" />
-          <text x="95" y="79" textAnchor="middle" fill="#f2f2f0" fontSize="13" fontWeight="600" letterSpacing="0.06em">
-            ROBINHOOD
-          </text>
-          <text x="95" y="97" textAnchor="middle" fill="#6b6f6a" fontSize="9.5" letterSpacing="0.18em">
-            EXECUTION
-          </text>
-        </g>
-
-        {/* BOWYER node */}
-        <g>
-          <rect x="390" y="52" width="150" height="60" rx="10" fill="#0c0d0c" stroke="#3d4a1e" />
-          <text x="465" y="79" textAnchor="middle" fill="#c8ff00" fontSize="13" fontWeight="600" letterSpacing="0.06em">
-            BOWYER
-          </text>
-          <text x="465" y="97" textAnchor="middle" fill="#6b6f6a" fontSize="9.5" letterSpacing="0.18em">
-            INTELLIGENCE
-          </text>
-        </g>
-
-        {/* module nodes */}
-        {MODULES.map((label, i) => {
-          const cx = [70, 210, 350, 490][i];
-          const w = Math.max(label.length * 7.2 + 28, 76);
-          return (
-            <g key={label}>
-              <rect x={cx - w / 2} y={470} width={w} height={38} rx="8" fill="#0c0d0c" stroke="#232623" />
-              <circle cx={cx - w / 2 + 14} cy={489} r="2.5" fill="#c8ff00" />
-              <text x={cx + 6} y={493} textAnchor="middle" fill="#a3a7a1" fontSize="10.5" letterSpacing="0.04em">
-                {label}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
-
-      {/* central robot portrait — positioned in SVG coordinate space via percentages */}
+    <div className="relative mx-auto aspect-[3/4] w-full max-w-[440px] lg:max-w-[500px]">
+      {/* the render, edges dissolved into the page background */}
       <div
-        className="absolute overflow-hidden rounded-2xl border border-[#242724] bg-[#0a0b0a] shadow-[0_0_70px_-18px_rgba(200,255,0,0.28)]"
-        style={{ left: "35%", top: "22.2%", width: "30%", height: "38.9%" }}
+        className="absolute inset-0"
+        style={{
+          maskImage:
+            "radial-gradient(ellipse 72% 68% at 50% 46%, black 58%, transparent 92%)",
+          WebkitMaskImage:
+            "radial-gradient(ellipse 72% 68% at 50% 46%, black 58%, transparent 92%)",
+        }}
       >
         <Image
           src="/images/robinhood/robot-hero.png"
-          alt="BOWYER robot"
+          alt="BOWYER agent"
           fill
-          sizes="(max-width: 1024px) 40vw, 220px"
-          className="object-cover"
           priority
+          sizes="(max-width: 1024px) 90vw, 500px"
+          className="object-cover"
         />
-        <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/80 to-transparent" />
-        <p className="absolute inset-x-0 bottom-2.5 text-center text-[9.5px] font-medium uppercase tracking-[0.22em] text-white/70">
-          Your agent
-        </p>
       </div>
+
+      {/* editorial callouts */}
+      <Callout side="left" top="24%" label="Robinhood" sub="Execution" delay={0.9} />
+      <Callout side="right" top="52%" label="BOWYER" sub="Intelligence" accent delay={1.15} />
+
+      {/* baseline caption */}
+      <motion.div
+        initial={reduced ? undefined : { opacity: 0 }}
+        animate={reduced ? undefined : { opacity: 1 }}
+        transition={{ duration: 0.8, ease: EASE, delay: 1.4 }}
+        className="absolute inset-x-0 bottom-[4%] flex flex-col items-center gap-2"
+      >
+        <span className="h-6 w-px bg-gradient-to-b from-transparent to-white/25" />
+        <p className="text-[10.5px] font-medium uppercase tracking-[0.3em] text-white/40">
+          One agent · Two MCP servers
+        </p>
+      </motion.div>
     </div>
+  );
+}
+
+/** Hairline photo-caption callout, like a high-end editorial spread. */
+function Callout({
+  side,
+  top,
+  label,
+  sub,
+  accent,
+  delay,
+}: {
+  side: "left" | "right";
+  top: string;
+  label: string;
+  sub: string;
+  accent?: boolean;
+  delay: number;
+}) {
+  const reduced = useReducedMotion();
+  const isLeft = side === "left";
+  return (
+    <motion.div
+      initial={reduced ? undefined : { opacity: 0, x: isLeft ? -10 : 10 }}
+      animate={reduced ? undefined : { opacity: 1, x: 0 }}
+      transition={{ duration: 0.7, ease: EASE, delay }}
+      className={`absolute flex items-center gap-4 ${isLeft ? "left-0" : "right-0 flex-row-reverse"}`}
+      style={{ top }}
+    >
+      <div className={isLeft ? "text-left" : "text-right"}>
+        <p
+          className={`text-[13px] font-semibold uppercase tracking-[0.14em] ${
+            accent ? "text-accent" : "text-foreground"
+          }`}
+        >
+          {label}
+        </p>
+        <p className="mt-0.5 text-[10px] uppercase tracking-[0.24em] text-white/35">{sub}</p>
+      </div>
+      {/* hairline pointing into the image */}
+      <div className={`flex items-center ${isLeft ? "" : "flex-row-reverse"}`}>
+        <motion.span
+          initial={reduced ? undefined : { scaleX: 0 }}
+          animate={reduced ? undefined : { scaleX: 1 }}
+          transition={{ duration: 0.6, ease: EASE, delay: delay + 0.25 }}
+          className={`h-px w-14 lg:w-20 ${isLeft ? "origin-left" : "origin-right"} ${
+            accent
+              ? "bg-gradient-to-r from-accent/60 to-accent/10"
+              : "bg-gradient-to-r from-white/30 to-white/5"
+          } ${isLeft ? "" : "rotate-180"}`}
+        />
+        <span
+          className={`size-[5px] rounded-full ${accent ? "bg-accent" : "bg-white/50"}`}
+        />
+      </div>
+    </motion.div>
   );
 }
 
