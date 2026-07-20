@@ -23,6 +23,14 @@ export function HomeHero({ stats }: { stats: PlatformStats }) {
       <div className="relative z-10 w-full max-w-[1400px] mx-auto px-6 lg:px-10 pb-16 lg:pb-20 pt-32">
         <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-12">
           <div className="max-w-xl">
+            <Link
+              href="/robinhood"
+              className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#D7FF00]/40 bg-black/50 px-4 py-1.5 text-[11px] font-medium tracking-[0.14em] uppercase text-[#D7FF00] backdrop-blur transition-colors hover:bg-[#D7FF00]/10"
+            >
+              <span className="size-1.5 rounded-full bg-[#D7FF00] animate-pulse" />
+              Robinhood is open to AI agents — pair yours with BOWYER
+              <ArrowUpRight className="size-3.5" strokeWidth={2} />
+            </Link>
             <h1>
               <Image
                 src="/images/bowyer-wordmark.png"
