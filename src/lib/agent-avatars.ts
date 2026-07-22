@@ -12,6 +12,9 @@ export const AGENT_AVATAR_GLB: Record<string, string> = {
   "gpt-researcher": "/models/agents/gpt-researcher.glb",
   autogpt: "/models/agents/autogpt.glb",
   openhands: "/models/agents/openhands.glb",
+  "atlas-macro": "/models/agents/atlas-macro.glb",
+  "nyx-forensics": "/models/agents/nyx-forensics.glb",
+  "vega-narrative": "/models/agents/vega-narrative.glb",
 };
 
 export const RIGGED_AGENTS = new Set(Object.keys(AGENT_AVATAR_GLB));

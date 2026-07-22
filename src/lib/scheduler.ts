@@ -3,7 +3,9 @@ import { generateReport, llmAvailable } from "@/lib/agent-runtime";
 import { resolveAgentIdentity } from "@/lib/agent-identity";
 import { isAgentListed } from "@/lib/data/agent-registry";
 import { listAgents } from "@/lib/data/agents";
-import { processTelegramDeliveryQueue } from "@/lib/telegram";
+
+// Telegram pulls node:crypto — keep it out of the static import graph so
+// Next/webpack instrumentation doesn't try to bundle the node: scheme.
 
 /**
  * Autonomous publishing — businesses generate reports on a schedule without
@@ -14,6 +16,10 @@ import { processTelegramDeliveryQueue } from "@/lib/telegram";
 const CATALOG_INTERVALS: Record<string, number> = {
   "whale-hunter": 6,
   "hood-meme-radar": 2,
+  "desk-arb-radar": 4,
+  "atlas-macro": 6,
+  "nyx-forensics": 6,
+  "vega-narrative": 4,
   "robinhood-trading-agent": 4,
   "gpt-researcher": 12,
   autogpt: 24,
@@ -139,7 +145,18 @@ export async function runScheduledPublish(slug?: string): Promise<{
     }
   }
 
-  await processTelegramDeliveryQueue().catch(() => {});
+  // eval(require) so webpack/instrumentation never traces telegram → crypto.
+  try {
+    const req = eval("require") as NodeRequire;
+    const { processTelegramDeliveryQueue, notifyDeskDislocations } = req("./telegram") as {
+      processTelegramDeliveryQueue: () => Promise<unknown>;
+      notifyDeskDislocations: () => Promise<number>;
+    };
+    await notifyDeskDislocations().catch(() => {});
+    await processTelegramDeliveryQueue().catch(() => {});
+  } catch {
+    /* telegram queue optional when module unavailable */
+  }
   return { ran, skipped, errors };
 }
 

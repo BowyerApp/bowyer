@@ -7,6 +7,7 @@ import { ArrowUpRight, BadgeCheck } from "lucide-react";
 import { Container } from "@/components/layout/container";
 import { LiveTerminal } from "@/components/agent/live-terminal";
 import { SubscribeButton } from "@/components/agent/subscribe-button";
+import { PayPerCallButton } from "@/components/agent/pay-per-call-button";
 import { AccessSetup } from "@/components/agent/access-setup";
 import { RobinhoodTradingPanel } from "@/components/trading/robinhood-trading-panel";
 import { AgentPlayground } from "@/components/agent/agent-playground";
@@ -205,6 +206,7 @@ export function AgentLiveExperience({
 
             <div className="mt-10 flex flex-wrap items-center gap-5">
               <SubscribeButton slug={agent.slug} pricing={subscribePricing} promo={promo} />
+              {!isFreeAgent && <PayPerCallButton slug={agent.slug} />}
               <a
                 href="#play"
                 className="text-[13px] text-muted transition-colors hover:text-foreground"
@@ -417,9 +419,16 @@ export function AgentLiveExperience({
               </p>
             </>
           )}
-          <div className="mt-8 flex justify-center">
+          <div className="mt-8 flex flex-wrap items-start justify-center gap-4">
             <SubscribeButton slug={agent.slug} pricing={subscribePricing} promo={promo} size="lg" />
+            {!isFreeAgent && <PayPerCallButton slug={agent.slug} className="justify-center" />}
           </div>
+          {!isFreeAgent && (
+            <p className="mt-4 text-[12px] text-subtle">
+              Or skip the subscription — pay per call in USDG via{" "}
+              <span className="text-muted">x402</span> on Robinhood Chain.
+            </p>
+          )}
           <p className="mt-6 text-[12px] text-subtle">
             Informational outputs only — not investment advice.{" "}
             <Link href="/docs/setup" className="underline underline-offset-2 hover:text-muted">

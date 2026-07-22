@@ -4,6 +4,14 @@ import { GITHUB_REPOS, getAgentSummary } from "@/lib/data/agents";
 import { getRegisteredDescription, hasSubscription } from "@/lib/data/agent-registry";
 import { rateLimit } from "@/lib/rate-limit";
 import { requireWalletSession } from "@/lib/wallet-auth";
+import {
+  buildX402Requirement,
+  consumeX402Credit,
+  hasUnconsumedX402Credit,
+  isX402Tool,
+  recordX402Payment,
+  x402PriceUsdg,
+} from "@/lib/x402";
 
 export const runtime = "nodejs";
 
@@ -37,6 +45,10 @@ export async function GET(
     transport: "streamable-http",
     protocol: "mcp",
     tools: server.tools.map((t) => t.name),
+    x402Tools: server.tools.filter((t) => isX402Tool(t.name)).map((t) => ({
+      name: t.name,
+      amountUsdg: x402PriceUsdg(slug, t.name),
+    })),
     docs: "https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/server.md",
   });
 }
@@ -54,7 +66,12 @@ export async function POST(
   }
   const { slug } = await params;
 
-  let body: { jsonrpc?: string; method?: string; id?: string | number; params?: Record<string, unknown> };
+  let body: {
+    jsonrpc?: string;
+    method?: string;
+    id?: string | number;
+    params?: Record<string, unknown>;
+  };
   try {
     body = await req.json();
   } catch {
@@ -71,32 +88,111 @@ export async function POST(
     );
   }
 
-  // Discovery (initialize, ping, tools/list, resources/list) and get_status stay
-  // public. Paid tool calls and resource reads require the signed wallet session
-  // tied to an active subscription; headers alone are not an identity proof.
-  const isStatusCall =
-    body.method === "tools/call" && String(body.params?.name ?? "") === "get_status";
+  const toolName =
+    body.method === "tools/call" ? String(body.params?.name ?? "") : "";
+  const isStatusCall = body.method === "tools/call" && toolName === "get_status";
   const needsAccessCheck =
     (body.method === "tools/call" && !isStatusCall) || body.method === "resources/read";
+
   if (needsAccessCheck) {
     const agent = getAgentSummary(slug);
     const isPaid = agent && agent.pricing.model !== "free" && agent.pricing.amount > 0;
-    if (isPaid) {
-      const wallet = requireWalletSession(req);
-      if (!wallet || !hasSubscription(slug, wallet)) {
+    const wallet = requireWalletSession(req);
+    const subscribed = wallet ? hasSubscription(slug, wallet) : false;
+
+    // Paid monthly subscription path (existing).
+    if (isPaid && subscribed) {
+      /* allowed */
+    } else if (wallet && isX402Tool(toolName)) {
+      // x402 pay-per-call: accept prior credit or inline payment tx.
+      const paymentTx =
+        req.headers.get("x-payment-tx")?.trim() ||
+        req.headers.get("x-bowyer-payment-tx")?.trim();
+
+      if (paymentTx) {
+        const recorded = await recordX402Payment({
+          slug,
+          tool: toolName,
+          payer: wallet,
+          txHash: paymentTx,
+          amountUsdg: x402PriceUsdg(slug, toolName),
+        });
+        if (!recorded.ok) {
+          const requirement = buildX402Requirement(slug, toolName);
+          return NextResponse.json(
+            {
+              jsonrpc: "2.0",
+              error: {
+                code: -32003,
+                message: recorded.reason ?? "x402 payment rejected",
+                data: { x402: requirement },
+              },
+              id: body.id ?? null,
+            },
+            {
+              status: 402,
+              headers: requirement
+                ? {
+                    "X-Payment-Required": "true",
+                    "PAYMENT-REQUIRED": JSON.stringify(requirement),
+                  }
+                : undefined,
+            }
+          );
+        }
+      }
+
+      if (hasUnconsumedX402Credit(slug, wallet, toolName)) {
+        consumeX402Credit(slug, wallet, toolName);
+      } else if (isPaid) {
+        const requirement = buildX402Requirement(slug, toolName);
         return NextResponse.json(
           {
             jsonrpc: "2.0",
             error: {
               code: -32003,
               message:
-                "Subscription and signed BOWYER wallet session required. Open the agent on bowyer.app to connect your wallet.",
+                "Subscription or x402 USDG payment required. Subscribe on bowyer.app or POST /api/x402 with a USDG transfer tx hash.",
+              data: { x402: requirement },
             },
             id: body.id ?? null,
           },
-          { status: 402 }
+          {
+            status: 402,
+            headers: requirement
+              ? {
+                  "X-Payment-Required": "true",
+                  "PAYMENT-REQUIRED": JSON.stringify(requirement),
+                }
+              : undefined,
+          }
         );
       }
+      // Free agents: still allow without payment (legacy open tools), but x402
+      // credits work when presented for ACP-style callers.
+    } else if (isPaid) {
+      const requirement = buildX402Requirement(slug, toolName);
+      return NextResponse.json(
+        {
+          jsonrpc: "2.0",
+          error: {
+            code: -32003,
+            message:
+              "Subscription and signed BOWYER wallet session required — or pay per call in USDG (x402).",
+            data: { x402: requirement },
+          },
+          id: body.id ?? null,
+        },
+        {
+          status: 402,
+          headers: requirement
+            ? {
+                "X-Payment-Required": "true",
+                "PAYMENT-REQUIRED": JSON.stringify(requirement),
+              }
+            : undefined,
+        }
+      );
     }
   }
 

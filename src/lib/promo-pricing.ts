@@ -20,6 +20,33 @@ export const PROMO_OFFERS: PromoOffer[] = [
       "We want real traders using the Robinhood Trading Agent and sharing positive results. " +
       "First 25 get full access free while we collect proof the product works.",
   },
+  {
+    slug: "atlas-macro",
+    listPriceUsd: 59,
+    limit: 10,
+    headline: "Founding cohort — free for the first 10 subscribers",
+    detail:
+      "Atlas runs on a frontier reasoning model with multi-source deep research on every report. " +
+      "The first 10 subscribers get full access free — we want holders talking to it and proving the coverage.",
+  },
+  {
+    slug: "nyx-forensics",
+    listPriceUsd: 49,
+    limit: 10,
+    headline: "Founding cohort — free for the first 10 subscribers",
+    detail:
+      "Nyx does evidence-anchored forensic analysis of Robinhood Chain on a frontier reasoning model. " +
+      "First 10 subscribers get full access free while we build the public track record.",
+  },
+  {
+    slug: "vega-narrative",
+    listPriceUsd: 39,
+    limit: 10,
+    headline: "Founding cohort — free for the first 10 subscribers",
+    detail:
+      "Vega tracks narrative velocity on a frontier real-time model. " +
+      "First 10 subscribers get full access free — early callouts are the proof.",
+  },
 ];
 
 export interface PromoStatus {

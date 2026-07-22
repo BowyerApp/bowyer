@@ -13,7 +13,7 @@ import {
  * Payments are native-token transfers to the creator's payout address.
  */
 
-import { ACTIVE_CHAIN, usdToWeiHex } from "@/lib/chain";
+import { ACTIVE_CHAIN, USDG_ADDRESS, USDG_DECIMALS, usdToWeiHex } from "@/lib/chain";
 
 export { usdToEthLabel, usdToWeiHex } from "@/lib/chain";
 
@@ -50,6 +50,8 @@ interface WalletContextValue {
   authenticate: () => Promise<boolean>;
   /** Sends a native-token payment; resolves to the transaction hash. */
   sendPayment: (to: string, usd: number) => Promise<string>;
+  /** Sends a USDG (ERC-20) transfer for x402 pay-per-call; resolves to the tx hash. */
+  sendUsdg: (to: string, amountUsdg: number) => Promise<string>;
 }
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -160,6 +162,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     return response.ok;
   }, [address, connect]);
 
+  const ensureRobinhoodChain = useCallback(async (provider: EthereumProvider) => {
+    const currentChain = (await provider.request({ method: "eth_chainId" })) as string;
+    if (currentChain === ROBINHOOD_CHAIN.chainId) return;
+    try {
+      await provider.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: ROBINHOOD_CHAIN.chainId }],
+      });
+    } catch {
+      await provider.request({
+        method: "wallet_addEthereumChain",
+        params: [ROBINHOOD_CHAIN],
+      });
+      await provider.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: ROBINHOOD_CHAIN.chainId }],
+      });
+    }
+  }, []);
+
   const sendPayment = useCallback(
     async (to: string, usd: number): Promise<string> => {
       const provider = getProvider();
@@ -167,24 +189,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       if (!address) throw new Error("Wallet not connected");
 
       // Payments must go over Robinhood Chain — switch (or add) before sending.
-      const currentChain = (await provider.request({ method: "eth_chainId" })) as string;
-      if (currentChain !== ROBINHOOD_CHAIN.chainId) {
-        try {
-          await provider.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: ROBINHOOD_CHAIN.chainId }],
-          });
-        } catch {
-          await provider.request({
-            method: "wallet_addEthereumChain",
-            params: [ROBINHOOD_CHAIN],
-          });
-          await provider.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: ROBINHOOD_CHAIN.chainId }],
-          });
-        }
-      }
+      await ensureRobinhoodChain(provider);
 
       const txHash = (await provider.request({
         method: "eth_sendTransaction",
@@ -192,12 +197,37 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       })) as string;
       return txHash;
     },
-    [address]
+    [address, ensureRobinhoodChain]
+  );
+
+  const sendUsdg = useCallback(
+    async (to: string, amountUsdg: number): Promise<string> => {
+      const provider = getProvider();
+      if (!provider) throw new Error("No wallet found");
+      if (!address) throw new Error("Wallet not connected");
+      if (!/^0x[0-9a-fA-F]{40}$/.test(to)) throw new Error("Invalid payout address");
+
+      await ensureRobinhoodChain(provider);
+
+      // ERC-20 transfer(address,uint256)
+      const atomic = BigInt(Math.round(amountUsdg * 10 ** USDG_DECIMALS));
+      const data =
+        "0xa9059cbb" +
+        to.toLowerCase().replace(/^0x/, "").padStart(64, "0") +
+        atomic.toString(16).padStart(64, "0");
+
+      const txHash = (await provider.request({
+        method: "eth_sendTransaction",
+        params: [{ from: address, to: USDG_ADDRESS, data, value: "0x0" }],
+      })) as string;
+      return txHash;
+    },
+    [address, ensureRobinhoodChain]
   );
 
   return (
     <WalletContext.Provider
-      value={{ address, connecting, hasProvider, connect, disconnect, authenticate, sendPayment }}
+      value={{ address, connecting, hasProvider, connect, disconnect, authenticate, sendPayment, sendUsdg }}
     >
       {children}
     </WalletContext.Provider>

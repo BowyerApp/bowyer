@@ -9,6 +9,7 @@ import { ConnectGate } from "@/components/layout/wallet-button";
 import { MorningBriefing } from "@/components/portfolio/morning-briefing";
 import { ConnectionsPanel } from "@/components/connect/connections-panel";
 import { shortAddress, useWallet } from "@/lib/wallet-context";
+import { ACTIVE_CHAIN } from "@/lib/chain";
 import type { AgentSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -475,7 +476,15 @@ function MySubscriptions({ address, sessionReady }: { address: string; sessionRe
               since {new Date(s.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
             </span>
             {s.txHash ? (
-              <span className="font-mono text-[11px] text-subtle">{s.txHash.slice(0, 10)}…</span>
+              <a
+                href={`${ACTIVE_CHAIN.blockExplorerUrls[0]}/tx/${s.txHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-[11px] text-subtle transition-colors hover:text-accent"
+                title="View transaction on the explorer"
+              >
+                {s.txHash.slice(0, 10)}…
+              </a>
             ) : (
               <span />
             )}
@@ -537,27 +546,52 @@ function CancelSubscription({
 
 /* ================= earnings ================= */
 
+interface CreatorDash {
+  totalSubscriptionUsd: number;
+  totalX402Usdg: number;
+  totalSubscribers: number;
+  businesses: {
+    slug: string;
+    name: string;
+    subscribers: number;
+    payingSubscribers: number;
+    subscriptionRevenueUsd: number;
+    x402RevenueUsdg: number;
+    reports: number;
+    paidOnChain: boolean;
+    registryPage: string | null;
+    mcpUrl: string | null;
+  }[];
+  recentPayments: {
+    kind: "subscription" | "x402";
+    slug: string;
+    from: string;
+    amount: number;
+    currency: "USD" | "USDG";
+    txHash?: string;
+    at: string;
+    tool?: string;
+  }[];
+}
+
 function Earnings({ address, sessionReady }: { address: string; sessionReady: boolean }) {
-  const [earnings, setEarnings] = useState<SubscriptionRow[] | null>(null);
+  const [dash, setDash] = useState<CreatorDash | null>(null);
 
   useEffect(() => {
     if (!sessionReady) return;
-    fetch(`/api/subscriptions?creator=${address}`)
+    fetch("/api/creator/dashboard")
       .then((r) => r.json())
-      .then((d) => setEarnings(d.subscriptions ?? []))
-      .catch(() => setEarnings([]));
+      .then((d) => setDash(d.dashboard ?? null))
+      .catch(() => setDash(null));
   }, [address, sessionReady]);
 
-  if (!sessionReady || earnings === null) return <PanelLoading />;
+  if (!sessionReady || dash === null) return <PanelLoading />;
 
-  const total = earnings.reduce((sum, e) => sum + e.amountUsd, 0);
-  const paying = earnings.filter((e) => e.amountUsd > 0);
-
-  if (earnings.length === 0) {
+  if (dash.businesses.length === 0 && dash.recentPayments.length === 0) {
     return (
       <EmptyState
         title="No earnings yet."
-        sub="When people subscribe to your businesses, payments land in your wallet and show up here."
+        sub="When people subscribe or pay per call in USDG, payments land in your wallet and show up here with on-chain proof."
         cta="Launch a paid business"
         href="/launch"
       />
@@ -566,55 +600,125 @@ function Earnings({ address, sessionReady }: { address: string; sessionReady: bo
 
   return (
     <Container className="step-enter pt-10 pb-24">
-      <h2 className="section-heading">Earnings</h2>
-      <p className="mt-1.5 text-[13px] text-muted">
-        Paid straight to <span className="font-mono">{shortAddress(address)}</span> — BOWYER
-        never holds your money.
-      </p>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h2 className="section-heading">Earnings & trust</h2>
+          <p className="mt-1.5 text-[13px] text-muted">
+            Paid straight to <span className="font-mono">{shortAddress(address)}</span> — BOWYER
+            never holds your money.
+          </p>
+        </div>
+        <a
+          href="/api/creator/dashboard?format=csv"
+          className="text-[13px] text-muted transition-colors hover:text-foreground"
+        >
+          Export CSV
+        </a>
+      </div>
 
       <div className="mt-8 flex flex-wrap gap-x-12 gap-y-5 border-y border-border py-6">
         <div>
           <p className="text-[24px] font-semibold tabular-nums tracking-[-0.02em] text-accent">
-            ${total.toLocaleString()}
+            ${dash.totalSubscriptionUsd.toLocaleString()}
           </p>
-          <p className="mt-0.5 text-[12px] text-muted">Total earned</p>
+          <p className="mt-0.5 text-[12px] text-muted">Subscription revenue</p>
         </div>
         <div>
           <p className="text-[24px] font-semibold tabular-nums tracking-[-0.02em] text-foreground">
-            {earnings.length}
+            {dash.totalX402Usdg.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDG
+          </p>
+          <p className="mt-0.5 text-[12px] text-muted">Pay-per-call (x402)</p>
+        </div>
+        <div>
+          <p className="text-[24px] font-semibold tabular-nums tracking-[-0.02em] text-foreground">
+            {dash.totalSubscribers}
           </p>
           <p className="mt-0.5 text-[12px] text-muted">Subscribers</p>
         </div>
-        <div>
-          <p className="text-[24px] font-semibold tabular-nums tracking-[-0.02em] text-foreground">
-            {paying.length}
-          </p>
-          <p className="mt-0.5 text-[12px] text-muted">Paying</p>
-        </div>
       </div>
 
-      <div className="mt-8 max-w-3xl">
-        {earnings.map((e, i) => (
+      <h3 className="mt-10 text-[15px] font-medium text-foreground">Your businesses</h3>
+      <div className="mt-4 max-w-3xl divide-y divide-border border-y border-border">
+        {dash.businesses.map((b) => (
+          <div key={b.slug} className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <Link
+                  href={`/agents/${b.slug}`}
+                  className="text-[14px] font-medium text-foreground hover:text-accent"
+                >
+                  {b.name}
+                </Link>
+                {b.paidOnChain && (
+                  <span className="rounded-sm border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent">
+                    Paid on-chain
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-[12px] text-muted">
+                {b.subscribers} subs · {b.reports} reports · $
+                {b.subscriptionRevenueUsd.toLocaleString()} + {b.x402RevenueUsdg.toFixed(2)} USDG
+              </p>
+            </div>
+            <div className="flex gap-3 text-[12px]">
+              {b.registryPage && (
+                <a href={`/api/registry/${b.slug}`} className="text-muted hover:text-foreground">
+                  Registry
+                </a>
+              )}
+              {b.mcpUrl && (
+                <a href={b.mcpUrl} className="text-muted hover:text-foreground">
+                  MCP
+                </a>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <h3 className="mt-10 text-[15px] font-medium text-foreground">Recent payments</h3>
+      <div className="mt-4 max-w-3xl">
+        {dash.recentPayments.map((e, i) => (
           <div
             key={`${e.slug}-${e.at}-${i}`}
-            className="grid items-center gap-x-6 border-b border-border py-4 sm:grid-cols-[1fr_auto_auto_auto]"
+            className="grid items-center gap-x-6 border-b border-border py-4 sm:grid-cols-[1fr_auto_auto_auto_auto_auto]"
           >
             <span className="text-[14px] font-medium capitalize text-foreground">
               {e.slug.replace(/-/g, " ")}
+              {e.tool ? (
+                <span className="ml-2 text-[11px] font-normal text-subtle">{e.tool}</span>
+              ) : null}
             </span>
-            <span className="font-mono text-[12px] text-subtle">
-              {shortAddress(e.subscriber)}
-            </span>
+            <span className="text-[11px] uppercase tracking-wide text-subtle">{e.kind}</span>
+            <span className="font-mono text-[12px] text-subtle">{shortAddress(e.from)}</span>
             <span className="text-[12px] tabular-nums text-subtle">
               {new Date(e.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
             </span>
+            {e.txHash ? (
+              <a
+                href={`${ACTIVE_CHAIN.blockExplorerUrls[0]}/tx/${e.txHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-[12px] text-muted transition-colors hover:text-accent"
+                title={e.txHash}
+              >
+                Receipt
+                <ArrowUpRight className="size-3" strokeWidth={1.75} />
+              </a>
+            ) : (
+              <span className="text-[12px] text-subtle/60">—</span>
+            )}
             <span
               className={cn(
                 "text-right text-[14px] font-medium tabular-nums",
-                e.amountUsd > 0 ? "text-accent" : "text-muted"
+                e.amount > 0 ? "text-accent" : "text-muted"
               )}
             >
-              {e.amountUsd > 0 ? `+$${e.amountUsd}` : "Free"}
+              {e.amount > 0
+                ? e.currency === "USDG"
+                  ? `+${e.amount} USDG`
+                  : `+$${e.amount}`
+                : "Free"}
             </span>
           </div>
         ))}

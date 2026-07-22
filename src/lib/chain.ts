@@ -56,6 +56,15 @@ export function rpcUrl(): string {
   return url;
 }
 
+/** Canonical USDG on Robinhood Chain mainnet (Paxos). */
+export const USDG_ADDRESS = (
+  process.env.NEXT_PUBLIC_USDG_ADDRESS?.trim() ||
+  process.env.USDG_ADDRESS?.trim() ||
+  "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"
+).toLowerCase();
+
+export const USDG_DECIMALS = 6;
+
 /** Conversion rate for pricing USD amounts in native ETH. */
 export const USD_PER_ETH = 3200;
 

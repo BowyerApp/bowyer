@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bell, Search } from "lucide-react";
@@ -12,6 +13,8 @@ import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/marketplace", label: "Explore" },
+  { href: "/desk", label: "Desk" },
+  { href: "/registry", label: "Registry" },
   { href: "/arena", label: "Arena" },
   { href: "/launch", label: "Launch" },
   { href: "/portfolio", label: "Portfolio", requiresWallet: true },
@@ -22,9 +25,24 @@ export function SiteHeader() {
   const pathname = usePathname();
   const { address } = useWallet();
   const nav = NAV.filter((item) => !item.requiresWallet || address);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 24);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur-sm">
+    <header
+      className={cn(
+        "sticky top-0 z-50 transition-[background-color,border-color] duration-200",
+        scrolled
+          ? "border-b border-border bg-background/95 backdrop-blur-sm"
+          : "border-b border-transparent bg-transparent"
+      )}
+    >
       <div className="max-w-site mx-auto px-6 lg:px-8 grid h-14 grid-cols-[1fr_auto_1fr] items-center gap-4">
         <SiteLogo />
 

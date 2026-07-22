@@ -181,6 +181,77 @@ const configs: Record<string, AgentPlayConfig> = {
       { kind: "fx", id: "gear-spin", label: "Loop spin" },
     ],
   },
+  "atlas-macro": {
+    oracleLabel: "Macro oracle",
+    studioPrompt:
+      "Distinguished macro analyst robot mascot, charcoal suit-plated body with brass accents, globe hologram above open palm, calm amber eyes, full body standing pose, institutional aesthetic",
+    hotTakes: [
+      "The Fed doesn't care about your entry.",
+      "Consensus is a position too — usually a crowded one.",
+      "Scenarios and probabilities. Everything else is narrative.",
+      "'Nothing actionable today' is a complete analysis.",
+      "Positioning tells you more than the print.",
+    ],
+    funPrompts: [
+      { label: "This week's setup", prompt: "What's the single most important macro event this week for Stock Token holders, and what are your scenarios?" },
+      { label: "Steelman the bears", prompt: "Steelman the bear case on equities right now — then tell me where it breaks." },
+      { label: "Fed translator", prompt: "Translate the latest Fed communication into plain English for someone who holds tokenized NVDA." },
+      { label: "Positioning check", prompt: "Where do you think positioning is most crowded right now and why?" },
+    ],
+    shareTweet:
+      "A sell-side macro desk that never sleeps. {name} covers the Fed, earnings, and positioning for Stock Token holders — on @Bowyer_App.\n\nbowyer.app/agents/{slug}",
+    moods: DEFAULT_MOODS,
+    avatarActions: [...RIGGED_ANIMS, { kind: "fx", id: "research-flash", label: "Scenario flash" }],
+  },
+  "nyx-forensics": {
+    oracleLabel: "Forensics oracle",
+    studioPrompt:
+      "Stealth forensic investigator robot mascot, matte obsidian body with violet trace-line circuitry, magnifying lens over one eye, holographic transaction graph on forearm, full body standing pose, noir aesthetic",
+    hotTakes: [
+      "The chain never lies. Deployers do.",
+      "'Consistent with' is not an accusation. It's a trail.",
+      "Fresh wallet, funded by a mixer, deploying a token? Noted.",
+      "Exit liquidity is a question you ask before entry.",
+      "Patterns aren't proof. But they're where proof starts.",
+    ],
+    funPrompts: [
+      { label: "Trace this", prompt: "Walk me through how you'd trace a suspicious token deployment on Robinhood Chain, step by step." },
+      { label: "Rug anatomy", prompt: "Break down the anatomy of a typical rug pull — what the chain shows at each stage." },
+      { label: "Red flag ranking", prompt: "Rank your top 5 on-chain red flags from 'mildly sus' to 'run'." },
+      { label: "Case file", prompt: "Write a short fictional-but-realistic forensic case file for a funding cluster you'd flag." },
+    ],
+    shareTweet:
+      "Incident-response discipline applied to Robinhood Chain. {name} traces deployers, funding clusters, and exit risk — on @Bowyer_App.\n\nbowyer.app/agents/{slug}",
+    moods: [
+      { label: "Violet", accent: "#a78bfa" },
+      { label: "Lime", accent: "#b8ff2e" },
+      { label: "Cyan", accent: "#22d3ee" },
+      { label: "Ember", accent: "#fb923c" },
+    ],
+    avatarActions: [...RIGGED_ANIMS, { kind: "fx", id: "sonar-ping", label: "Trace ping" }],
+  },
+  "vega-narrative": {
+    oracleLabel: "Narrative oracle",
+    studioPrompt:
+      "Fast-moving media analyst robot mascot, sleek white and neon magenta body, antenna array crown picking up signals, ticker-tape ribbons flowing around torso, full body dynamic pose",
+    hotTakes: [
+      "Attention front-runs price. Every cycle.",
+      "If your group chat knows, it's saturated.",
+      "Engagement bait isn't a narrative. It's a mirror.",
+      "The rotation is the trade, not the story.",
+      "Late to a narrative is worse than wrong about it.",
+    ],
+    funPrompts: [
+      { label: "Narrative board", prompt: "Give me your current narrative board — what's seeding, accelerating, saturated, and rotating." },
+      { label: "Priced or not", prompt: "Pick a hot story in the market right now and tell me: priced in or not? Defend it." },
+      { label: "Spot the bait", prompt: "How do you tell real narrative momentum from engagement farming? Give tells." },
+      { label: "Next rotation", prompt: "If the current dominant narrative exhausts, where does attention rotate next?" },
+    ],
+    shareTweet:
+      "It watches attention move before price does. {name} tracks narrative velocity for Robinhood Chain — on @Bowyer_App.\n\nbowyer.app/agents/{slug}",
+    moods: DEFAULT_MOODS,
+    avatarActions: [...RIGGED_ANIMS, { kind: "fx", id: "radar-sweep", label: "Signal sweep" }],
+  },
   openhands: {
     oracleLabel: "Dev oracle",
     studioPrompt:

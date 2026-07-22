@@ -1,8 +1,14 @@
 import { db } from "@/lib/db";
-import { getAgentLlmConfig, getAgentOwnerAddress } from "@/lib/data/agent-registry";
+import {
+  getAgentLlmConfig,
+  getAgentOwnerAddress,
+  listPremiumBusinessSlugsForOwner,
+} from "@/lib/data/agent-registry";
 import { buildSourceContext } from "@/lib/knowledge-sources";
 import { formatChainContext, scanChain } from "@/lib/chain-scanner";
 import { getMemeRadar } from "@/lib/meme-radar";
+import { getDeskSignals, getPremiumHistory, recordQuoteSnapshots } from "@/lib/desk-signals";
+import { getStockTokenQuotes } from "@/lib/stock-tokens";
 import {
   deepResearch,
   formatDeepResearchContext,
@@ -11,7 +17,6 @@ import {
   webSearchAvailable,
 } from "@/lib/web-search";
 import { platformLlmAllowed, recordPlatformLlm, recordUsage, usageAllowed } from "@/lib/usage";
-import { notifyReportPublished } from "@/lib/telegram";
 import { deliverReportWebhooks } from "@/lib/mcp-webhooks";
 import { createSignalFromReport } from "@/lib/signals";
 import {
@@ -23,7 +28,8 @@ import {
   resolveRuntimeLlm,
   type AgentLlmConfig,
 } from "@/lib/llm-config";
-import { hasPremiumAccess } from "@/lib/token-gate";
+import { getHolderTierStatus } from "@/lib/token-gate";
+import { getAgentPersona } from "@/lib/agent-personas";
 
 /**
  * Real agent runtime. Each agent's MCP tools call an OpenAI-compatible LLM
@@ -34,7 +40,7 @@ import { hasPremiumAccess } from "@/lib/token-gate";
  */
 
 export function llmAvailable(slug?: string): boolean {
-  const config = slug ? getAgentLlmConfig(slug) : null;
+  const config = slug ? (getAgentLlmConfig(slug) ?? CATALOG_PREMIUM_LLM[slug] ?? null) : null;
   return llmConfigured(config);
 }
 
@@ -158,13 +164,34 @@ async function callLlm(
   return { content, model };
 }
 
+/**
+ * Platform-owned flagship businesses pinned to premium frontier models.
+ * These are BOWYER Labs agents (no creator wallet), so the $BOWYER holder
+ * gate does not apply — the platform pays for its own flagships.
+ */
+const CATALOG_PREMIUM_LLM: Record<string, AgentLlmConfig> = {
+  // Note: the gpt-5.2-pro tier deliberates too long for scheduled report loops.
+  "atlas-macro": { mode: "platform", model: "gpt-5.4" },
+  "nyx-forensics": { mode: "platform", model: "claude-opus" },
+  "vega-narrative": { mode: "platform", model: "grok-3" },
+};
+
 async function effectiveLlmConfig(
   slug: string,
   config: AgentLlmConfig | null
 ): Promise<AgentLlmConfig | null> {
   if (config?.mode !== "platform" || !isPremiumPlatformModelId(config.model)) return config;
+  if (CATALOG_PREMIUM_LLM[slug]) return config;
   const owner = getAgentOwnerAddress(slug);
-  if (await hasPremiumAccess(owner)) return config;
+  const tier = await getHolderTierStatus(owner);
+  if (tier.tier !== "none") {
+    if (tier.premiumBusinessLimit === null) return config;
+    // Earliest-launched premium businesses keep their slot when over limit.
+    const rank = listPremiumBusinessSlugsForOwner(owner ?? "", isPremiumPlatformModelId).indexOf(
+      slug
+    );
+    if (rank !== -1 && rank < tier.premiumBusinessLimit) return config;
+  }
   return { mode: "platform", model: "balanced" };
 }
 
@@ -175,11 +202,12 @@ async function chatCompletion(
   description?: string,
   history: ChatTurn[] = []
 ): Promise<{ content: string; model: string }> {
-  const rawConfig = getAgentLlmConfig(slug);
+  const rawConfig = getAgentLlmConfig(slug) ?? CATALOG_PREMIUM_LLM[slug] ?? null;
   const config = await effectiveLlmConfig(slug, rawConfig);
   const primary = resolveRuntimeLlm(config);
-  const usedModel =
-    config?.mode === "platform" ? platformModelIdToModel(config.model) : primary.model;
+  // resolveRuntimeLlm already returns the provider-correct model id (e.g. the
+  // OpenRouter "vendor/model" form for premium) — always request with it.
+  const usedModel = primary.model;
 
   if (!primary.apiKey && !isLocalBaseUrl(primary.baseUrl)) {
     throw new Error(
@@ -232,6 +260,31 @@ async function chatCompletion(
   }
 }
 
+/**
+ * Parse a JSON object from raw LLM output. Some providers (notably Anthropic
+ * via OpenRouter) wrap JSON in markdown code fences or add surrounding prose
+ * even when asked for JSON only.
+ */
+function parseJsonLoose<T>(raw: string): T | null {
+  const attempts = [raw.trim()];
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(raw);
+  if (fenced?.[1]) attempts.unshift(fenced[1].trim());
+  const braceStart = raw.indexOf("{");
+  const braceEnd = raw.lastIndexOf("}");
+  if (braceStart !== -1 && braceEnd > braceStart) {
+    attempts.push(raw.slice(braceStart, braceEnd + 1));
+  }
+  for (const candidate of attempts) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === "object") return parsed as T;
+    } catch {
+      /* try next candidate */
+    }
+  }
+  return null;
+}
+
 /** Agents that run the multi-query deep-research pipeline. */
 function isResearchAgent(agent: AgentIdentity): boolean {
   return (
@@ -281,6 +334,84 @@ async function buildLiveContext(agent: AgentIdentity, query: string): Promise<st
       // A missing RPC must not cause reports to fabricate or fail.
     }
   }
+  if (agent.slug === "nyx-forensics") {
+    try {
+      const [chain, radar] = await Promise.all([scanChain(), getMemeRadar()]);
+      parts.push(formatChainContext(chain));
+      parts.push(
+        [
+          `Recent deployment and funding activity (blocks ${radar.blockRange.from}–${radar.blockRange.to}):`,
+          ...radar.launchCandidates.slice(0, 6).map((item) => {
+            const label = item.token?.symbol
+              ? `${item.token.symbol}${item.token.name ? ` (${item.token.name})` : ""}`
+              : "unidentified contract";
+            return `• ${label} at ${item.contractAddress ?? "address pending"} · deployer ${item.deployer.slice(0, 10)}… · block ${item.blockNumber} · risk score ${item.score}/100`;
+          }),
+          ...radar.clusters.slice(0, 5).map((item) => `• Funding cluster: ${item.funder.slice(0, 10)}… → ${item.recipients} addresses · ${item.totalEth} ETH`),
+          "Anchor every forensic claim to the addresses, blocks, and scores above. Use 'consistent with' language — never assert intent you cannot prove from the data. Dev-sell tracing is not available; say so if asked.",
+        ].join("\n")
+      );
+    } catch {
+      // RPC unavailable — web search below still grounds the report.
+    }
+  }
+  if (agent.slug === "atlas-macro") {
+    try {
+      const quotes = await getStockTokenQuotes();
+      const lines = quotes
+        .filter((q) => q.referencePriceUsd != null)
+        .map(
+          (q) =>
+            `• ${q.symbol} (${q.name}): equity spot $${q.referencePriceUsd!.toFixed(2)}${q.premiumDiscountPct != null ? ` · token trades ${q.premiumDiscountPct >= 0 ? "+" : ""}${q.premiumDiscountPct.toFixed(2)}% vs spot on-chain` : ""}`
+        );
+      if (lines.length > 0) {
+        parts.push(
+          [
+            "Live Stock Token universe on Robinhood Chain (map your macro analysis onto these):",
+            ...lines,
+            "Only reference the prices above — never invent levels.",
+          ].join("\n")
+        );
+      }
+    } catch {
+      // Desk data unavailable — deep research below still grounds the report.
+    }
+  }
+  if (agent.slug === "desk-arb-radar") {
+    try {
+      const quotes = await getStockTokenQuotes();
+      // The radar's own polling keeps premium history building even when
+      // nobody has the desk page open.
+      recordQuoteSnapshots(quotes);
+      const signals = getDeskSignals();
+      const lines = [
+        `Live Stock Token desk data (Robinhood Chain 4663, fetched ${new Date().toISOString()}):`,
+        ...quotes
+          .filter((q) => q.premiumDiscountPct != null)
+          .map(
+            (q) =>
+              `• ${q.symbol} (${q.name}): DEX $${q.dexPriceUsd?.toFixed(2)} vs equity spot $${q.referencePriceUsd?.toFixed(2)} → ${q.premiumDiscountPct! >= 0 ? "+" : ""}${q.premiumDiscountPct!.toFixed(2)}% ${q.premiumDiscountPct! >= 0 ? "premium" : "discount"}${q.liquidityUsd != null ? ` · pool liquidity $${Math.round(q.liquidityUsd).toLocaleString()}` : ""}`
+          ),
+        ...(signals.length > 0
+          ? [
+              "Active dislocation signals (≥0.5% from spot):",
+              ...signals.map((s) => {
+                const hist = getPremiumHistory(s.symbol, 24).filter((p) => p.premiumPct != null);
+                const range =
+                  hist.length >= 2
+                    ? ` · 24h range ${Math.min(...hist.map((p) => p.premiumPct!)).toFixed(2)}% to ${Math.max(...hist.map((p) => p.premiumPct!)).toFixed(2)}%`
+                    : "";
+                return `• ${s.symbol}: ${s.premiumPct >= 0 ? "+" : ""}${s.premiumPct.toFixed(2)}% (${s.severity}, ${s.trend}${s.premiumPct6hAgo != null ? `, was ${s.premiumPct6hAgo >= 0 ? "+" : ""}${s.premiumPct6hAgo.toFixed(2)}% ~6h ago` : ""})${range}`;
+              }),
+            ]
+          : ["No active dislocations — Stock Tokens are tracking spot within 0.5%."]),
+        "Report only the premiums, discounts, and ranges above — never invent price levels, spreads, or liquidity. Note that tokens without a DEX price have no indexed pool yet. This is market observation, not trade advice.",
+      ];
+      parts.push(lines.join("\n"));
+    } catch {
+      // Desk data unavailable — the agent still has web search below.
+    }
+  }
   if (agent.slug === "robinhood-trading-agent") {
     parts.push(
       [
@@ -327,10 +458,12 @@ export async function generateReport(
     buildLiveContext(agent, searchQuery),
   ]);
 
+  const persona = getAgentPersona(agent.slug);
   const system = [
     `You are "${agent.name}", an autonomous AI business on BOWYER (an app store for autonomous businesses running on Robinhood Chain).`,
     `Your specialty: ${agent.tagline}.`,
     agent.description ? `About you: ${agent.description}` : "",
+    persona ? `Your voice and identity:\n${persona.voice}` : "",
     sourceContext,
     liveContext,
     "Write a concise, professional intelligence report for your paying subscribers.",
@@ -351,12 +484,12 @@ export async function generateReport(
     agent.description
   );
 
-  let parsed: { title?: string; body?: string; confidence?: number };
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    parsed = { title: `${agent.name} report`, body: raw, confidence: 0.5 };
-  }
+  const parsed =
+    parseJsonLoose<{ title?: string; body?: string; confidence?: number }>(raw) ?? {
+      title: `${agent.name} report`,
+      body: raw,
+      confidence: 0.5,
+    };
 
   const title = String(parsed.title ?? `${agent.name} report`).slice(0, 200);
   const body = String(parsed.body ?? raw);
@@ -381,7 +514,17 @@ export async function generateReport(
   };
 
   createSignalFromReport(report);
-  notifyReportPublished(agent.slug, title, body).catch(() => {});
+  // Lazy: telegram pulls node:crypto and must stay out of the static import graph
+  // (breaks next dev / instrumentation webpack with UnhandledSchemeError).
+  try {
+    const req = eval("require") as NodeRequire;
+    const { notifyReportPublished } = req("./telegram") as {
+      notifyReportPublished: (slug: string, title: string, body: string) => Promise<unknown>;
+    };
+    notifyReportPublished(agent.slug, title, body).catch(() => {});
+  } catch {
+    /* telegram optional */
+  }
   deliverReportWebhooks(agent.slug, {
     reportId: report.id,
     title,
@@ -402,14 +545,17 @@ export async function askAgent(
     buildLiveContext(agent, question),
   ]);
 
+  const persona = getAgentPersona(agent.slug);
   const system = [
     `You are "${agent.name}", an autonomous AI business. Specialty: ${agent.tagline}.`,
     agent.description ? `About you: ${agent.description}` : "",
+    persona ? `Your voice and identity:\n${persona.voice}` : "",
     sourceContext,
     liveContext,
     history.length
       ? "You are in a Telegram chat. Use the recent conversation for context and stay concise."
       : "",
+    persona ? persona.chatStyle : "",
     "Answer the subscriber's question directly and concisely in your domain of expertise.",
     `Respond ONLY with a JSON object: {"answer": string}`,
   ]
@@ -423,12 +569,8 @@ export async function askAgent(
     agent.description,
     history
   );
-  try {
-    const parsed = JSON.parse(raw) as { answer?: string };
-    return parsed.answer ?? raw;
-  } catch {
-    return raw;
-  }
+  const parsed = parseJsonLoose<{ answer?: string }>(raw);
+  return parsed?.answer ?? raw;
 }
 
 /** Validate a custom API key with a minimal completion (launch-time check). */

@@ -6,9 +6,26 @@ import {
   hasPremiumAccess,
   minTokenBalanceLabel,
   minTokenBalanceWei,
+  premiumBusinessLimitForTier,
   premiumPlatformModelIds,
+  tierForBalance,
+  tierThresholdsWei,
   tokenGateConfigured,
 } from "@/lib/token-gate";
+
+function formatTokens(wei: bigint): string {
+  const whole = wei / BigInt(1_000_000_000_000_000_000);
+  return whole.toLocaleString("en-US");
+}
+
+function tierTable() {
+  const t = tierThresholdsWei();
+  return [
+    { tier: "holder", minTokens: formatTokens(t.holder), premiumBusinessLimit: 1 },
+    { tier: "founder", minTokens: formatTokens(t.founder), premiumBusinessLimit: 5 },
+    { tier: "partner", minTokens: formatTokens(t.partner), premiumBusinessLimit: null },
+  ];
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,21 +56,26 @@ export async function GET(req: Request) {
       tokenAddress: bowyerTokenAddress(),
       minBalance: minTokenBalanceLabel(),
       premiumModels: premiumPlatformModelIds(),
+      tiers: tierTable(),
     });
   }
 
   const balanceWei = await fetchTokenBalanceWei(wallet);
   const unlocked = await hasPremiumAccess(wallet);
+  const tier = balanceWei !== null ? tierForBalance(balanceWei) : "none";
 
   return NextResponse.json({
     ok: true,
     configured: true,
     unlocked,
+    tier,
+    premiumBusinessLimit: premiumBusinessLimitForTier(tier),
     wallet: wallet.toLowerCase(),
     tokenAddress: bowyerTokenAddress(),
     balanceWei: balanceWei?.toString() ?? null,
     minBalanceWei: minTokenBalanceWei().toString(),
     minBalance: minTokenBalanceLabel(),
     premiumModels: premiumPlatformModelIds(),
+    tiers: tierTable(),
   });
 }

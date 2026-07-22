@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   listAgentsByOwner,
+  listPremiumBusinessSlugsForOwner,
   registerAgent,
   type KnowledgeSource,
 } from "@/lib/data/agent-registry";
@@ -9,7 +10,7 @@ import { validateCustomLlm } from "@/lib/agent-runtime";
 import { isSafePublicHttpUrl, isValidSourceUrl, SUPPORTED_SOURCE_TYPES } from "@/lib/knowledge-sources";
 import { llmConfigured, sanitizeLlmConfigInput, isPremiumPlatformModelId } from "@/lib/llm-config";
 import { checkLaunchQuality } from "@/lib/launch-quality";
-import { hasPremiumAccess } from "@/lib/token-gate";
+import { getHolderTierStatus } from "@/lib/token-gate";
 import { requireWalletSession } from "@/lib/wallet-auth";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -88,18 +89,32 @@ export async function POST(req: Request) {
 
   const llm = sanitizeLlmConfigInput(body) ?? { mode: "platform" as const, model: "balanced" };
 
-  if (
-    llm.mode === "platform" &&
-    isPremiumPlatformModelId(llm.model) &&
-    !(await hasPremiumAccess(authenticatedWallet))
-  ) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: `Premium models require holding $BOWYER in your wallet. Connect the wallet that holds the token and try again.`,
-      },
-      { status: 403 }
-    );
+  if (llm.mode === "platform" && isPremiumPlatformModelId(llm.model)) {
+    const tier = await getHolderTierStatus(authenticatedWallet);
+    if (tier.tier === "none") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Premium models require holding $BOWYER in your wallet. Connect the wallet that holds the token and try again.`,
+        },
+        { status: 403 }
+      );
+    }
+    if (tier.premiumBusinessLimit !== null) {
+      const existing = listPremiumBusinessSlugsForOwner(
+        authenticatedWallet ?? "",
+        isPremiumPlatformModelId
+      );
+      if (existing.length >= tier.premiumBusinessLimit) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: `Your ${tier.tier === "founder" ? "Founder" : "Holder"} tier allows ${tier.premiumBusinessLimit} premium-model business${tier.premiumBusinessLimit === 1 ? "" : "es"}. Hold more $BOWYER to unlock the next tier, or launch this one on a standard model.`,
+          },
+          { status: 403 }
+        );
+      }
+    }
   }
 
   const missing: string[] = [];
