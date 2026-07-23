@@ -305,7 +305,7 @@ function buildMemeRadarServer(ctx: McpAgentContext): McpAgentServer {
       {
         name: "get_radar",
         description:
-          "Live radar over recent Robinhood Chain blocks: new contract deployments enriched with token metadata and DexScreener market data (price, liquidity, volume), plus coordinated funding clusters. Returns block range and contract addresses.",
+          "Live launch radar for Robinhood Chain: new token launches detected via Uniswap v2/v3 pool-creation events (launchpads and factories included) over a time-calibrated window, enriched with token metadata, DexScreener market data (price, liquidity, volume), on-chain pool depth for unindexed pools, chain market leaders, plus direct deployments and coordinated funding clusters.",
         inputSchema: { type: "object", properties: {} },
       },
       {

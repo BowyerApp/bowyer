@@ -1,4 +1,4 @@
-import { rpcUrl } from "@/lib/chain";
+import { rpcUrl, USD_PER_ETH } from "@/lib/chain";
 import { scanChain } from "@/lib/chain-scanner";
 
 const HEADERS = { "Content-Type": "application/json", "User-Agent": "Mozilla/5.0 bowyer-meme-radar" };
@@ -380,6 +380,168 @@ const RADAR_SCAN_BLOCKS = 200;
 /** How many recent deployments to enrich with contract/token/market data. */
 const ENRICH_LIMIT = 8;
 
+/* ---------- factory-launch detection via event logs ----------
+ * Robinhood Chain mints ~10 blocks/sec and nearly all tokens launch through
+ * launchpads / DEX factories, so tx-level deployment scanning misses them.
+ * Pool-creation events are the real launch signal.
+ */
+
+/** Uniswap v3 PoolCreated(token0,token1,fee,tickSpacing,pool). */
+const V3_POOL_CREATED = "0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118";
+/** Uniswap v2 PairCreated(token0,token1,pair,allPairsLength). */
+const V2_PAIR_CREATED = "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9";
+
+/** How far back the launch radar looks, in wall-clock minutes. */
+const RADAR_WINDOW_MINUTES = Math.max(
+  10,
+  Number(process.env.RADAR_WINDOW_MINUTES ?? 60) || 60
+);
+/** Hard cap on the log-scan block span, whatever the chain cadence says. */
+const MAX_LOG_SPAN_BLOCKS = 200_000;
+/** How many of the freshest launches to check against DexScreener. */
+const MARKET_CHECK_LIMIT = 60;
+
+interface RawLog {
+  address: string;
+  topics: string[];
+  data: string;
+  blockNumber: string;
+}
+
+/** getLogs with a halving fallback for providers that cap range or result size. */
+async function getLogsRange(topic0: string, fromBlock: number, toBlock: number, depth = 0): Promise<RawLog[]> {
+  try {
+    return await rpc<RawLog[]>("eth_getLogs", [
+      {
+        fromBlock: `0x${fromBlock.toString(16)}`,
+        toBlock: `0x${toBlock.toString(16)}`,
+        topics: [topic0],
+      },
+    ]);
+  } catch (err) {
+    if (depth >= 3 || toBlock - fromBlock < 2_000) throw err;
+    const mid = Math.floor((fromBlock + toBlock) / 2);
+    const [a, b] = await Promise.all([
+      getLogsRange(topic0, fromBlock, mid, depth + 1),
+      getLogsRange(topic0, mid + 1, toBlock, depth + 1),
+    ]);
+    return [...a, ...b];
+  }
+}
+
+async function blockTimestamp(blockNumber: number): Promise<number | null> {
+  try {
+    const block = await rpc<{ timestamp?: string }>("eth_getBlockByNumber", [
+      `0x${blockNumber.toString(16)}`,
+      false,
+    ]);
+    return block?.timestamp ? Number(BigInt(block.timestamp)) : null;
+  } catch {
+    return null;
+  }
+}
+
+interface PoolEvent {
+  dex: "v3" | "v2";
+  token0: string;
+  token1: string;
+  pool: string;
+  blockNumber: number;
+}
+
+function parsePoolEvent(log: RawLog, dex: "v3" | "v2"): PoolEvent | null {
+  try {
+    if (!log.topics[1] || !log.topics[2]) return null;
+    const data = log.data.startsWith("0x") ? log.data.slice(2) : log.data;
+    // v3 data = tickSpacing(32) + pool(32); v2 data = pair(32) + allPairsLength(32)
+    const poolWord = dex === "v3" ? data.slice(64, 128) : data.slice(0, 64);
+    const pool = `0x${poolWord.slice(24)}`.toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(pool)) return null;
+    return {
+      dex,
+      token0: `0x${log.topics[1].slice(26)}`.toLowerCase(),
+      token1: `0x${log.topics[2].slice(26)}`.toLowerCase(),
+      pool,
+      blockNumber: Number(BigInt(log.blockNumber)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** DexScreener lookup for up to 30 tokens per call; keyed by lowercase token address. */
+async function batchDexPairs(addresses: string[]): Promise<Map<string, NonNullable<TokenRiskScan["market"]>>> {
+  const out = new Map<string, NonNullable<TokenRiskScan["market"]>>();
+  for (let i = 0; i < addresses.length; i += 30) {
+    const chunk = addresses.slice(i, i + 30);
+    try {
+      const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${chunk.join(",")}`, {
+        headers: { "User-Agent": "bowyer-meme-radar" },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      if (!res.ok) continue;
+      const body = (await res.json()) as { pairs?: (DexPair & { baseToken?: { address?: string } })[] };
+      for (const pair of body.pairs ?? []) {
+        if (pair.chainId !== DEXSCREENER_CHAIN_ID) continue;
+        const base = pair.baseToken?.address?.toLowerCase();
+        if (!base || !pair.pairAddress || !pair.url) continue;
+        const existing = out.get(base);
+        if (existing && (existing.liquidityUsd ?? 0) >= (pair.liquidity?.usd ?? 0)) continue;
+        const price = Number(pair.priceUsd);
+        const num = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
+        out.set(base, {
+          configuredChainId: DEXSCREENER_CHAIN_ID,
+          pairAddress: pair.pairAddress,
+          dexId: pair.dexId ?? "unknown",
+          priceUsd: Number.isFinite(price) ? price : null,
+          liquidityUsd: num(pair.liquidity?.usd),
+          volume24h: num(pair.volume?.h24),
+          buys5m: num(pair.txns?.m5?.buys),
+          sells5m: num(pair.txns?.m5?.sells),
+          pairCreatedAt: pair.pairCreatedAt ? new Date(pair.pairCreatedAt).toISOString() : null,
+          url: pair.url,
+        });
+      }
+    } catch {
+      // Chunk failed — later chunks may still succeed.
+    }
+  }
+  return out;
+}
+
+/** Paired-quote depth held by the pool, as a USD estimate (for pools DexScreener hasn't indexed yet). */
+async function poolQuoteDepthUsd(
+  pool: string,
+  quote: string,
+  quoteDecimals: number,
+  quoteIsWeth: boolean
+): Promise<number | null> {
+  const balanceRaw = await call(quote, `0x70a08231000000000000000000000000${pool.slice(2)}`);
+  const balance = hexToBigInt(balanceRaw);
+  if (balance === null) return null;
+  const units = Number(balance) / 10 ** quoteDecimals;
+  if (!Number.isFinite(units)) return null;
+  // Pool holds the quote side once; total depth ≈ 2x one side.
+  return Math.round(units * (quoteIsWeth ? USD_PER_ETH : 1) * 2);
+}
+
+export interface RadarLaunch {
+  token: string;
+  name: string | null;
+  symbol: string | null;
+  pairedWith: string;
+  pairedSymbol: string | null;
+  pool: string;
+  dex: "v3" | "v2";
+  poolCount: number;
+  firstBlock: number;
+  lastBlock: number;
+  ageMinutes: number | null;
+  market: TokenRiskScan["market"];
+  onChainDepthUsd: number | null;
+  score: number;
+}
+
 export interface RadarCandidate {
   txHash: string;
   deployer: string;
@@ -420,6 +582,174 @@ async function tokenMetadata(address: string) {
 
 export async function getMemeRadar() {
   const chain = await scanChain(RADAR_SCAN_BLOCKS);
+
+  /* ---- launch discovery: DEX pool creations over a wide time window ---- */
+
+  const latestBlock = chain.latestBlock;
+  // Measure real chain cadence from timestamps — block numbers alone are
+  // meaningless on a chain minting ~10 blocks/sec.
+  const cadenceSpan = Math.min(20_000, latestBlock - 1);
+  const [tsLatest, tsEarlier] = await Promise.all([
+    blockTimestamp(latestBlock),
+    blockTimestamp(latestBlock - cadenceSpan),
+  ]);
+  const blocksPerSecond =
+    tsLatest && tsEarlier && tsLatest > tsEarlier ? cadenceSpan / (tsLatest - tsEarlier) : 2;
+  const windowBlocks = Math.min(
+    MAX_LOG_SPAN_BLOCKS,
+    Math.max(RADAR_SCAN_BLOCKS, Math.round(RADAR_WINDOW_MINUTES * 60 * blocksPerSecond))
+  );
+  const fromBlock = Math.max(1, latestBlock - windowBlocks);
+
+  let poolEvents: PoolEvent[] = [];
+  try {
+    const [v3Logs, v2Logs] = await Promise.all([
+      getLogsRange(V3_POOL_CREATED, fromBlock, latestBlock),
+      getLogsRange(V2_PAIR_CREATED, fromBlock, latestBlock),
+    ]);
+    poolEvents = [
+      ...v3Logs.map((log) => parsePoolEvent(log, "v3" as const)),
+      ...v2Logs.map((log) => parsePoolEvent(log, "v2" as const)),
+    ].filter((e): e is PoolEvent => e !== null);
+  } catch {
+    // Log scan unavailable — the radar still reports deploys and clusters.
+  }
+
+  // Quote tokens (WETH, stables) appear in a large share of pools; the rare
+  // side of each pair is the launch.
+  const tokenFreq = new Map<string, number>();
+  for (const event of poolEvents) {
+    tokenFreq.set(event.token0, (tokenFreq.get(event.token0) ?? 0) + 1);
+    tokenFreq.set(event.token1, (tokenFreq.get(event.token1) ?? 0) + 1);
+  }
+  const quoteThreshold = Math.max(8, Math.ceil(poolEvents.length * 0.05));
+  const isQuote = (address: string) => (tokenFreq.get(address) ?? 0) >= quoteThreshold;
+
+  const launchMap = new Map<
+    string,
+    { token: string; pairedWith: string; pool: string; dex: "v3" | "v2"; poolCount: number; firstBlock: number; lastBlock: number }
+  >();
+  for (const event of poolEvents) {
+    const token0Quote = isQuote(event.token0);
+    const token1Quote = isQuote(event.token1);
+    if (token0Quote && token1Quote) continue; // quote/quote pool — infrastructure
+    const token = token0Quote ? event.token1 : event.token0;
+    const pairedWith = token0Quote ? event.token0 : event.token1;
+    const existing = launchMap.get(token);
+    if (existing) {
+      existing.poolCount += 1;
+      existing.firstBlock = Math.min(existing.firstBlock, event.blockNumber);
+      if (event.blockNumber >= existing.lastBlock) {
+        existing.lastBlock = event.blockNumber;
+        existing.pool = event.pool;
+        existing.dex = event.dex;
+        existing.pairedWith = pairedWith;
+      }
+    } else {
+      launchMap.set(token, {
+        token,
+        pairedWith,
+        pool: event.pool,
+        dex: event.dex,
+        poolCount: 1,
+        firstBlock: event.blockNumber,
+        lastBlock: event.blockNumber,
+      });
+    }
+  }
+
+  const freshFirst = [...launchMap.values()].sort((a, b) => b.lastBlock - a.lastBlock);
+  const marketByToken = await batchDexPairs(
+    freshFirst.slice(0, MARKET_CHECK_LIMIT).map((l) => l.token)
+  );
+
+  const scoreLaunch = (l: (typeof freshFirst)[number], market: TokenRiskScan["market"]) => {
+    let score = 10; // it produced a real DEX pool
+    if (market) {
+      score += Math.min(40, Math.floor((market.liquidityUsd ?? 0) / 2_500));
+      score += Math.min(30, Math.floor((market.volume24h ?? 0) / 10_000));
+      if (((market.buys5m ?? 0) + (market.sells5m ?? 0)) >= 10) score += 10;
+    }
+    return Math.min(100, score);
+  };
+  const ranked = freshFirst
+    .map((l) => ({ ...l, market: marketByToken.get(l.token) ?? null }))
+    .sort(
+      (a, b) =>
+        scoreLaunch(b, b.market) - scoreLaunch(a, a.market) || b.lastBlock - a.lastBlock
+    );
+
+  // Enrich the head of the list on-chain, sequentially — bursts trip the RPC limit.
+  const quoteMeta = new Map<string, { symbol: string | null; decimals: number }>();
+  const launches: RadarLaunch[] = [];
+  for (const candidate of ranked.slice(0, ENRICH_LIMIT)) {
+    const token = await tokenMetadata(candidate.token);
+    let quote = quoteMeta.get(candidate.pairedWith);
+    if (!quote) {
+      const meta = await tokenMetadata(candidate.pairedWith);
+      quote = { symbol: meta?.symbol ?? null, decimals: meta?.decimals ?? 18 };
+      quoteMeta.set(candidate.pairedWith, quote);
+    }
+    const onChainDepthUsd = candidate.market
+      ? null
+      : await poolQuoteDepthUsd(
+          candidate.pool,
+          candidate.pairedWith,
+          quote.decimals,
+          quote.symbol?.toUpperCase() === "WETH"
+        );
+    launches.push({
+      token: candidate.token,
+      name: token?.name ?? null,
+      symbol: token?.symbol ?? null,
+      pairedWith: candidate.pairedWith,
+      pairedSymbol: quote.symbol,
+      pool: candidate.pool,
+      dex: candidate.dex,
+      poolCount: candidate.poolCount,
+      firstBlock: candidate.firstBlock,
+      lastBlock: candidate.lastBlock,
+      ageMinutes:
+        tsLatest !== null
+          ? Math.max(0, Math.round((latestBlock - candidate.firstBlock) / blocksPerSecond / 60))
+          : null,
+      market: candidate.market,
+      onChainDepthUsd,
+      score: scoreLaunch(candidate, candidate.market),
+    });
+  }
+
+  // Chain market leaders: the quote token's top pairs are a de-facto
+  // leaderboard for the whole chain on DexScreener.
+  let marketLeaders: { symbol: string | null; token: string; priceUsd: number | null; liquidityUsd: number | null; volume24h: number | null; url: string }[] = [];
+  const topQuote = [...tokenFreq.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  if (topQuote) {
+    try {
+      const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${topQuote}`, {
+        headers: { "User-Agent": "bowyer-meme-radar" },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      if (res.ok) {
+        const body = (await res.json()) as { pairs?: (DexPair & { baseToken?: { address?: string; symbol?: string } })[] };
+        marketLeaders = (body.pairs ?? [])
+          .filter((p) => p.chainId === DEXSCREENER_CHAIN_ID && p.baseToken?.address)
+          .sort((a, b) => (b.volume?.h24 ?? 0) - (a.volume?.h24 ?? 0))
+          .slice(0, 5)
+          .map((p) => ({
+            symbol: p.baseToken?.symbol ?? null,
+            token: p.baseToken!.address!.toLowerCase(),
+            priceUsd: Number.isFinite(Number(p.priceUsd)) ? Number(p.priceUsd) : null,
+            liquidityUsd: typeof p.liquidity?.usd === "number" ? p.liquidity.usd : null,
+            volume24h: typeof p.volume?.h24 === "number" ? p.volume.h24 : null,
+            url: p.url ?? "",
+          }));
+      }
+    } catch {
+      // Leaderboard is optional context.
+    }
+  }
+
+  /* ---- legacy: direct EOA deployments from the narrow block scan ---- */
 
   // Enrich sequentially — a parallel burst of receipt/metadata calls trips the RPC rate limit.
   const launchCandidates: RadarCandidate[] = [];
@@ -463,48 +793,66 @@ export async function getMemeRadar() {
   const routineDeployments = launchCandidates.length - notableCandidates.length;
   const routineClusters = clusters.length - notableClusters.length;
 
+  const notableLaunches = launches.filter(
+    (l) =>
+      (l.market && ((l.market.liquidityUsd ?? 0) >= 2_000 || (l.market.volume24h ?? 0) >= 5_000)) ||
+      (l.onChainDepthUsd ?? 0) >= 2_000
+  );
+  const launchesPerHour =
+    RADAR_WINDOW_MINUTES > 0 ? Math.round((launchMap.size / RADAR_WINDOW_MINUTES) * 60) : 0;
+
   const level: "hot" | "warm" | "quiet" =
-    notableCandidates.some((c) => c.market) || notableClusters.length > 0
+    notableLaunches.some(
+      (l) => (l.market?.liquidityUsd ?? 0) >= 10_000 || (l.market?.volume24h ?? 0) >= 25_000
+    ) || notableClusters.length > 0
       ? "hot"
-      : notableCandidates.length > 0
+      : notableLaunches.length > 0 || launchMap.size > 0 || notableCandidates.length > 0
         ? "warm"
         : "quiet";
 
   const headlineBits: string[] = [];
-  if (level === "quiet") {
+  if (launchMap.size > 0) {
     headlineBits.push(
-      `Quiet tape: ${launchCandidates.length === 0 ? "no contract deployments" : `${launchCandidates.length} contract deployment${launchCandidates.length === 1 ? "" : "s"}, none identifiable as tokens (no metadata, no DEX pool)`} in the last ${chain.blocksScanned} blocks, and no funding activity above the noise floor.`
+      `${launchMap.size} token launch${launchMap.size === 1 ? "" : "es"} via new DEX pools in the last ${RADAR_WINDOW_MINUTES} min (≈${launchesPerHour}/hr)${notableLaunches.length > 0 ? `; ${notableLaunches.length} with real liquidity or volume` : "; none with meaningful liquidity yet"}`
     );
   } else {
-    if (notableCandidates.length > 0) {
-      const trading = notableCandidates.filter((c) => c.market).length;
-      headlineBits.push(
-        `${notableCandidates.length} launch candidate${notableCandidates.length === 1 ? "" : "s"} worth watching${trading > 0 ? ` (${trading} already trading on a DEX)` : " (none trading yet)"}`
-      );
-    }
-    if (notableClusters.length > 0) {
-      headlineBits.push(
-        `${notableClusters.length} funding fan-out${notableClusters.length === 1 ? "" : "s"} moving ≥1 ETH`
-      );
-    }
+    headlineBits.push(
+      `No new DEX pools in the last ${RADAR_WINDOW_MINUTES} min`
+    );
+  }
+  if (notableClusters.length > 0) {
+    headlineBits.push(
+      `${notableClusters.length} funding fan-out${notableClusters.length === 1 ? "" : "s"} moving ≥1 ETH`
+    );
+  }
+  if (level === "quiet") {
+    headlineBits.push("nothing above the noise floor");
   }
 
   return {
     chainId: chain.chainId,
     scannedAt: chain.scannedAt,
     blockRange: {
-      from: chain.latestBlock - chain.blocksScanned + 1,
-      to: chain.latestBlock,
-      blocksScanned: chain.blocksScanned,
+      from: fromBlock,
+      to: latestBlock,
+      blocksScanned: latestBlock - fromBlock + 1,
+      windowMinutes: RADAR_WINDOW_MINUTES,
+      blocksPerSecond: Math.round(blocksPerSecond * 10) / 10,
     },
     methodology:
-      "EVM contract-deployment detection over recent Robinhood Chain blocks, enriched with token metadata (eth_call) and DexScreener market data where a pool exists. Funding clusters are direct native-transfer fan-outs. No price prediction or trade execution.",
+      "Launch detection via Uniswap v2/v3 pool-creation events over a time-calibrated block window (factories and launchpads included), enriched with token metadata (eth_call), DexScreener market data, and on-chain pool depth for pools not yet indexed. Direct EOA deployments and native-transfer fan-outs from a short recent window. No price prediction or trade execution.",
     signal: {
       level,
       headline: headlineBits.join("; "),
+      poolsCreated: poolEvents.length,
+      uniqueLaunches: launchMap.size,
+      launchesPerHour,
       routineDeployments,
       routineClusters,
     },
+    launches,
+    notableLaunches,
+    marketLeaders,
     launchCandidates: launchCandidates.sort((a, b) => b.score - a.score),
     notableCandidates: notableCandidates.sort((a, b) => b.score - a.score),
     clusters,

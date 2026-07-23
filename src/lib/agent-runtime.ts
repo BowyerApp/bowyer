@@ -326,29 +326,50 @@ async function buildLiveContext(agent: AgentIdentity, query: string): Promise<st
       const radar = await getMemeRadar();
       const explorer = ACTIVE_CHAIN.blockExplorerUrls[0];
       const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+      const usd = (n: number | null | undefined) =>
+        n == null ? "?" : `$${Math.round(n).toLocaleString()}`;
+      const launchLine = (l: (typeof radar.launches)[number]) => {
+        const label = l.symbol ? `${l.symbol}${l.name ? ` (${l.name})` : ""}` : "unnamed token";
+        const age = l.ageMinutes != null ? `${l.ageMinutes}m old` : "age unknown";
+        const marketBits = l.market
+          ? `price $${l.market.priceUsd ?? "?"} · liq ${usd(l.market.liquidityUsd)} · 24h vol ${usd(l.market.volume24h)} · 5m txns ${(l.market.buys5m ?? 0) + (l.market.sells5m ?? 0)} · ${l.market.url}`
+          : `not on DexScreener yet · on-chain pool depth ≈ ${usd(l.onChainDepthUsd)}`;
+        return `• ${label} · ${age} · ${l.dex} pool vs ${l.pairedSymbol ?? short(l.pairedWith)} · heat ${l.score}/100 · ${marketBits} · token ${short(l.token)} (${explorer}/address/${l.token})`;
+      };
       const lines = [
-        `Live Hood Meme Radar scan (Robinhood Chain ${radar.chainId}, blocks ${radar.blockRange.from}–${radar.blockRange.to}, fetched ${radar.scannedAt}):`,
+        `Live Hood Meme Radar scan (Robinhood Chain ${radar.chainId}, last ${radar.blockRange.windowMinutes} min ≈ ${radar.blockRange.blocksScanned.toLocaleString()} blocks, fetched ${radar.scannedAt}):`,
         `• SIGNAL: ${radar.signal.level.toUpperCase()} — ${radar.signal.headline}`,
-        ...radar.notableCandidates.slice(0, 6).map((item) => {
-          const label = item.token?.symbol
-            ? `${item.token.symbol}${item.token.name ? ` (${item.token.name})` : ""}`
-            : "unnamed token contract";
-          const marketLine = item.market
-            ? ` · price $${item.market.priceUsd ?? "?"} · liq $${item.market.liquidityUsd?.toLocaleString() ?? "?"} · 24h vol $${item.market.volume24h?.toLocaleString() ?? "?"} · ${item.market.url}`
-            : " · no DEX pool yet";
-          return `• ${item.lifecycle === "trading" ? "Trading" : "Forming"}: ${label} at ${item.contractAddress ? `${short(item.contractAddress)} (${explorer}/address/${item.contractAddress})` : "address pending"} · deployer ${short(item.deployer)} · block ${item.blockNumber} · heat ${item.score}/100${marketLine}`;
-        }),
-        ...radar.notableClusters.slice(0, 4).map((item) => `• Funding fan-out: ${short(item.funder)} → ${item.recipients} addresses · ${item.totalEth} ETH (${explorer}/address/${item.funder})`),
       ];
-      if (radar.signal.routineDeployments > 0 || radar.signal.routineClusters > 0) {
+      const notable = radar.notableLaunches.slice(0, 5);
+      if (notable.length > 0) {
+        lines.push("Fresh launches with traction:", ...notable.map(launchLine));
+      }
+      const freshest = radar.launches
+        .filter((l) => !radar.notableLaunches.includes(l))
+        .slice(0, 3);
+      if (freshest.length > 0) {
+        lines.push("Freshest launches (no traction proven yet — mention only briefly):", ...freshest.map(launchLine));
+      }
+      if (radar.marketLeaders.length > 0) {
         lines.push(
-          `• Routine background traffic (do NOT present as findings): ${radar.signal.routineDeployments} unidentified non-token deployment(s), ${radar.signal.routineClusters} small transfer batch(es) — typical infra/faucet/payout activity.`
+          "Chain market leaders (established, for context/comparison):",
+          ...radar.marketLeaders.map(
+            (m) => `• ${m.symbol ?? short(m.token)} · price $${m.priceUsd ?? "?"} · liq ${usd(m.liquidityUsd)} · 24h vol ${usd(m.volume24h)} · ${m.url}`
+          )
+        );
+      }
+      lines.push(
+        ...radar.notableClusters.slice(0, 3).map((item) => `• Funding fan-out: ${short(item.funder)} → ${item.recipients} addresses · ${item.totalEth} ETH (${explorer}/address/${item.funder})`),
+      );
+      if (radar.signal.uniqueLaunches > radar.notableLaunches.length) {
+        lines.push(
+          `• Background churn (do NOT itemize): ${radar.signal.uniqueLaunches - radar.notableLaunches.length} more launches without meaningful liquidity yet — typical launchpad turnover (≈${radar.signal.launchesPerHour} launches/hr chain-wide).`
         );
       }
       lines.push(
         radar.signal.level === "quiet"
-          ? "WRITING RULES: The radar found nothing actionable. Open with that verdict in one plain sentence, keep the briefing to a few sentences, and describe what the radar is watching for next. Do NOT inflate routine deployments or small transfers into discoveries, and do NOT list raw addresses for non-findings."
-          : "WRITING RULES: Lead with the strongest item and why it matters. Refer to addresses in shortened form (0xabcd…1234) with the explorer link — never paste full 40-character addresses into sentences.",
+          ? "WRITING RULES: The radar found nothing actionable. Open with that verdict in one plain sentence, keep the briefing to a few sentences, and describe what the radar is watching for next. Do NOT inflate routine activity into discoveries."
+          : "WRITING RULES: Lead with the single strongest story (a launch gaining real liquidity/volume, or a leader move). Compare fresh launches against the leaders where useful. Refer to addresses in shortened form (0xabcd…1234) with the explorer link — never paste full 40-character addresses into sentences. State token age and figures exactly as given.",
         "Holder distribution is available per-token via the scan_token tool; dev-sell tracing is NOT available — say so if asked. Never invent liquidity, holders, or sellability facts beyond this data.",
       );
       parts.push(lines.join("\n"));
@@ -363,17 +384,22 @@ async function buildLiveContext(agent: AgentIdentity, query: string): Promise<st
       const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
       parts.push(
         [
-          `Recent deployment and funding activity (blocks ${radar.blockRange.from}–${radar.blockRange.to}):`,
+          `Recent launch and funding activity (last ${radar.blockRange.windowMinutes} min, blocks ${radar.blockRange.from}–${radar.blockRange.to}):`,
           `• SIGNAL: ${radar.signal.level.toUpperCase()} — ${radar.signal.headline}`,
-          ...radar.notableCandidates.slice(0, 6).map((item) => {
-            const label = item.token?.symbol
-              ? `${item.token.symbol}${item.token.name ? ` (${item.token.name})` : ""}`
-              : "unnamed token contract";
-            return `• ${label} at ${item.contractAddress ? short(item.contractAddress) : "address pending"} · deployer ${short(item.deployer)} · block ${item.blockNumber} · heat ${item.score}/100`;
+          ...radar.launches.slice(0, 6).map((item) => {
+            const label = item.symbol
+              ? `${item.symbol}${item.name ? ` (${item.name})` : ""}`
+              : "unnamed token";
+            const liq = item.market?.liquidityUsd != null
+              ? `liq $${Math.round(item.market.liquidityUsd).toLocaleString()}`
+              : item.onChainDepthUsd != null
+                ? `pool depth ≈ $${item.onChainDepthUsd.toLocaleString()}`
+                : "no liquidity data";
+            return `• ${label} at ${short(item.token)} · ${item.dex} pool ${short(item.pool)} · ${item.ageMinutes != null ? `${item.ageMinutes}m old` : "age unknown"} · ${liq} · heat ${item.score}/100`;
           }),
           ...radar.notableClusters.slice(0, 4).map((item) => `• Funding fan-out: ${short(item.funder)} → ${item.recipients} addresses · ${item.totalEth} ETH`),
-          radar.signal.routineDeployments > 0 || radar.signal.routineClusters > 0
-            ? `• Routine background traffic (not evidence of anything): ${radar.signal.routineDeployments} unidentified non-token deployment(s), ${radar.signal.routineClusters} small transfer batch(es).`
+          radar.signal.uniqueLaunches > 0
+            ? `• Chain-wide launch churn: ≈${radar.signal.launchesPerHour} new tokens/hr via launchpads and DEX factories — high turnover is the baseline, not itself suspicious.`
             : null,
           radar.signal.level === "quiet"
             ? "The window is quiet. Say so plainly and keep the report short — do not construct a narrative from routine traffic."
