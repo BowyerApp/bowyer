@@ -674,6 +674,13 @@ export async function getMemeRadar() {
   };
   const ranked = freshFirst
     .map((l) => ({ ...l, market: marketByToken.get(l.token) ?? null }))
+    // An established token (USDG, majors) getting a fresh pool is liquidity
+    // ops, not a launch — its best DexScreener pair long predates the window.
+    .filter(
+      (l) =>
+        !l.market?.pairCreatedAt ||
+        Date.parse(l.market.pairCreatedAt) >= Date.now() - RADAR_WINDOW_MINUTES * 2 * 60_000
+    )
     .sort(
       (a, b) =>
         scoreLaunch(b, b.market) - scoreLaunch(a, a.market) || b.lastBlock - a.lastBlock
