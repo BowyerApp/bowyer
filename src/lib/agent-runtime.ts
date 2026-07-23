@@ -8,6 +8,7 @@ import {
 import { buildSourceContext } from "@/lib/knowledge-sources";
 import { formatChainContext, scanChain } from "@/lib/chain-scanner";
 import { getMemeRadar } from "@/lib/meme-radar";
+import { ACTIVE_CHAIN } from "@/lib/chain";
 import { getDeskSignals, getPremiumHistory, recordQuoteSnapshots } from "@/lib/desk-signals";
 import { getStockTokenQuotes } from "@/lib/stock-tokens";
 import {
@@ -323,24 +324,34 @@ async function buildLiveContext(agent: AgentIdentity, query: string): Promise<st
   if (agent.slug === "hood-meme-radar") {
     try {
       const radar = await getMemeRadar();
-      parts.push(
-        [
-          `Live Hood Meme Radar scan (Robinhood Chain ${radar.chainId}, fetched ${radar.scannedAt}):`,
-          `• Blocks scanned: ${radar.blockRange.from}–${radar.blockRange.to} (${radar.blockRange.blocksScanned} blocks)`,
-          `• ${radar.launchCandidates.length} recent contract deployments, ${radar.clusters.length} direct funding clusters`,
-          ...radar.launchCandidates.slice(0, 6).map((item) => {
-            const label = item.token?.symbol
-              ? `${item.token.symbol}${item.token.name ? ` (${item.token.name})` : ""}`
-              : "unidentified contract";
-            const marketLine = item.market
-              ? ` · price $${item.market.priceUsd ?? "?"} · liq $${item.market.liquidityUsd?.toLocaleString() ?? "?"} · 24h vol $${item.market.volume24h?.toLocaleString() ?? "?"} · ${item.market.url}`
-              : " · no DEX pool found yet";
-            return `• ${item.lifecycle === "trading" ? "Trading" : "Forming"}: ${label} at ${item.contractAddress ?? "address pending"} · deployed by ${item.deployer.slice(0, 10)}… block ${item.blockNumber} · score ${item.score}/100${marketLine}`;
-          }),
-          ...radar.clusters.slice(0, 5).map((item) => `• Funding cluster: ${item.funder.slice(0, 10)}… → ${item.recipients} addresses · ${item.totalEth} ETH · score ${item.score}/100`),
-          "Cite the contract addresses, block range, and market figures above when relevant. Holder distribution is available per-token via the scan_token tool; dev-sell tracing is NOT available — say so if asked. Never invent liquidity, holders, or sellability facts beyond this data.",
-        ].join("\n")
+      const explorer = ACTIVE_CHAIN.blockExplorerUrls[0];
+      const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+      const lines = [
+        `Live Hood Meme Radar scan (Robinhood Chain ${radar.chainId}, blocks ${radar.blockRange.from}–${radar.blockRange.to}, fetched ${radar.scannedAt}):`,
+        `• SIGNAL: ${radar.signal.level.toUpperCase()} — ${radar.signal.headline}`,
+        ...radar.notableCandidates.slice(0, 6).map((item) => {
+          const label = item.token?.symbol
+            ? `${item.token.symbol}${item.token.name ? ` (${item.token.name})` : ""}`
+            : "unnamed token contract";
+          const marketLine = item.market
+            ? ` · price $${item.market.priceUsd ?? "?"} · liq $${item.market.liquidityUsd?.toLocaleString() ?? "?"} · 24h vol $${item.market.volume24h?.toLocaleString() ?? "?"} · ${item.market.url}`
+            : " · no DEX pool yet";
+          return `• ${item.lifecycle === "trading" ? "Trading" : "Forming"}: ${label} at ${item.contractAddress ? `${short(item.contractAddress)} (${explorer}/address/${item.contractAddress})` : "address pending"} · deployer ${short(item.deployer)} · block ${item.blockNumber} · heat ${item.score}/100${marketLine}`;
+        }),
+        ...radar.notableClusters.slice(0, 4).map((item) => `• Funding fan-out: ${short(item.funder)} → ${item.recipients} addresses · ${item.totalEth} ETH (${explorer}/address/${item.funder})`),
+      ];
+      if (radar.signal.routineDeployments > 0 || radar.signal.routineClusters > 0) {
+        lines.push(
+          `• Routine background traffic (do NOT present as findings): ${radar.signal.routineDeployments} unidentified non-token deployment(s), ${radar.signal.routineClusters} small transfer batch(es) — typical infra/faucet/payout activity.`
+        );
+      }
+      lines.push(
+        radar.signal.level === "quiet"
+          ? "WRITING RULES: The radar found nothing actionable. Open with that verdict in one plain sentence, keep the briefing to a few sentences, and describe what the radar is watching for next. Do NOT inflate routine deployments or small transfers into discoveries, and do NOT list raw addresses for non-findings."
+          : "WRITING RULES: Lead with the strongest item and why it matters. Refer to addresses in shortened form (0xabcd…1234) with the explorer link — never paste full 40-character addresses into sentences.",
+        "Holder distribution is available per-token via the scan_token tool; dev-sell tracing is NOT available — say so if asked. Never invent liquidity, holders, or sellability facts beyond this data.",
       );
+      parts.push(lines.join("\n"));
     } catch {
       // A missing RPC must not cause reports to fabricate or fail.
     }
@@ -349,18 +360,28 @@ async function buildLiveContext(agent: AgentIdentity, query: string): Promise<st
     try {
       const [chain, radar] = await Promise.all([scanChain(), getMemeRadar()]);
       parts.push(formatChainContext(chain));
+      const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
       parts.push(
         [
           `Recent deployment and funding activity (blocks ${radar.blockRange.from}–${radar.blockRange.to}):`,
-          ...radar.launchCandidates.slice(0, 6).map((item) => {
+          `• SIGNAL: ${radar.signal.level.toUpperCase()} — ${radar.signal.headline}`,
+          ...radar.notableCandidates.slice(0, 6).map((item) => {
             const label = item.token?.symbol
               ? `${item.token.symbol}${item.token.name ? ` (${item.token.name})` : ""}`
-              : "unidentified contract";
-            return `• ${label} at ${item.contractAddress ?? "address pending"} · deployer ${item.deployer.slice(0, 10)}… · block ${item.blockNumber} · risk score ${item.score}/100`;
+              : "unnamed token contract";
+            return `• ${label} at ${item.contractAddress ? short(item.contractAddress) : "address pending"} · deployer ${short(item.deployer)} · block ${item.blockNumber} · heat ${item.score}/100`;
           }),
-          ...radar.clusters.slice(0, 5).map((item) => `• Funding cluster: ${item.funder.slice(0, 10)}… → ${item.recipients} addresses · ${item.totalEth} ETH`),
-          "Anchor every forensic claim to the addresses, blocks, and scores above. Use 'consistent with' language — never assert intent you cannot prove from the data. Dev-sell tracing is not available; say so if asked.",
-        ].join("\n")
+          ...radar.notableClusters.slice(0, 4).map((item) => `• Funding fan-out: ${short(item.funder)} → ${item.recipients} addresses · ${item.totalEth} ETH`),
+          radar.signal.routineDeployments > 0 || radar.signal.routineClusters > 0
+            ? `• Routine background traffic (not evidence of anything): ${radar.signal.routineDeployments} unidentified non-token deployment(s), ${radar.signal.routineClusters} small transfer batch(es).`
+            : null,
+          radar.signal.level === "quiet"
+            ? "The window is quiet. Say so plainly and keep the report short — do not construct a narrative from routine traffic."
+            : "Anchor every forensic claim to the addresses, blocks, and scores above. Use 'consistent with' language — never assert intent you cannot prove from the data.",
+          "Refer to addresses in shortened form (0xabcd…1234) — never paste full 40-character addresses into sentences. Dev-sell tracing is not available; say so if asked.",
+        ]
+          .filter((line): line is string => Boolean(line))
+          .join("\n")
       );
     } catch {
       // RPC unavailable — web search below still grounds the report.

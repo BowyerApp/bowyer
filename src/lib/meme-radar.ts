@@ -428,9 +428,12 @@ export async function getMemeRadar() {
     const [token, market] = contractAddress
       ? await Promise.all([tokenMetadata(contractAddress), getDexPair(contractAddress)])
       : [null, null];
-    let score = 35 + (deployment.valueEth >= 0.5 ? 25 : 0);
-    if (token?.symbol) score += 10;
-    if (market) score += Math.min(20, Math.floor((market.liquidityUsd ?? 0) / 5_000));
+    // Heat score earned by evidence only — an unidentified contract with no
+    // metadata and no pool scores ~0 instead of a misleading baseline.
+    let score = 0;
+    if (token?.symbol || token?.name) score += 25;
+    if (deployment.valueEth >= 0.5) score += 15;
+    if (market) score += 20 + Math.min(20, Math.floor((market.liquidityUsd ?? 0) / 5_000));
     launchCandidates.push({
       ...deployment,
       contractAddress,
@@ -444,8 +447,47 @@ export async function getMemeRadar() {
   const clusters = chain.fundingClusters.map((cluster) => ({
     ...cluster,
     lifecycle: "coordinated-funding" as const,
-    score: Math.min(100, cluster.recipients * 12 + (cluster.totalEth >= 1 ? 15 : 0)),
+    // ETH-weighted: a faucet fanning out dust to many addresses stays cold.
+    score: Math.min(
+      100,
+      Math.round(Math.min(cluster.recipients * 6, 40) + Math.min(cluster.totalEth * 10, 45) + (cluster.totalEth >= 5 ? 15 : 0))
+    ),
   }));
+
+  // Significance split — only these are worth a reader's attention. Everything
+  // else is routine chain traffic (infra deploys, batch payouts, faucets).
+  const notableCandidates = launchCandidates.filter(
+    (c) => c.token?.name || c.token?.symbol || c.market || c.valueEth >= 0.25
+  );
+  const notableClusters = clusters.filter((c) => c.totalEth >= 1 && c.recipients >= 5);
+  const routineDeployments = launchCandidates.length - notableCandidates.length;
+  const routineClusters = clusters.length - notableClusters.length;
+
+  const level: "hot" | "warm" | "quiet" =
+    notableCandidates.some((c) => c.market) || notableClusters.length > 0
+      ? "hot"
+      : notableCandidates.length > 0
+        ? "warm"
+        : "quiet";
+
+  const headlineBits: string[] = [];
+  if (level === "quiet") {
+    headlineBits.push(
+      `Quiet tape: ${launchCandidates.length === 0 ? "no contract deployments" : `${launchCandidates.length} contract deployment${launchCandidates.length === 1 ? "" : "s"}, none identifiable as tokens (no metadata, no DEX pool)`} in the last ${chain.blocksScanned} blocks, and no funding activity above the noise floor.`
+    );
+  } else {
+    if (notableCandidates.length > 0) {
+      const trading = notableCandidates.filter((c) => c.market).length;
+      headlineBits.push(
+        `${notableCandidates.length} launch candidate${notableCandidates.length === 1 ? "" : "s"} worth watching${trading > 0 ? ` (${trading} already trading on a DEX)` : " (none trading yet)"}`
+      );
+    }
+    if (notableClusters.length > 0) {
+      headlineBits.push(
+        `${notableClusters.length} funding fan-out${notableClusters.length === 1 ? "" : "s"} moving ≥1 ETH`
+      );
+    }
+  }
 
   return {
     chainId: chain.chainId,
@@ -457,8 +499,16 @@ export async function getMemeRadar() {
     },
     methodology:
       "EVM contract-deployment detection over recent Robinhood Chain blocks, enriched with token metadata (eth_call) and DexScreener market data where a pool exists. Funding clusters are direct native-transfer fan-outs. No price prediction or trade execution.",
+    signal: {
+      level,
+      headline: headlineBits.join("; "),
+      routineDeployments,
+      routineClusters,
+    },
     launchCandidates: launchCandidates.sort((a, b) => b.score - a.score),
+    notableCandidates: notableCandidates.sort((a, b) => b.score - a.score),
     clusters,
+    notableClusters,
     unavailableChecks: [
       "Dev-wallet sell tracing is not available. Use scan_token on a specific address for holder distribution and contract-level risk flags.",
     ],
