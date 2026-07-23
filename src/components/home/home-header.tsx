@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/marketplace", label: "Marketplace" },
-  { href: "/arena", label: "Arena" },
+  { href: "/desk", label: "Desk" },
   { href: "/launch", label: "Launch" },
   { href: "/portfolio", label: "Portfolio", requiresWallet: true },
   { href: "/docs", label: "Build" },

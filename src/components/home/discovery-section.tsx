@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, ChevronLeft, ChevronRight } from "lucide-react";
 import { CATEGORY_LABELS, getAgentArt } from "@/lib/data/marketplace-reference";
+import { Agent3DTile } from "@/components/agent/agent-3d-tile";
 import { Agent3DTurntable } from "@/components/agent/agent-3d-turntable";
 import { getAgentAvatarGlb } from "@/lib/agent-avatars";
 import type { BusinessStats } from "@/lib/data/real-stats";
@@ -76,12 +77,12 @@ export function DiscoverySection({ agents, stats }: DiscoverySectionProps) {
               className="group relative overflow-hidden rounded-[24px] border border-white/[0.07]"
             >
               <div className="relative aspect-[16/10] bg-[#050505] sm:aspect-[16/9]">
-                {getAgentAvatarGlb(featured.slug) ? (
+                {getAgentAvatarGlb(featured) ? (
                   <>
                     {/* pin the 3D model to the right half so it never covers the copy */}
                     <div className="absolute inset-y-0 right-0 w-[58%] sm:w-1/2">
                       <Agent3DTurntable
-                        glbUrl={getAgentAvatarGlb(featured.slug)!}
+                        glbUrl={getAgentAvatarGlb(featured)!}
                         agentName={featured.name}
                         posterSrc="/images/robots/robot-whale-hero.png"
                         className="absolute inset-0"
@@ -114,7 +115,7 @@ export function DiscoverySection({ agents, stats }: DiscoverySectionProps) {
                 </p>
 
                 <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-[12.5px] text-white/60">
-                  <span className="flex items-center gap-2 text-white/85">
+                  <span suppressHydrationWarning className="flex items-center gap-2 text-white/85">
                     {statusLine(featuredStats)}
                   </span>
                   <span>
@@ -149,15 +150,13 @@ export function DiscoverySection({ agents, stats }: DiscoverySectionProps) {
                       i === 0 && "border-t"
                     )}
                   >
-                    <span className="relative size-11 shrink-0 overflow-hidden rounded-xl">
-                      <Image
-                        src={getAgentArt(agent)}
-                        alt=""
-                        fill
-                        className="object-cover"
-                        sizes="44px"
-                      />
-                    </span>
+                    <Agent3DTile
+                      glbUrl={getAgentAvatarGlb(agent)}
+                      posterSrc={getAgentArt(agent)}
+                      agentName={agent.name}
+                      className="size-11 shrink-0 rounded-xl"
+                      sizes="44px"
+                    />
                     <span className="min-w-0 flex-1">
                       <span className="flex min-w-0 items-baseline gap-2">
                         <span className="truncate text-[14.5px] font-medium text-foreground">
@@ -168,7 +167,9 @@ export function DiscoverySection({ agents, stats }: DiscoverySectionProps) {
                         </span>
                       </span>
                       <span className="mt-1 flex items-center gap-2 text-[12.5px] text-muted">
-                        <span className="truncate">{statusLine(stats[agent.slug])}</span>
+                        <span suppressHydrationWarning className="truncate">
+                          {statusLine(stats[agent.slug])}
+                        </span>
                       </span>
                     </span>
                     <span className="shrink-0 text-right">
@@ -240,9 +241,9 @@ function CatalogRow({
             className="group w-[210px] shrink-0 snap-start"
           >
             <span className="relative block aspect-square overflow-hidden rounded-2xl border border-white/[0.06]">
-              {getAgentAvatarGlb(agent.slug) ? (
+              {getAgentAvatarGlb(agent) ? (
                 <Agent3DTurntable
-                  glbUrl={getAgentAvatarGlb(agent.slug)!}
+                  glbUrl={getAgentAvatarGlb(agent)!}
                   agentName={agent.name}
                   posterSrc={getAgentArt(agent)}
                   className="absolute inset-0"
@@ -270,7 +271,7 @@ function CatalogRow({
                   {agent.pricing.model === "free" ? "Free" : `$${agent.pricing.amount}/mo`}
                 </span>
               </span>
-              <span className="mt-1 block truncate text-[12px] text-muted">
+              <span suppressHydrationWarning className="mt-1 block truncate text-[12px] text-muted">
                 {statusLine(stats[agent.slug])}
               </span>
             </span>

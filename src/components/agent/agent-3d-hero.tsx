@@ -94,7 +94,8 @@ interface Agent3DHeroProps {
   agentName: string;
   className?: string;
   fallback?: ReactNode;
-  variant?: "hero" | "card";
+  /** "tile" is for compact list rows — no chrome, poster stays visible beneath. */
+  variant?: "hero" | "card" | "tile";
 }
 
 function FxOverlay({ fx }: { fx: AvatarFx | null }) {
@@ -243,7 +244,8 @@ export const Agent3DHero = forwardRef<Agent3DControlHandle, Agent3DHeroProps>(
         ref={shellRef}
         style={{ "--play-accent": "#b8ff2e" } as CSSProperties}
         className={cn(
-          "relative overflow-hidden border border-white/10 bg-[#050505]",
+          "relative overflow-hidden",
+          variant === "tile" ? "bg-transparent" : "border border-white/10 bg-[#050505]",
           variant === "hero" ? "rounded-sm" : "rounded-[inherit]",
           className
         )}
@@ -252,10 +254,12 @@ export const Agent3DHero = forwardRef<Agent3DControlHandle, Agent3DHeroProps>(
           aria-hidden
           className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_70%,color-mix(in_srgb,var(--play-accent)_14%,transparent),transparent_55%)]"
         />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-1/3 bg-gradient-to-t from-black/50 to-transparent"
-        />
+        {variant !== "tile" && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-1/3 bg-gradient-to-t from-black/50 to-transparent"
+          />
+        )}
 
         <FxOverlay fx={fx} />
 
@@ -267,13 +271,13 @@ export const Agent3DHero = forwardRef<Agent3DControlHandle, Agent3DHeroProps>(
             animPulse && "avatar-fx-anim-bob"
           )}
         >
-          {!ready && !failed && (
+          {!ready && !failed && variant !== "tile" && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2">
               <div className="size-8 animate-pulse rounded-full border border-accent/40 bg-accent/10" />
               <p className="text-[11px] tracking-wide text-muted">Loading 3D agent…</p>
             </div>
           )}
-          {failed && !fallback && (
+          {failed && !fallback && variant !== "tile" && (
             <div className="absolute inset-0 z-10 flex items-center justify-center px-4 text-center text-[12px] text-muted">
               3D preview unavailable
             </div>

@@ -5,6 +5,18 @@ in [Virtuals' Agent Commerce Protocol (ACP)](https://whitepaper.virtuals.io/abou
 an ACP client agent can discover a business, agree terms, and consume its output
 as a job deliverable — no BOWYER-specific SDK required.
 
+## Live ACP catalog (production)
+
+BOWYER now exposes a hireable provider catalog and hire endpoint:
+
+```bash
+curl -s https://bowyer.app/api/acp/offerings?seed=1 | jq .
+# Hire (wallet session + subscription or x402 USDG payment):
+# POST https://bowyer.app/api/acp/hire  { "slug": "hood-meme-radar", "tool": "get_radar" }
+```
+
+Seeded offerings include Hood Meme Radar, Whale Hunter, GPT Researcher, and Robinhood Trading Agent.
+
 ## Run the demo
 
 ```bash
@@ -23,6 +35,26 @@ node examples/virtuals-acp/hire-bowyer-business.mjs \
   --tool scan_token \
   --args '{"address":"0xaF4C10fEf50059d1e3E8aB1C80E46DB6A76098B4"}'
 ```
+
+## Agent hires agent (with USDG settlement)
+
+`agent-hires-agent.mjs` runs the full commerce loop against the live catalog:
+discover → authenticate a client-agent wallet → hire → settle the HTTP 402 with
+a real USDG (x402) transfer on Robinhood Chain → collect the deliverable.
+
+```bash
+# Free provider — no wallet needed:
+node examples/virtuals-acp/agent-hires-agent.mjs
+
+# Paid provider — the client agent pays per call in USDG:
+AGENT_PRIVATE_KEY=0x… node examples/virtuals-acp/agent-hires-agent.mjs \
+  --business robinhood-trading-agent --tool ask \
+  --args '{"question":"How are tokenized equities tracking spot today?"}'
+```
+
+The paying leg uses `viem` (already a repo dependency) to sign the wallet
+session challenge and send the ERC-20 transfer the x402 requirement asks for.
+No subscription is involved — this is pure pay-per-call between two agents.
 
 ## How ACP phases map to BOWYER MCP
 

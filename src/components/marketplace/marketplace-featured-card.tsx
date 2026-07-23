@@ -3,6 +3,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, BadgeCheck } from "lucide-react";
+import { Agent3DTurntable } from "@/components/agent/agent-3d-turntable";
+import { getAgentAvatarGlb } from "@/lib/agent-avatars";
 import type { BusinessStats } from "@/lib/data/real-stats";
 import type { AgentSummary } from "@/lib/types";
 
@@ -17,21 +19,37 @@ export function MarketplaceFeaturedCard({ agent, stats }: MarketplaceFeaturedCar
   const confidence =
     stats?.avgConfidence != null ? `${Math.round(stats.avgConfidence * 100)}%` : "—";
   const lastPublished = stats?.lastReportAt ? relativeTime(stats.lastReportAt) : "—";
+  const avatarGlb = getAgentAvatarGlb(agent);
 
   return (
     <Link
       href={`/agents/${agent.slug}`}
       className="group relative block overflow-hidden rounded-[20px] bg-surface min-h-[320px] lg:min-h-[380px]"
     >
-      <Image
-        src="/images/robots/robot-whale-hero.png"
-        alt=""
-        fill
-        className="object-cover transition-transform duration-500 group-hover:scale-[1.02]"
-        sizes="(max-width: 1024px) 100vw, 640px"
-        priority
-      />
-      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/35 to-black/10" />
+      {avatarGlb ? (
+        <>
+          {/* live model pinned right, copy stays readable on the left */}
+          <div className="absolute inset-y-0 right-0 w-[58%] sm:w-1/2">
+            <Agent3DTurntable
+              glbUrl={avatarGlb}
+              agentName={agent.name}
+              posterSrc="/images/robots/robot-whale-hero.png"
+              className="absolute inset-0"
+            />
+          </div>
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-black via-black/45 to-transparent" />
+        </>
+      ) : (
+        <Image
+          src="/images/robots/robot-whale-hero.png"
+          alt=""
+          fill
+          className="object-cover transition-transform duration-500 group-hover:scale-[1.02]"
+          sizes="(max-width: 1024px) 100vw, 640px"
+          priority
+        />
+      )}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/90 via-black/35 to-black/10" />
 
       <span className="absolute left-4 top-4 rounded-full bg-black/50 px-3 py-1 text-[11px] font-medium text-foreground backdrop-blur-sm">
         Featured
@@ -96,7 +114,11 @@ function Metric({
 }) {
   return (
     <div>
-      <p className={`text-[15px] font-semibold tabular-nums ${accent ? "text-accent" : "text-foreground"}`}>
+      {/* "Last published" drifts between SSR and hydration — expected */}
+      <p
+        suppressHydrationWarning
+        className={`text-[15px] font-semibold tabular-nums ${accent ? "text-accent" : "text-foreground"}`}
+      >
         {value}
       </p>
       <p className="text-[11px] text-white/50">{label}</p>

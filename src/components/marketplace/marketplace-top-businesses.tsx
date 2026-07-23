@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { ArrowRight, BadgeCheck } from "lucide-react";
+import { Agent3DTile } from "@/components/agent/agent-3d-tile";
 import { getAgentAvatarGlb } from "@/lib/agent-avatars";
 import {
   CATEGORY_LABELS,
@@ -144,7 +145,10 @@ function LiveLine({ text }: { text: string }) {
         <span className="absolute inline-flex size-full animate-ping rounded-full bg-accent opacity-50" />
         <span className="relative inline-flex size-1.5 rounded-full bg-accent" />
       </span>
-      <span className="truncate">{text}</span>
+      {/* time text drifts between SSR and hydration — expected */}
+      <span suppressHydrationWarning className="truncate">
+        {text}
+      </span>
     </span>
   );
 }
@@ -157,7 +161,7 @@ function priceLabel(agent: AgentSummary): string {
 
 function LeadCard({ agent, stats }: { agent: AgentSummary; stats?: BusinessStats }) {
   const b = bits(agent, stats);
-  const avatarGlb = getAgentAvatarGlb(agent.slug);
+  const avatarGlb = getAgentAvatarGlb(agent);
 
   return (
     <Link
@@ -223,7 +227,7 @@ function LeadCard({ agent, stats }: { agent: AgentSummary; stats?: BusinessStats
 
 function SideCard({ agent, stats }: { agent: AgentSummary; stats?: BusinessStats }) {
   const b = bits(agent, stats);
-  const avatarGlb = getAgentAvatarGlb(agent.slug);
+  const avatarGlb = getAgentAvatarGlb(agent);
 
   return (
     <Link
@@ -292,9 +296,13 @@ function BusinessRow({
         first && "border-t"
       )}
     >
-      <span className="relative hidden size-14 overflow-hidden rounded-xl sm:block">
-        <Image src={b.art} alt="" fill className="object-cover" sizes="56px" />
-      </span>
+      <Agent3DTile
+        glbUrl={getAgentAvatarGlb(agent)}
+        posterSrc={b.art}
+        agentName={agent.name}
+        className="hidden size-14 rounded-xl sm:block"
+        sizes="56px"
+      />
 
       <span className="min-w-0">
         <span className="flex items-center gap-1.5">

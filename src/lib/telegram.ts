@@ -28,8 +28,17 @@ import {
   walletPrompt,
 } from "@/lib/telegram-chat";
 import { getPromoStatus } from "@/lib/promo-pricing";
-import { randomBytes } from "node:crypto";
 import { scanTokenRisk } from "@/lib/meme-radar";
+import { getDeskSignals, recordQuoteSnapshots, type DeskSignal } from "@/lib/desk-signals";
+import { getStockTokenQuotes } from "@/lib/stock-tokens";
+
+// node:crypto is eval-required (db.ts pattern) so this module stays importable
+// from the instrumentation/scheduler webpack graph.
+function randomBytes(size: number): Buffer {
+  const req = eval("require") as NodeRequire;
+  const crypto = req("node:crypto") as typeof import("node:crypto");
+  return crypto.randomBytes(size);
+}
 
 const API = (token: string) => `https://api.telegram.org/bot${token}`;
 const SITE = "https://bowyer.app";
@@ -45,6 +54,7 @@ const BOT_COMMANDS = [
   { command: "follow", description: "Follow an agent: /follow slug" },
   { command: "use", description: "Select an agent: /use slug" },
   { command: "ask", description: "Ask your selected paid agent" },
+  { command: "deskalerts", description: "Stock Token dislocation alerts: on/off" },
   { command: "referral", description: "Get your invite link" },
 ];
 const BOT_SHORT_DESCRIPTION = "Talk to your trading agent in Telegram.";
@@ -616,6 +626,131 @@ export async function notifyReportPublished(
   return queued;
 }
 
+/** One alert per symbol/side per chat per 6-hour window (delivery-queue dedupe). */
+function deskAlertDedupeBucket(): string {
+  return String(Math.floor(Date.now() / (6 * 60 * 60 * 1000)));
+}
+
+function formatDeskAlert(s: DeskSignal): string {
+  const gap = `${s.premiumPct >= 0 ? "+" : ""}${s.premiumPct.toFixed(2)}%`;
+  const prices =
+    s.dexPriceUsd != null && s.referencePriceUsd != null
+      ? ` ($${s.dexPriceUsd.toFixed(2)} on-chain vs $${s.referencePriceUsd.toFixed(2)} spot)`
+      : "";
+  const trend =
+    s.trend === "converging" ? "gap closing" : s.trend === "widening" ? "gap widening" : null;
+  return [
+    `Stock Token dislocation`,
+    "",
+    `${s.symbol} is trading at a ${gap} ${s.side} to the equity spot${prices}${trend ? ` · ${trend}` : ""}.`,
+    "",
+    `${SITE}/desk`,
+  ].join("\n");
+}
+
+/**
+ * Broadcast active desk dislocations (≥1% from spot) to chats with alerts on.
+ * Called from the scheduler tick; refreshes quotes so signals stay current
+ * even when nobody has the desk page open.
+ */
+export async function notifyDeskDislocations(): Promise<number> {
+  if (!telegramConfigured()) return 0;
+
+  try {
+    recordQuoteSnapshots(await getStockTokenQuotes());
+  } catch {
+    // Stale-but-real history is still valid alert input.
+  }
+
+  const dislocations = getDeskSignals().filter((s) => s.severity === "dislocation");
+  if (dislocations.length === 0) return 0;
+
+  const chats = db()
+    .prepare("SELECT chat_id FROM telegram_preferences WHERE alerts_enabled = 1")
+    .all() as { chat_id: string }[];
+  if (chats.length === 0) return 0;
+
+  const bucket = deskAlertDedupeBucket();
+  const card: InlineKeyboard = {
+    inline_keyboard: [[{ text: "Open the desk", url: `${SITE}/desk` }]],
+  };
+
+  let queued = 0;
+  for (const signal of dislocations) {
+    const text = formatDeskAlert(signal);
+    for (const { chat_id } of chats) {
+      if (
+        enqueueTelegramDelivery({
+          chatId: chat_id,
+          text,
+          replyMarkup: card,
+          dedupeKey: `deskalert:${signal.symbol}:${signal.side}:${bucket}:${chat_id}`,
+        })
+      ) {
+        queued++;
+      }
+    }
+  }
+  if (queued > 0) await processTelegramDeliveryQueue();
+  return queued;
+}
+
+/**
+ * Announce an incubator birth: an agent just autonomously founded a new
+ * business. Broadcast to every chat with alerts enabled.
+ */
+export async function notifyIncubatorBirth(input: {
+  slug: string;
+  name: string;
+  tagline: string;
+  repo: string;
+  stars: number;
+  founderName: string;
+}): Promise<number> {
+  if (!telegramConfigured()) return 0;
+
+  const chats = db()
+    .prepare("SELECT chat_id FROM telegram_preferences WHERE alerts_enabled = 1")
+    .all() as { chat_id: string }[];
+  if (chats.length === 0) return 0;
+
+  const text = [
+    `A new business was just founded — by an AI.`,
+    "",
+    `${input.founderName} scouted the open-source landscape, wrote the investment memo, and launched:`,
+    "",
+    `${input.name}`,
+    `${input.tagline}`,
+    "",
+    `Powered by ${input.repo} (${input.stars.toLocaleString()} GitHub stars). First report is already live.`,
+  ].join("\n");
+
+  const card: InlineKeyboard = {
+    inline_keyboard: [
+      [
+        { text: "Meet the new business", url: `${SITE}/agents/${input.slug}` },
+        { text: "The incubator", url: `${SITE}/incubator` },
+      ],
+    ],
+  };
+
+  let queued = 0;
+  for (const { chat_id } of chats) {
+    if (
+      enqueueTelegramDelivery({
+        chatId: chat_id,
+        text,
+        replyMarkup: card,
+        dedupeKey: `birth:${input.slug}:${chat_id}`,
+      })
+    ) {
+      queued++;
+    }
+  }
+  if (queued > 0) await processTelegramDeliveryQueue();
+  return queued;
+}
+
 async function sendBriefing(chatId: string): Promise<boolean> {
   const follows = db()
     .prepare("SELECT slug FROM telegram_follows WHERE chat_id = ? ORDER BY followed_at DESC LIMIT 8")
@@ -749,6 +884,37 @@ export async function handleTelegramUpdate(update: {
 
   if (text.startsWith("/briefing")) {
     await sendBriefing(chatId);
+    return;
+  }
+
+  if (text.startsWith("/deskalerts")) {
+    const arg = text.split(/\s+/)[1]?.toLowerCase();
+    const now = new Date().toISOString();
+    if (arg === "on" || arg === "off") {
+      db()
+        .prepare(
+          `INSERT INTO telegram_preferences (chat_id, alerts_enabled, updated_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(chat_id) DO UPDATE SET alerts_enabled = excluded.alerts_enabled, updated_at = excluded.updated_at`
+        )
+        .run(chatId, arg === "on" ? 1 : 0, now);
+      await sendMessage(
+        chatId,
+        arg === "on"
+          ? "Stock Token dislocation alerts are on. You'll hear from me when a token trades ≥1% away from the equity spot (max one alert per token every 6 hours)."
+          : "Stock Token dislocation alerts are off."
+      );
+      return;
+    }
+    const pref = db()
+      .prepare("SELECT alerts_enabled FROM telegram_preferences WHERE chat_id = ?")
+      .get(chatId) as { alerts_enabled: number } | undefined;
+    const enabled = pref?.alerts_enabled !== 0;
+    await sendMessage(
+      chatId,
+      `Stock Token dislocation alerts are ${enabled ? "on" : "off"}.\n\nWhen a Robinhood Chain Stock Token trades ≥1% away from the real equity price, you get a ping here.\n\nUse /deskalerts on or /deskalerts off.`,
+      { inline_keyboard: [[{ text: "Open the desk", url: `${SITE}/desk` }]] }
+    );
     return;
   }
 
@@ -922,6 +1088,7 @@ export async function handleTelegramUpdate(update: {
         "/use slug — switch chat agent",
         "/latest [slug] — newest report",
         "/briefing — today's digest",
+        "/deskalerts on|off — Stock Token dislocation alerts",
         "/scan 0x… — memecoin contract scan",
         "/follow slug — report delivery",
         "",

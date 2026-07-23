@@ -266,10 +266,13 @@ export function LaunchExperience() {
   const { address: walletAddress, connect: connectWallet, authenticate } = useWallet();
   const [premiumUnlocked, setPremiumUnlocked] = useState(false);
   const [premiumMinBalance, setPremiumMinBalance] = useState<string | null>(null);
+  const [holderTier, setHolderTier] = useState<string>("none");
+  const [premiumBusinessLimit, setPremiumBusinessLimit] = useState<number | null>(0);
 
   useEffect(() => {
     if (!walletAddress) {
       setPremiumUnlocked(false);
+      setHolderTier("none");
       return;
     }
     fetch(`/api/token/gate?wallet=${walletAddress}`)
@@ -277,6 +280,10 @@ export function LaunchExperience() {
       .then((d) => {
         setPremiumUnlocked(Boolean(d.unlocked));
         setPremiumMinBalance(d.minBalance ?? null);
+        setHolderTier(typeof d.tier === "string" ? d.tier : "none");
+        setPremiumBusinessLimit(
+          d.premiumBusinessLimit === null ? null : Number(d.premiumBusinessLimit ?? 0)
+        );
       })
       .catch(() => setPremiumUnlocked(false));
   }, [walletAddress]);
@@ -813,9 +820,11 @@ export function LaunchExperience() {
                 </p>
                 <p className="mt-1 text-[12px] text-muted">
                   {premiumUnlocked
-                    ? "Your wallet holds enough $BOWYER — frontier models unlocked."
+                    ? holderTier === "partner"
+                      ? "Partner tier — frontier models unlocked on unlimited businesses."
+                      : `${holderTier === "founder" ? "Founder" : "Holder"} tier — frontier models unlocked on ${premiumBusinessLimit === 1 ? "one business" : `up to ${premiumBusinessLimit} businesses`}.`
                     : premiumMinBalance
-                      ? `Hold at least ${premiumMinBalance} $BOWYER to unlock Opus, Grok, GPT class, and Fable.`
+                      ? `Hold at least ${premiumMinBalance} $BOWYER to unlock Opus, Grok, GPT class, and Fable. Tiers: 1M → 1 business · 5M → 5 · 10M → unlimited.`
                       : "Connect a wallet that holds $BOWYER to unlock frontier models."}
                 </p>
                 <div className="mt-3">

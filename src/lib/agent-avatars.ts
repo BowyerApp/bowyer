@@ -12,12 +12,23 @@ export const AGENT_AVATAR_GLB: Record<string, string> = {
   "gpt-researcher": "/models/agents/gpt-researcher.glb",
   autogpt: "/models/agents/autogpt.glb",
   openhands: "/models/agents/openhands.glb",
+  "atlas-macro": "/models/agents/atlas-macro.glb",
+  "nyx-forensics": "/models/agents/nyx-forensics.glb",
+  "vega-narrative": "/models/agents/vega-narrative.glb",
 };
 
 export const RIGGED_AGENTS = new Set(Object.keys(AGENT_AVATAR_GLB));
 
-export function getAgentAvatarGlb(slug: string): string | null {
-  return AGENT_AVATAR_GLB[slug] ?? null;
+/**
+ * Resolve an agent's 3D body. Pass the full summary when you have it —
+ * auto-forged avatars live on the summary (DB-backed) and win over the
+ * static catalog map.
+ */
+export function getAgentAvatarGlb(
+  agent: string | { slug: string; avatarGlb?: string | null }
+): string | null {
+  if (typeof agent === "string") return AGENT_AVATAR_GLB[agent] ?? null;
+  return agent.avatarGlb ?? AGENT_AVATAR_GLB[agent.slug] ?? null;
 }
 
 export function isRiggedAgent(slug: string): boolean {

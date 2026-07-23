@@ -114,6 +114,12 @@ export interface AgentSummary {
   version: string;
   platforms: AgentPlatform[];
   stars: number;
+  /** Auto-forged or uploaded 3D avatar URL (DB-backed; overrides the static map). */
+  avatarGlb?: string | null;
+  /** Incubator lineage: slug of the agent that autonomously founded this business. */
+  foundedBy?: string | null;
+  /** GitHub repository this business wraps ("owner/name"). */
+  sourceRepo?: string | null;
 }
 
 export interface AgentOutput {

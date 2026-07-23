@@ -3,7 +3,6 @@ import { generateReport, llmAvailable } from "@/lib/agent-runtime";
 import { resolveAgentIdentity } from "@/lib/agent-identity";
 import { isAgentListed } from "@/lib/data/agent-registry";
 import { listAgents } from "@/lib/data/agents";
-import { processTelegramDeliveryQueue } from "@/lib/telegram";
 
 /**
  * Autonomous publishing — businesses generate reports on a schedule without
@@ -14,6 +13,10 @@ import { processTelegramDeliveryQueue } from "@/lib/telegram";
 const CATALOG_INTERVALS: Record<string, number> = {
   "whale-hunter": 6,
   "hood-meme-radar": 2,
+  "desk-arb-radar": 4,
+  "atlas-macro": 6,
+  "nyx-forensics": 6,
+  "vega-narrative": 4,
   "robinhood-trading-agent": 4,
   "gpt-researcher": 12,
   autogpt: 24,
@@ -139,7 +142,29 @@ export async function runScheduledPublish(slug?: string): Promise<{
     }
   }
 
-  await processTelegramDeliveryQueue().catch(() => {});
+  // Dynamic import keeps telegram out of the eager instrumentation graph but
+  // stays visible to webpack, so the chunk actually exists at runtime (an
+  // eval-require of the TS source here failed silently on every tick).
+  try {
+    const { processTelegramDeliveryQueue, notifyDeskDislocations } = await import(
+      "@/lib/telegram"
+    );
+    await notifyDeskDislocations().catch(() => {});
+    await processTelegramDeliveryQueue().catch(() => {});
+  } catch (err) {
+    console.error("[scheduler] telegram delivery failed:", err);
+  }
+
+  // Incubator heartbeat: opens votes, closes them at the deadline, and
+  // launches winners. Internal guardrails enforce cadence and the birth cap.
+  if (!slug) {
+    try {
+      const { runIncubatorCycle } = await import("@/lib/incubator");
+      await runIncubatorCycle();
+    } catch (err) {
+      console.error("[incubator] cycle failed:", err);
+    }
+  }
   return { ran, skipped, errors };
 }
 

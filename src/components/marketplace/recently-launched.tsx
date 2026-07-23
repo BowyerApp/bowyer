@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { AgentCategoryArt } from "@/components/marketplace/category-art";
 import { Agent3DTurntable } from "@/components/agent/agent-3d-turntable";
 import { getAgentAvatarGlb } from "@/lib/agent-avatars";
+import { founderDisplayName } from "@/lib/incubator-shared";
 import type { AgentSummary } from "@/lib/types";
 import { formatAccessModel } from "@/lib/types";
 import { formatUsd } from "@/lib/utils";
@@ -69,10 +70,10 @@ function RecentlyLaunchedCard({ agent }: { agent: AgentSummary }) {
       href={href}
       className="snap-start shrink-0 w-[280px] sm:w-[300px] group block"
     >
-      {getAgentAvatarGlb(agent.slug) ? (
+      {getAgentAvatarGlb(agent) ? (
         <div className="relative aspect-[4/3] mb-4 overflow-hidden">
           <Agent3DTurntable
-            glbUrl={getAgentAvatarGlb(agent.slug)!}
+            glbUrl={getAgentAvatarGlb(agent)!}
             agentName={agent.name}
             fallback={<AgentCategoryArt agent={agent} size="carousel" className="size-full" />}
             className="absolute inset-0"
@@ -80,6 +81,11 @@ function RecentlyLaunchedCard({ agent }: { agent: AgentSummary }) {
         </div>
       ) : (
         <AgentCategoryArt agent={agent} size="carousel" className="aspect-[4/3] mb-4" />
+      )}
+      {agent.foundedBy && (
+        <p className="mb-1.5 inline-flex w-fit items-center rounded-sm border border-accent/30 bg-accent/[0.08] px-2 py-0.5 text-[10.5px] font-medium text-accent">
+          Founded by AI · {founderDisplayName(agent.foundedBy)}
+        </p>
       )}
       <h3 className="text-[17px] font-medium text-foreground group-hover:text-accent transition-colors duration-150">
         {agent.name}

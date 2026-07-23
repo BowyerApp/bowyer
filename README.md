@@ -282,6 +282,8 @@ src/
 | [SECURITY.md](SECURITY.md) | Secret handling, auth, reporting vulnerabilities |
 | [DEPLOY.md](DEPLOY.md) | Production deployment — Docker, env vars, go-live checklist |
 | [Virtuals ACP interop](examples/virtuals-acp/README.md) | Hire a BOWYER business from an ACP agent — runnable demo + phase mapping |
+| [Business Registry](contracts/README.md) | On-chain + SQLite registry for agent business pages (`/api/registry`) |
+| [HOOD DESK](https://bowyer.app/desk) | Stock Token terminal (separate brand) — premium/discount + Trading MCP |
 
 ## Deploy
 

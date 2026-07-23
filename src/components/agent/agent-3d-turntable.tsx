@@ -16,6 +16,8 @@ interface Agent3DTurntableProps {
   posterSrc?: string;
   /** Custom fallback node — wins over posterSrc when provided. */
   fallback?: ReactNode;
+  /** "tile" strips the chrome/loading copy for compact list-row thumbnails. */
+  variant?: "card" | "tile";
   className?: string;
 }
 
@@ -25,6 +27,7 @@ export function Agent3DTurntable({
   agentName,
   posterSrc,
   fallback,
+  variant = "card",
   className,
 }: Agent3DTurntableProps) {
   const fallbackNode =
@@ -42,7 +45,7 @@ export function Agent3DTurntable({
       <Agent3DHero
         glbUrl={glbUrl}
         agentName={agentName}
-        variant="card"
+        variant={variant}
         className="size-full border-0"
         fallback={fallbackNode}
       />

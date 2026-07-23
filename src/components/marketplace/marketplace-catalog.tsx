@@ -128,9 +128,9 @@ function AgentGridItem({ agent }: { agent: AgentSummary }) {
   const inner = (
     <article className="group h-full flex flex-col">
       <div className="relative aspect-[16/10] overflow-hidden mb-4 transition-opacity duration-150 group-hover:opacity-90">
-        {getAgentAvatarGlb(agent.slug) ? (
+        {getAgentAvatarGlb(agent) ? (
           <Agent3DTurntable
-            glbUrl={getAgentAvatarGlb(agent.slug)!}
+            glbUrl={getAgentAvatarGlb(agent)!}
             agentName={agent.name}
             fallback={<AgentArtwork style={agent.artwork} name={agent.name} variant="card" className="size-full" />}
             className="absolute inset-0"

@@ -9,6 +9,33 @@
     --surface: #111111;
     --text-primary: #f5f5f5;
     --text-secondary: #929292;
+    --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+    --scrollbar-thumb-hover: rgba(255, 255, 255, 0.24);
+
+    /* Native UI (scrollbars, form controls) renders dark instead of white. */
+    color-scheme: dark;
+
+    /* Standard scrollbar styling — inherited by every scroll container. */
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+    scrollbar-width: thin;
+  }
+
+  /* Legacy WebKit fallback for browsers without scrollbar-color support. */
+  @supports not (scrollbar-color: auto) {
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--scrollbar-thumb);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--scrollbar-thumb-hover);
+    }
   }
 
   * {

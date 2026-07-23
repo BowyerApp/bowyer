@@ -12,6 +12,7 @@ import {
   type PlayChallengeId,
 } from "@/lib/agent-playground";
 import { mcpEndpointForSlug } from "@/lib/mcp-endpoint";
+import { useOrigin } from "@/lib/use-origin";
 import { cn } from "@/lib/utils";
 
 interface AgentPlaygroundProps {
@@ -34,6 +35,7 @@ export function AgentPlayground({
   onAvatarUploaded,
 }: AgentPlaygroundProps) {
   const config = useMemo(() => getAgentPlayConfig(slug), [slug]);
+  const mcpUrl = mcpEndpointForSlug(slug, useOrigin());
   const [oracleLine, setOracleLine] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [done, setDone] = useState<Set<PlayChallengeId>>(new Set());
@@ -236,9 +238,7 @@ export function AgentPlayground({
             <ActionChip
               label="Copy MCP URL"
               active={copied === "mcp"}
-              onClick={() =>
-                copyText(mcpEndpointForSlug(slug), "mcp", "mcp")
-              }
+              onClick={() => copyText(mcpUrl, "mcp", "mcp")}
             />
             <ActionChip
               label="Share on X"
@@ -275,9 +275,7 @@ export function AgentPlayground({
               }
             />
           </div>
-          <p className="mt-3 font-mono text-[11px] text-subtle break-all">
-            {mcpEndpointForSlug(slug)}
-          </p>
+          <p className="mt-3 font-mono text-[11px] text-subtle break-all">{mcpUrl}</p>
         </div>
       </div>
 

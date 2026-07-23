@@ -1,10 +1,6 @@
-import { ArenaExperience } from "@/components/arena/arena-experience";
-import { getArenaLiveData } from "@/lib/data/arena-live";
+import { permanentRedirect } from "next/navigation";
 
-export const metadata = { title: "Arena" };
-export const dynamic = "force-dynamic";
-
-export default function ArenaPage() {
-  const data = getArenaLiveData();
-  return <ArenaExperience initial={data} />;
+/** The arena now lives under the desk: /desk/arena. */
+export default function ArenaRedirect() {
+  permanentRedirect("/desk/arena");
 }

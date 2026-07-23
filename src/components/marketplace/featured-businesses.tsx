@@ -79,10 +79,10 @@ function FeaturedEditorial({ agent, reverse }: { agent: AgentSummary; reverse: b
         href={href}
         className={`block min-h-[320px] lg:min-h-[480px] ${reverse ? "lg:[direction:ltr]" : ""}`}
       >
-        {getAgentAvatarGlb(agent.slug) ? (
+        {getAgentAvatarGlb(agent) ? (
           <div className="relative h-full min-h-[inherit]">
             <Agent3DTurntable
-              glbUrl={getAgentAvatarGlb(agent.slug)!}
+              glbUrl={getAgentAvatarGlb(agent)!}
               agentName={agent.name}
               fallback={<AgentCategoryArt agent={agent} size="feature" className="size-full" />}
               className="absolute inset-0"

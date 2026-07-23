@@ -99,6 +99,18 @@ function migrate(d: DatabaseT.Database) {
   if (!cols.some((c) => c.name === "listed")) {
     d.exec("ALTER TABLE agents ADD COLUMN listed INTEGER NOT NULL DEFAULT 1");
   }
+  // Additive migration: incubator lineage — which agent founded this business
+  // and the GitHub repo it wraps.
+  if (!cols.some((c) => c.name === "founded_by")) {
+    d.exec("ALTER TABLE agents ADD COLUMN founded_by TEXT");
+  }
+  if (!cols.some((c) => c.name === "source_repo")) {
+    d.exec("ALTER TABLE agents ADD COLUMN source_repo TEXT");
+  }
+  // Additive migration: auto-forged three.ws avatar path (DB-backed avatar map).
+  if (!cols.some((c) => c.name === "avatar_glb")) {
+    d.exec("ALTER TABLE agents ADD COLUMN avatar_glb TEXT");
+  }
 
   d.exec(`
     CREATE TABLE IF NOT EXISTS schedules (
@@ -309,6 +321,92 @@ function migrate(d: DatabaseT.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_trade_decisions_wallet
       ON trade_decisions (wallet, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS business_registry (
+      slug TEXT PRIMARY KEY,
+      mcp_url TEXT NOT NULL,
+      payout_address TEXT,
+      creator_address TEXT,
+      price_model TEXT NOT NULL DEFAULT 'free',
+      price_usd_cents INTEGER NOT NULL DEFAULT 0,
+      listed INTEGER NOT NULL DEFAULT 1,
+      metadata_uri TEXT NOT NULL DEFAULT '',
+      onchain_tx TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_business_registry_listed
+      ON business_registry (listed, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS x402_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug TEXT NOT NULL,
+      tool TEXT NOT NULL,
+      payer TEXT NOT NULL,
+      tx_hash TEXT NOT NULL UNIQUE,
+      amount_usdg REAL NOT NULL,
+      at TEXT NOT NULL,
+      consumed INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_x402_payer_slug
+      ON x402_payments (slug, payer, consumed);
+
+    CREATE TABLE IF NOT EXISTS acp_offerings (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      service_tool TEXT NOT NULL,
+      price_usdg REAL NOT NULL DEFAULT 0,
+      chain_id INTEGER NOT NULL DEFAULT 4663,
+      active INTEGER NOT NULL DEFAULT 1,
+      acp_job_schema TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_acp_offerings_active
+      ON acp_offerings (active, slug);
+
+    CREATE TABLE IF NOT EXISTS desk_premium_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol TEXT NOT NULL,
+      dex_price_usd REAL,
+      reference_price_usd REAL,
+      premium_pct REAL,
+      at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_desk_premium_symbol_at
+      ON desk_premium_history (symbol, at DESC);
+
+    CREATE TABLE IF NOT EXISTS incubator_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      founder_slug TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'scouting',
+      candidates TEXT,               -- JSON array of repo candidates
+      memo TEXT,                     -- founder's investment memo
+      winner_repo TEXT,              -- full_name of the chosen repo
+      spec TEXT,                     -- JSON business spec
+      agent_slug TEXT,               -- launched business slug
+      error TEXT,
+      vote_deadline TEXT,            -- ISO time when holder voting closes
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_incubator_runs_status
+      ON incubator_runs (status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS incubator_votes (
+      run_id INTEGER NOT NULL,
+      wallet TEXT NOT NULL,
+      repo TEXT NOT NULL,
+      weight REAL NOT NULL DEFAULT 1,
+      at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (run_id, wallet)
+    );
   `);
 }
 

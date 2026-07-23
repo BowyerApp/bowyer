@@ -2,6 +2,8 @@ import Link from "next/link";
 import { AgentCategoryArt } from "@/components/marketplace/category-art";
 import { Agent3DTurntable } from "@/components/agent/agent-3d-turntable";
 import { getAgentAvatarGlb } from "@/lib/agent-avatars";
+import { founderDisplayName } from "@/lib/incubator-shared";
+import { RevenueRankChip } from "@/components/marketplace/revenue-rank-chip";
 import type { AgentSummary } from "@/lib/types";
 import { formatAccessModel } from "@/lib/types";
 import { formatNumber, formatUsd } from "@/lib/utils";
@@ -48,10 +50,10 @@ function BusinessCard({ agent }: { agent: AgentSummary }) {
   const inner = (
     <article className="group flex flex-col h-full">
       <div className="overflow-hidden mb-6 transition-opacity duration-200 group-hover:opacity-85">
-        {getAgentAvatarGlb(agent.slug) ? (
+        {getAgentAvatarGlb(agent) ? (
           <div className="relative aspect-[4/5] sm:aspect-[3/4]">
             <Agent3DTurntable
-              glbUrl={getAgentAvatarGlb(agent.slug)!}
+              glbUrl={getAgentAvatarGlb(agent)!}
               agentName={agent.name}
               fallback={<AgentCategoryArt agent={agent} size="card" className="size-full" />}
               className="absolute inset-0"
@@ -61,6 +63,14 @@ function BusinessCard({ agent }: { agent: AgentSummary }) {
           <AgentCategoryArt agent={agent} size="card" className="aspect-[4/5] sm:aspect-[3/4]" />
         )}
       </div>
+      <span className="mb-2 flex flex-wrap items-center gap-1.5 empty:mb-0 empty:hidden">
+        {agent.foundedBy && (
+          <span className="inline-flex w-fit items-center gap-1.5 rounded-sm border border-accent/30 bg-accent/[0.08] px-2 py-0.5 text-[11px] font-medium text-accent">
+            Founded by AI · {founderDisplayName(agent.foundedBy)}
+          </span>
+        )}
+        <RevenueRankChip slug={agent.slug} />
+      </span>
       <h3 className="text-[22px] sm:text-[24px] font-semibold tracking-[-0.02em] text-foreground leading-tight group-hover:text-accent transition-colors duration-150">
         {agent.name}
       </h3>

@@ -3,7 +3,13 @@ import { getAgentSummary } from "@/lib/data/agents";
 import { hasSubscription, recordSubscription } from "@/lib/data/agent-registry";
 import { getPromoStatus } from "@/lib/promo-pricing";
 import type { ChatTurn } from "@/lib/agent-runtime";
-import { createHash } from "node:crypto";
+// node:crypto is eval-required (db.ts pattern) so this module stays importable
+// from the instrumentation/scheduler webpack graph.
+function createHash(algorithm: string) {
+  const req = eval("require") as NodeRequire;
+  const crypto = req("node:crypto") as typeof import("node:crypto");
+  return crypto.createHash(algorithm);
+}
 
 export const DEFAULT_CHAT_AGENT = "robinhood-trading-agent";
 export const SAMPLE_AGENT = "whale-hunter";

@@ -1,6 +1,8 @@
-/** Shared MCP URL helper — safe for client + server imports */
+/**
+ * Shared MCP URL helper — safe for client + server imports. Pass an explicit
+ * origin (client components should use the `useOrigin` hook) or get the
+ * canonical domain; branching on `window` here caused hydration mismatches.
+ */
 export function mcpEndpointForSlug(slug: string, origin?: string): string {
-  const base =
-    origin ?? (typeof window !== "undefined" ? window.location.origin : "https://bowyer.app");
-  return `${base}/api/mcp/${slug}`;
+  return `${origin ?? "https://bowyer.app"}/api/mcp/${slug}`;
 }

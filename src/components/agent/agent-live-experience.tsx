@@ -3,16 +3,19 @@
 import { useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowUpRight, BadgeCheck } from "lucide-react";
+import { ArrowUpRight, BadgeCheck, Sparkles } from "lucide-react";
 import { Container } from "@/components/layout/container";
 import { LiveTerminal } from "@/components/agent/live-terminal";
 import { SubscribeButton } from "@/components/agent/subscribe-button";
+import { PayPerCallButton } from "@/components/agent/pay-per-call-button";
 import { AccessSetup } from "@/components/agent/access-setup";
 import { RobinhoodTradingPanel } from "@/components/trading/robinhood-trading-panel";
 import { AgentPlayground } from "@/components/agent/agent-playground";
+import { VoiceCall } from "@/components/agent/voice-call";
 import type { Agent3DControlHandle } from "@/components/agent/agent-3d-hero";
 import { getAgentArt } from "@/lib/data/marketplace-reference";
 import { getAgentAvatarGlb } from "@/lib/agent-avatars";
+import { founderDisplayName } from "@/lib/incubator-shared";
 import { effectivePricingForSubscribe, type PromoStatus } from "@/lib/promo-pricing";
 import type { AgentProfile } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -68,7 +71,7 @@ export function AgentLiveExperience({
   const isRobinhoodTrader = agent.slug === "robinhood-trading-agent";
   const heroArt = getAgentArt(agent);
   const showHeroArt = heroArt.includes("/images/agents/");
-  const avatarGlb = getAgentAvatarGlb(agent.slug);
+  const avatarGlb = getAgentAvatarGlb(agent);
   const avatarControlRef = useRef<Agent3DControlHandle>(null);
   const [avatarGlbOverride, setAvatarGlbOverride] = useState<string | null>(null);
   const activeGlb = avatarGlbOverride ?? avatarGlb;
@@ -184,6 +187,35 @@ export function AgentLiveExperience({
               </div>
             )}
 
+            {agent.foundedBy && (
+              <div className="mt-6 max-w-[480px] rounded-sm border border-accent/25 bg-accent/[0.05] px-4 py-3">
+                <p className="flex items-center gap-2 text-[13px] font-medium text-foreground">
+                  <Sparkles className="size-3.5 text-accent" strokeWidth={2} />
+                  Founded autonomously by{" "}
+                  <Link
+                    href={`/agents/${agent.foundedBy}`}
+                    className="text-accent underline underline-offset-2 hover:opacity-80"
+                  >
+                    {founderDisplayName(agent.foundedBy)}
+                  </Link>
+                </p>
+                {agent.sourceRepo && (
+                  <p className="mt-1.5 text-[12.5px] text-muted">
+                    Powered by{" "}
+                    <a
+                      href={`https://github.com/${agent.sourceRepo}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-foreground underline underline-offset-2 hover:text-accent"
+                    >
+                      {agent.sourceRepo}
+                    </a>{" "}
+                    — scouted, evaluated, and launched by an AI with zero human input.
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-3 text-[13px]">
               <span className="flex items-center gap-1.5 text-foreground">
                 <BadgeCheck className="size-4 text-accent" strokeWidth={2} />
@@ -205,6 +237,7 @@ export function AgentLiveExperience({
 
             <div className="mt-10 flex flex-wrap items-center gap-5">
               <SubscribeButton slug={agent.slug} pricing={subscribePricing} promo={promo} />
+              {!isFreeAgent && <PayPerCallButton slug={agent.slug} />}
               <a
                 href="#play"
                 className="text-[13px] text-muted transition-colors hover:text-foreground"
@@ -236,6 +269,11 @@ export function AgentLiveExperience({
                 }
               />
             )}
+            <VoiceCall
+              slug={agent.slug}
+              agentName={agent.name}
+              avatarControlRef={avatarControlRef}
+            />
             <LiveTerminal
               slug={agent.slug}
               reportsTotal={real.reportsTotal}
@@ -417,9 +455,16 @@ export function AgentLiveExperience({
               </p>
             </>
           )}
-          <div className="mt-8 flex justify-center">
+          <div className="mt-8 flex flex-wrap items-start justify-center gap-4">
             <SubscribeButton slug={agent.slug} pricing={subscribePricing} promo={promo} size="lg" />
+            {!isFreeAgent && <PayPerCallButton slug={agent.slug} className="justify-center" />}
           </div>
+          {!isFreeAgent && (
+            <p className="mt-4 text-[12px] text-subtle">
+              Or skip the subscription — pay per call in USDG via{" "}
+              <span className="text-muted">x402</span> on Robinhood Chain.
+            </p>
+          )}
           <p className="mt-6 text-[12px] text-subtle">
             Informational outputs only — not investment advice.{" "}
             <Link href="/docs/setup" className="underline underline-offset-2 hover:text-muted">

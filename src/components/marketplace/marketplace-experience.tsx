@@ -57,7 +57,9 @@ export function MarketplaceExperience({ agents, stats, events }: MarketplaceExpe
         <div className="lg:col-span-6">
           <MarketplaceFeaturedCard agent={featured} stats={stats[featured?.slug ?? ""]} />
         </div>
-        <div className="lg:col-span-3">
+        {/* relative + absolute feed: the featured card sets the row height,
+            the feed fills it exactly and fades out instead of stretching it */}
+        <div className="relative lg:col-span-3">
           <MarketplaceLiveFeed events={events} />
         </div>
       </div>

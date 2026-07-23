@@ -334,18 +334,35 @@ export function resolveRuntimeLlm(config: AgentLlmConfig | null): {
   };
 }
 
-/** Optional second provider when the primary hits rate limits (429) or is down. */
+/**
+ * Second provider when the primary hits rate limits (429) or is down.
+ * Explicit LLM_FALLBACK_* config wins; otherwise the OpenRouter key already
+ * used for premium models doubles as the relief valve, running the same
+ * Llama 3.3 70B weights so agent output doesn't change character mid-failover.
+ */
 export function fallbackRuntimeLlm(): {
   model: string;
   apiKey: string;
   baseUrl: string;
 } | null {
-  const apiKey = process.env.LLM_FALLBACK_API_KEY?.trim();
-  if (!apiKey) return null;
+  const explicit = process.env.LLM_FALLBACK_API_KEY?.trim();
+  if (explicit) {
+    return {
+      model: process.env.LLM_FALLBACK_MODEL?.trim() || "llama-3.3-70b-versatile",
+      apiKey: explicit,
+      baseUrl: process.env.LLM_FALLBACK_BASE_URL?.trim() || "https://api.groq.com/openai/v1",
+    };
+  }
+  const openrouter =
+    process.env.LLM_PREMIUM_API_KEY?.trim() ?? process.env.OPENROUTER_API_KEY?.trim();
+  if (!openrouter) return null;
   return {
-    model: process.env.LLM_FALLBACK_MODEL?.trim() || "llama-3.3-70b-versatile",
-    apiKey,
-    baseUrl: process.env.LLM_FALLBACK_BASE_URL?.trim() || "https://api.groq.com/openai/v1",
+    model: process.env.LLM_FALLBACK_MODEL?.trim() || "meta-llama/llama-3.3-70b-instruct",
+    apiKey: openrouter,
+    baseUrl:
+      process.env.LLM_PREMIUM_BASE_URL?.trim() ||
+      process.env.LLM_FALLBACK_BASE_URL?.trim() ||
+      "https://openrouter.ai/api/v1",
   };
 }
 

@@ -59,10 +59,10 @@ export function FeaturedAgent({ agent }: FeaturedAgentProps) {
           className="block transition-opacity duration-150 hover:opacity-95"
           tabIndex={agent.profileReady ? 0 : -1}
         >
-          {getAgentAvatarGlb(agent.slug) ? (
+          {getAgentAvatarGlb(agent) ? (
             <div className="relative aspect-[16/10] lg:min-h-[360px]">
               <Agent3DTurntable
-                glbUrl={getAgentAvatarGlb(agent.slug)!}
+                glbUrl={getAgentAvatarGlb(agent)!}
                 agentName={agent.name}
                 fallback={<AgentArtwork style={agent.artwork} name={agent.name} variant="hero" className="size-full" />}
                 className="absolute inset-0"

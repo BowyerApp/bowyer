@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Check, Copy } from "lucide-react";
 import { useWallet } from "@/lib/wallet-context";
+import { useOrigin } from "@/lib/use-origin";
 import { cn } from "@/lib/utils";
 
 /**
@@ -30,8 +31,7 @@ export function AccessSetup({ slug, name, isPaid, tools }: AccessSetupProps) {
   const { address } = useWallet();
   const [tab, setTab] = useState<ClientTab>("cursor");
 
-  const origin =
-    typeof window !== "undefined" ? window.location.origin : "https://bowyer.app";
+  const origin = useOrigin();
   const endpoint = `${origin}/api/mcp/${slug}`;
   const wallet = address ?? "0xYOUR_WALLET_ADDRESS";
 

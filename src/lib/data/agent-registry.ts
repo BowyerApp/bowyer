@@ -73,6 +73,9 @@ interface AgentRow {
   mcp_endpoint: string | null;
   payout_address: string | null;
   owner_address: string | null;
+  avatar_glb?: string | null;
+  founded_by?: string | null;
+  source_repo?: string | null;
 }
 
 interface SubRow {
@@ -85,7 +88,13 @@ interface SubRow {
 }
 
 function rowToSummary(row: AgentRow): AgentSummary {
-  return JSON.parse(row.summary) as AgentSummary;
+  const summary = JSON.parse(row.summary) as AgentSummary;
+  // Live columns override the frozen summary JSON so lineage and forged
+  // avatars appear without rewriting the stored blob.
+  if (row.avatar_glb) summary.avatarGlb = row.avatar_glb;
+  if (row.founded_by) summary.foundedBy = row.founded_by;
+  if (row.source_repo) summary.sourceRepo = row.source_repo;
+  return summary;
 }
 
 function rowToSub(row: SubRow): SubscriptionRecord {
@@ -183,21 +192,51 @@ export function registerAgent(input: RegisterAgentInput): { slug: string } {
       : null
   );
 
+  try {
+    const req = eval("require") as NodeRequire;
+    const { syncAgentToRegistry } = req("../business-registry") as {
+      syncAgentToRegistry(slug: string): unknown;
+    };
+    syncAgentToRegistry(slug);
+  } catch {
+    /* registry mirror is best-effort at launch */
+  }
+
   return { slug };
 }
 
-/** Knowledge sources a business was launched with (empty for catalog agents). */
+/**
+ * Curated live sources for BOWYER Labs flagship agents. Catalog agents have
+ * no DB row, so their knowledge feeds are pinned here (same fetch pipeline
+ * and per-source caps as creator-launched sources).
+ */
+const CATALOG_SOURCES: Record<string, KnowledgeSource[]> = {
+  "atlas-macro": [
+    { type: "rss", url: "https://www.federalreserve.gov/feeds/press_all.xml" },
+    { type: "rss", url: "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
+  ],
+  "nyx-forensics": [
+    { type: "rss", url: "https://blog.chainalysis.com/feed/" },
+    { type: "github", url: "https://github.com/crytic/slither" },
+  ],
+  "vega-narrative": [
+    { type: "rss", url: "https://www.coindesk.com/arc/outboundfeeds/rss/" },
+    { type: "rss", url: "https://cointelegraph.com/rss" },
+  ],
+};
+
+/** Knowledge sources a business was launched with (catalog flagships are pinned above). */
 export function getAgentSources(slug: string): KnowledgeSource[] {
   if (!isServer) return [];
   const row = db()
     .prepare("SELECT sources FROM agents WHERE slug = ?")
     .get(slug) as { sources: string | null } | undefined;
-  if (!row?.sources) return [];
+  if (!row?.sources) return CATALOG_SOURCES[slug] ?? [];
   try {
     const parsed = JSON.parse(row.sources) as KnowledgeSource[];
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : (CATALOG_SOURCES[slug] ?? []);
   } catch {
-    return [];
+    return CATALOG_SOURCES[slug] ?? [];
   }
 }
 
@@ -230,6 +269,36 @@ export function getAgentOwnerAddress(slug: string): string | null {
     .prepare("SELECT owner_address FROM agents WHERE slug = ?")
     .get(slug) as { owner_address: string | null } | undefined;
   return row?.owner_address ?? null;
+}
+
+/**
+ * Slugs of an owner's businesses configured with a premium platform model,
+ * in launch order. Used to enforce holder-tier premium business limits —
+ * the earliest-launched businesses keep premium when a wallet is over limit.
+ */
+export function listPremiumBusinessSlugsForOwner(
+  owner: string,
+  isPremiumModelId: (id: string) => boolean
+): string[] {
+  if (!isServer) return [];
+  const rows = db()
+    .prepare(
+      "SELECT slug, llm_config FROM agents WHERE owner_address = ? ORDER BY id ASC"
+    )
+    .all(owner.toLowerCase()) as { slug: string; llm_config: string | null }[];
+  const slugs: string[] = [];
+  for (const row of rows) {
+    if (!row.llm_config) continue;
+    try {
+      const config = JSON.parse(row.llm_config) as { mode?: string; model?: string };
+      if (config.mode === "platform" && config.model && isPremiumModelId(config.model)) {
+        slugs.push(row.slug);
+      }
+    } catch {
+      /* malformed config never counts toward the limit */
+    }
+  }
+  return slugs;
 }
 
 export interface UpdateAgentInput {
@@ -305,9 +374,10 @@ export function listEarnings(owner: string): SubscriptionRecord[] {
 }
 
 /**
- * Payout address for the platform's own flagship agent (Whale Hunter).
- * MUST be a wallet you control — set PLATFORM_PAYOUT_ADDRESS in the server env.
- * If unset, paid subscriptions fail safely instead of sending ETH to a void.
+ * Payout address for the platform's own businesses (catalog flagships and
+ * incubator-born agents). MUST be a wallet you control — set
+ * PLATFORM_PAYOUT_ADDRESS in the server env. If unset, paid subscriptions
+ * fail safely instead of sending funds to a void.
  */
 function platformPayout(): string | null {
   const addr = process.env.PLATFORM_PAYOUT_ADDRESS;
@@ -315,12 +385,17 @@ function platformPayout(): string | null {
 }
 
 export function getPayoutAddress(slug: string): string | null {
-  if (!isServer) return slug === "whale-hunter" ? platformPayout() : null;
+  if (!isServer) return null;
   const row = db()
-    .prepare("SELECT payout_address FROM agents WHERE slug = ?")
-    .get(slug) as { payout_address: string | null } | undefined;
+    .prepare("SELECT payout_address, founded_by FROM agents WHERE slug = ?")
+    .get(slug) as { payout_address: string | null; founded_by: string | null } | undefined;
   if (row?.payout_address) return row.payout_address;
-  return slug === "whale-hunter" ? platformPayout() : null;
+  // No registry row = built-in BOWYER Labs catalog agent; a row with
+  // founded_by = incubator-born, platform-owned. Both pay out to the platform
+  // wallet. User-launched agents keep null so paid flows fail safely rather
+  // than misrouting revenue.
+  if (!row || row.founded_by) return platformPayout();
+  return null;
 }
 
 export function recordSubscription(record: SubscriptionRecord): void {
@@ -443,6 +518,17 @@ export function setAgentListed(slug: string, listed: boolean): boolean {
   const res = db()
     .prepare("UPDATE agents SET listed = ? WHERE slug = ?")
     .run(listed ? 1 : 0, slug);
+  if (res.changes > 0) {
+    try {
+      const req = eval("require") as NodeRequire;
+      const { upsertRegistryEntry } = req("../business-registry") as {
+        upsertRegistryEntry(input: { slug: string; listed: boolean }): unknown;
+      };
+      upsertRegistryEntry({ slug, listed });
+    } catch {
+      /* best-effort mirror */
+    }
+  }
   return res.changes > 0;
 }
 
@@ -470,6 +556,18 @@ export function getRegisteredAgent(slug: string): AgentSummary | null {
     | AgentRow
     | undefined;
   return row ? rowToSummary(row) : null;
+}
+
+/** Incubator lineage: founding agent + wrapped repo, if platform-born. */
+export function getAgentLineage(
+  slug: string
+): { foundedBy: string; sourceRepo: string | null } | null {
+  if (!isServer) return null;
+  const row = db()
+    .prepare("SELECT founded_by, source_repo FROM agents WHERE slug = ?")
+    .get(slug) as { founded_by: string | null; source_repo: string | null } | undefined;
+  if (!row?.founded_by) return null;
+  return { foundedBy: row.founded_by, sourceRepo: row.source_repo };
 }
 
 export function getRegisteredDescription(slug: string): string | undefined {

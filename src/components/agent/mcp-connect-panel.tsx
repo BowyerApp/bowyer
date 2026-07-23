@@ -10,6 +10,7 @@ import {
   type McpClient,
 } from "@/lib/mcp";
 import { mcpEndpointForSlug } from "@/lib/mcp-endpoint";
+import { useOrigin } from "@/lib/use-origin";
 import { CopyButton } from "@/components/ui/copy-button";
 import { cn } from "@/lib/utils";
 
@@ -22,7 +23,7 @@ export function McpConnectPanel({ agent }: McpConnectPanelProps) {
   const [mode, setMode] = useState<"agent" | "robinhood">(
     agent.mcpEndpoint ? "agent" : "robinhood"
   );
-  const origin = typeof window !== "undefined" ? window.location.origin : undefined;
+  const origin = useOrigin();
 
   const snippet =
     mode === "agent" && agent.mcpEndpoint
