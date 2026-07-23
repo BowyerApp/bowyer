@@ -51,12 +51,32 @@ interface LeaderRow {
   revenueUsd: number;
 }
 
+/** A queue event currently on air (drives the lower-third + camera cut). */
+interface OnAirEvent {
+  id: number;
+  kind: "report" | "hire" | "birth";
+  slug: string;
+  name: string;
+  title: string;
+}
+
 /**
  * THE TRADING FLOOR — a walkable 3D room where all nine robots work.
  * Custom three.js scene (the three.ws embed has no first-person mode):
  * WASD + mouse-look, real rigged GLBs, live desk + revenue panels.
+ *
+ * `broadcast` turns the floor into a TV channel: input is disabled, an
+ * auto-director orbits the room and cuts to whichever desk just published,
+ * hired, or got born, and broadcast chrome (LIVE bug, ticker, lower-thirds)
+ * frames the picture for the 24/7 stream.
  */
-export function FloorExperience({ stations }: { stations: FloorStation[] }) {
+export function FloorExperience({
+  stations,
+  broadcast = false,
+}: {
+  stations: FloorStation[];
+  broadcast?: boolean;
+}) {
   const mountRef = useRef<HTMLDivElement>(null);
   const [locked, setLocked] = useState(false);
   const [loadedCount, setLoadedCount] = useState(0);
@@ -66,7 +86,11 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
   const [leaders, setLeaders] = useState<LeaderRow[]>([]);
   const [webglFailed, setWebglFailed] = useState(false);
   const [fallbackLook, setFallbackLook] = useState(false);
+  const [onAir, setOnAir] = useState<OnAirEvent | null>(null);
+  const [utcClock, setUtcClock] = useState("");
   const nearestRef = useRef<FloorStation | null>(null);
+  // Active camera cut for the auto-director (read inside the three.js loop).
+  const cutRef = useRef<{ slug: string; until: number } | null>(null);
   const lockRef = useRef<(() => void) | null>(null);
   // Latest quotes/leaders, readable from inside the three.js loop (wall
   // ticker + market screens re-render from these without React).
@@ -109,6 +133,52 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
       clearInterval(interval);
     };
   }, []);
+
+  // Broadcast: poll the event queue; each new event cuts the camera to that
+  // business's desk and runs a lower-third. The boot backlog never cuts —
+  // only events that land while we're on air.
+  useEffect(() => {
+    if (!broadcast) return;
+    let cancelled = false;
+    let lastSeen = 0;
+    let booted = false;
+    const poll = () => {
+      fetch(`/api/broadcast/queue?since=${lastSeen}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data: { items?: (OnAirEvent & { at: string })[] } | null) => {
+          if (cancelled || !data?.items?.length) return;
+          lastSeen = Math.max(lastSeen, ...data.items.map((i) => i.id));
+          if (!booted) {
+            booted = true;
+            return;
+          }
+          const newest = data.items[0];
+          setOnAir(newest);
+          cutRef.current = { slug: newest.slug, until: Date.now() + 13_000 };
+          window.setTimeout(
+            () => setOnAir((cur) => (cur?.id === newest.id ? null : cur)),
+            14_000
+          );
+        })
+        .catch(() => {});
+    };
+    poll();
+    const interval = setInterval(poll, 8_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [broadcast]);
+
+  // Broadcast clock (UTC — one clock for a global channel).
+  useEffect(() => {
+    if (!broadcast) return;
+    const tick = () =>
+      setUtcClock(`${new Date().toISOString().slice(11, 19)} UTC`);
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [broadcast]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -932,7 +1002,7 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
                 }
                 if (retargetedWalk) {
                   rig.walkAction = mixer.clipAction(retargetedWalk);
-                  rig.walkAction.timeScale = 0.92;
+                  rig.walkAction.timeScale = 0.9;
                 }
                 mixers.push(mixer);
                 mixer.update(0);
@@ -1118,7 +1188,9 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
       window.addEventListener("resize", onResize);
 
       /* ---- robot wandering ---- */
-      const WALK_SPEED = 1.05;
+      // Matched to the retargeted walk cycle's foot speed so feet grip the
+      // floor instead of sliding.
+      const WALK_SPEED = 1.25;
       const MAX_WALKERS = 3;
 
       // Distance from the room center to the segment (x1,z1)→(x2,z2); used to
@@ -1183,6 +1255,13 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
       let tapeRefreshIn = 8;
       let candleIn = 2.6;
       let leaderIn = 12;
+
+      // Auto-director state (broadcast mode): a slow drifting orbit that
+      // damps toward event cuts, so every transition is a dolly, not a jump.
+      let orbitAngle = Math.atan2(camera.position.x, camera.position.z);
+      const bcTargetPos = new THREE.Vector3();
+      const bcTargetLook = new THREE.Vector3(0, 1.7, 0);
+      const bcLook = new THREE.Vector3(0, 1.7, 0);
 
       const animate = () => {
         raf = requestAnimationFrame(animate);
@@ -1255,7 +1334,6 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
               rig.waypoints = buildStroll(rig);
               rig.mode = "walk";
               walkers++;
-              setMoving(rig, true);
             }
           } else if (rig.mode === "greet") {
             faceYaw(Math.atan2(pdx, pdz), 4.5);
@@ -1265,7 +1343,6 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
               rig.greetMuteUntil = t + 12;
               if (rig.waypoints.length > 0) {
                 rig.mode = "walk";
-                setMoving(rig, true);
               } else {
                 rig.mode = "desk";
                 rig.nextAt = t + 12 + Math.random() * 30;
@@ -1280,7 +1357,6 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
           } else if (rig.mode === "pause") {
             if (t >= rig.nextAt) {
               rig.mode = "walk";
-              setMoving(rig, true);
             }
           } else if (rig.mode === "walk") {
             const wp = rig.waypoints[0];
@@ -1292,10 +1368,12 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
               const dx = wp.x - model.position.x;
               const dz = wp.z - model.position.z;
               const dist = Math.hypot(dx, dz);
-              if (dist < 0.35) {
+              const isHome = rig.waypoints.length === 1;
+              // The home pad needs a tight arrival so the robot visibly
+              // steps onto it — everything else can be loose.
+              if (dist < (isHome ? 0.08 : 0.35)) {
                 rig.waypoints.shift();
                 if (rig.waypoints.length === 0) {
-                  model.position.set(rig.homeX, rig.groundY, rig.homeZ);
                   rig.mode = "desk";
                   rig.nextAt = t + 18 + Math.random() * 40;
                   setMoving(rig, false);
@@ -1305,10 +1383,15 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
                   setMoving(rig, false);
                 }
               } else {
-                // Turn first, walk once roughly facing the waypoint.
-                const delta = faceYaw(Math.atan2(dx, dz), 3.2);
-                if (Math.abs(delta) < 0.6) {
-                  const step = Math.min(WALK_SPEED * dt, dist);
+                // Turn on the spot (idle anim), then walk once roughly
+                // facing the waypoint — feet only move when the body does.
+                const delta = faceYaw(Math.atan2(dx, dz), 5.5);
+                const facing = Math.abs(delta) < 0.35;
+                setMoving(rig, facing);
+                if (facing) {
+                  // Ease into the last half-metre so arrivals don't clip.
+                  const speed = WALK_SPEED * Math.min(1, dist / 0.5);
+                  const step = Math.min(speed * dt, dist);
                   model.position.x += Math.sin(model.rotation.y) * step;
                   model.position.z += Math.cos(model.rotation.y) * step;
                 }
@@ -1316,7 +1399,8 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
             }
           }
 
-          // Walkers give everyone room instead of phasing through them.
+          // Walkers give everyone room instead of phasing through them —
+          // a gentle dt-scaled drift, never a shove.
           if (rig.mode === "walk") {
             for (const other of robots.values()) {
               if (other === rig) continue;
@@ -1324,7 +1408,7 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
               const oz = model.position.z - other.model.position.z;
               const od = Math.hypot(ox, oz);
               if (od > 0.001 && od < 1.3) {
-                const push = (1.3 - od) * 0.5;
+                const push = Math.min((1.3 - od) * 2.2 * dt, od * 0.5);
                 model.position.x += (ox / od) * push;
                 model.position.z += (oz / od) * push;
               }
@@ -1335,7 +1419,46 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
           rig.plate.position.set(model.position.x, 2.65, model.position.z);
         }
 
-        if (isEntered()) {
+        if (broadcast) {
+          // ---- auto-director ----
+          const cut =
+            cutRef.current && Date.now() < cutRef.current.until ? cutRef.current : null;
+          let framed = false;
+          if (cut) {
+            const rig = robots.get(cut.slug);
+            const st = rig
+              ? { x: rig.model.position.x, z: rig.model.position.z }
+              : stationPositions.get(cut.slug);
+            if (st) {
+              const d = Math.hypot(st.x, st.z) || 1;
+              const cx = -st.x / d;
+              const cz = -st.z / d;
+              // Three-quarter framing: pull toward center, slide on the tangent.
+              bcTargetPos.set(
+                st.x + cx * 3.1 - cz * 1.15,
+                1.62,
+                st.z + cz * 3.1 + cx * 1.15
+              );
+              bcTargetLook.set(st.x, 1.28, st.z);
+              framed = true;
+            }
+          }
+          if (!framed) {
+            orbitAngle += dt * 0.05;
+            const orbitR = 11.2 + Math.sin(t * 0.045) * 1.8;
+            bcTargetPos.set(
+              Math.sin(orbitAngle) * orbitR,
+              2.3 + Math.sin(t * 0.083) * 0.55,
+              Math.cos(orbitAngle) * orbitR
+            );
+            bcTargetLook.set(0, 1.45, 0);
+          }
+          // Faster damping into cuts, lazy drift back to the orbit.
+          const damp = 1 - Math.exp(-dt * (framed ? 2.1 : 0.75));
+          camera.position.lerp(bcTargetPos, damp);
+          bcLook.lerp(bcTargetLook, damp);
+          camera.lookAt(bcLook);
+        } else if (isEntered()) {
           const speed = keys.has("ShiftLeft") ? 7.5 : 4.2;
           velocity.set(0, 0, 0);
           if (keys.has("KeyW") || keys.has("ArrowUp")) velocity.z += 1;
@@ -1411,7 +1534,14 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
   }, []);
 
   return (
-    <div className="relative h-[100dvh] w-full overflow-hidden bg-[#030303]">
+    <div
+      className={
+        broadcast
+          ? // Full viewport takeover: the channel picture covers header/footer.
+            "fixed inset-0 z-[60] overflow-hidden bg-[#030303]"
+          : "relative h-[100dvh] w-full overflow-hidden bg-[#030303]"
+      }
+    >
       <div ref={mountRef} className="absolute inset-0" />
 
       {webglFailed && (
@@ -1423,8 +1553,120 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
         </div>
       )}
 
+      {/* Broadcast chrome — the TV frame around the auto-directed picture */}
+      {broadcast && !webglFailed && (
+        <>
+          <style>{`
+            @keyframes bowyer-ticker { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+            @keyframes bowyer-lower { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+          `}</style>
+
+          {/* legibility scrims */}
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-black/70 to-transparent" />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-36 bg-gradient-to-t from-black/85 to-transparent" />
+
+          {/* tuning card while the room loads — never a black screen */}
+          {loadedCount < stations.length && (
+            <div className="pointer-events-none absolute inset-0 z-[15] flex flex-col items-center justify-center bg-black/60">
+              <span className="flex items-center gap-2.5 font-mono text-[12px] uppercase tracking-[0.28em] text-white/70">
+                <span className="size-1.5 animate-pulse rounded-full bg-[#b8ff2e]" />
+                Acquiring signal — robots arriving {loadedCount}/{stations.length}
+              </span>
+            </div>
+          )}
+
+          {/* LIVE bug */}
+          <div className="pointer-events-none absolute left-6 top-5 z-20 flex items-center gap-3">
+            <span className="flex items-center gap-2 rounded-sm bg-[#e11d2e] px-2.5 py-1">
+              <span className="size-1.5 animate-pulse rounded-full bg-white" />
+              <span className="font-mono text-[12px] font-bold tracking-[0.18em] text-white">
+                LIVE
+              </span>
+            </span>
+            <span className="font-mono text-[12px] uppercase tracking-[0.24em] text-white/85">
+              BOWYER · The Trading Floor
+            </span>
+          </div>
+
+          {/* clock + coverage line */}
+          <div className="pointer-events-none absolute right-6 top-5 z-20 text-right">
+            <p className="font-mono text-[14px] tabular-nums text-white/90">{utcClock}</p>
+            <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.22em] text-white/45">
+              24/7 autonomous coverage
+            </p>
+          </div>
+
+          {/* lower third */}
+          {onAir && (
+            <div
+              key={onAir.id}
+              className="pointer-events-none absolute bottom-16 left-6 z-20 max-w-[640px]"
+              style={{ animation: "bowyer-lower 0.55s cubic-bezier(0.2,0.7,0.3,1)" }}
+            >
+              <p className="inline-block rounded-sm bg-[#b8ff2e] px-2 py-0.5 font-mono text-[10.5px] font-bold uppercase tracking-[0.2em] text-black">
+                {onAir.kind === "report" && "Publishing now"}
+                {onAir.kind === "hire" && "Agent-to-agent hire"}
+                {onAir.kind === "birth" && "New business born"}
+              </p>
+              <div className="mt-1.5 border-l-2 border-[#b8ff2e] bg-black/75 px-4 py-3 backdrop-blur-sm">
+                <p className="text-[17px] font-semibold leading-snug text-white">{onAir.name}</p>
+                <p className="mt-1 text-[13.5px] leading-snug text-white/75">{onAir.title}</p>
+              </div>
+            </div>
+          )}
+
+          {/* bottom ticker */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex h-11 items-center overflow-hidden border-t border-white/10 bg-black/85 backdrop-blur-sm">
+            <div className="flex shrink-0 items-center self-stretch border-r border-white/10 bg-[#b8ff2e] px-4">
+              <span className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-black">
+                Stock tokens
+              </span>
+            </div>
+            <div className="relative flex-1 overflow-hidden">
+              <div
+                className="flex w-max items-center gap-10 whitespace-nowrap pl-8"
+                style={{ animation: "bowyer-ticker 42s linear infinite" }}
+              >
+                {[0, 1].map((half) => (
+                  <div key={half} className="flex items-center gap-10">
+                    {(quotes.length > 0
+                      ? quotes
+                      : [{ symbol: "BOWYER", dexPriceUsd: null, premiumDiscountPct: null }]
+                    ).map((q, qi) => (
+                      <span
+                        key={`${half}-${qi}`}
+                        className="flex items-baseline gap-2 font-mono text-[12.5px] tabular-nums"
+                      >
+                        <span className="text-white/90">{q.symbol}</span>
+                        <span className="text-white/50">
+                          {q.dexPriceUsd != null ? `$${q.dexPriceUsd.toFixed(2)}` : "—"}
+                        </span>
+                        <span
+                          className={
+                            (q.premiumDiscountPct ?? 0) >= 0
+                              ? "text-[#b8ff2e]"
+                              : "text-[#ff5c5c]"
+                          }
+                        >
+                          {q.premiumDiscountPct != null
+                            ? `${q.premiumDiscountPct >= 0 ? "▲" : "▼"}${Math.abs(q.premiumDiscountPct).toFixed(1)}%`
+                            : "LIVE"}
+                        </span>
+                      </span>
+                    ))}
+                    <span className="font-mono text-[12.5px] uppercase tracking-[0.18em] text-white/35">
+                      Autonomous businesses · agent-to-agent economy · Robinhood Chain
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Enter overlay */}
-      {!locked && !focused && !webglFailed && (
+      {!locked && !focused && !webglFailed && !broadcast && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 backdrop-blur-[2px]">
           <p className="flex items-center gap-2 text-[13px] text-muted">
             <span className="size-1.5 rounded-full bg-accent animate-pulse" />
@@ -1470,7 +1712,7 @@ export function FloorExperience({ stations }: { stations: FloorStation[] }) {
       )}
 
       {/* Live panels */}
-      {!focused && !webglFailed && (
+      {!focused && !webglFailed && !broadcast && (
         <>
           {quotes.length > 0 && (
             <div className="pointer-events-none absolute left-4 top-4 z-10 hidden w-[220px] rounded-sm border border-white/10 bg-black/65 p-4 backdrop-blur-sm lg:block">

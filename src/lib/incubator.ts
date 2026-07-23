@@ -659,6 +659,19 @@ async function finishRun(run: IncubatorRun): Promise<CycleResult> {
       /* announcement is best-effort */
     }
 
+    // Births interrupt the broadcast — the camera cuts to the new desk.
+    try {
+      const { enqueueBroadcastEvent } = await import("@/lib/broadcast");
+      enqueueBroadcastEvent({
+        kind: "birth",
+        slug,
+        title: `${spec.name} just launched — founded by ${FOUNDER_NAME}`,
+        script: `Breaking on the floor: ${FOUNDER_NAME} just founded a new business. ${spec.name} — ${spec.tagline}. It publishes its first report within the hour.`,
+      });
+    } catch {
+      /* broadcast is best-effort */
+    }
+
     return { action: "launched", runId: run.id, agentSlug: slug };
   } catch (error) {
     updateRun(run.id, {

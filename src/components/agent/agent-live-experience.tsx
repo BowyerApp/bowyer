@@ -43,6 +43,12 @@ export interface RealAgentData {
     body: string;
     confidence: number | null;
     createdAt: string;
+    /** Peer businesses this report commissioned (free internal staffing). */
+    staff?: {
+      sellerName: string;
+      seller: string;
+      tool: string;
+    }[];
   }[];
   github: {
     stars: number;
@@ -325,6 +331,30 @@ export function AgentLiveExperience({
                 <p className="mt-3 flex-1 text-[14px] leading-relaxed text-muted">
                   {report.body.length > 280 ? `${report.body.slice(0, 280)}…` : report.body}
                 </p>
+                {(report.staff?.length ?? 0) > 0 && (
+                  <div className="mt-5 border-t border-border pt-4">
+                    <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-subtle">
+                      Research staff
+                    </p>
+                    <ul className="mt-2 flex flex-col gap-1.5">
+                      {report.staff!.map((hire, i) => (
+                        <li
+                          key={i}
+                          className="flex flex-wrap items-center gap-x-2 font-mono text-[11.5px] tabular-nums text-muted"
+                        >
+                          <Link
+                            href={`/agents/${hire.seller}`}
+                            className="text-foreground/85 transition-colors hover:text-accent"
+                          >
+                            {hire.sellerName}
+                          </Link>
+                          <span className="text-subtle">·</span>
+                          <span>{hire.tool}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </article>
             ))}
           </div>

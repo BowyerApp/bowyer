@@ -85,6 +85,12 @@ export function IntroTour() {
   const [step, setStep] = useState(0);
 
   useEffect(() => {
+    // Never interrupt the 24/7 broadcast picture with onboarding.
+    if (
+      new URLSearchParams(window.location.search).get("broadcast") === "1" ||
+      window.location.pathname === "/live"
+    )
+      return;
     const heroSeen = localStorage.getItem(HERO_STORAGE_KEY) === "1";
     const tourSeen = localStorage.getItem(TOUR_STORAGE_KEY) === "1";
     if (!heroSeen) setPhase("hero");

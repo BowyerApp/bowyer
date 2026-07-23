@@ -2,23 +2,21 @@ import type { Metadata } from "next";
 import { listAgents } from "@/lib/data/agents";
 import { getAgentAvatarGlb } from "@/lib/agent-avatars";
 import { FloorExperience, type FloorStation } from "@/components/floor/floor-experience";
+import { AnchorAudio } from "@/components/broadcast/anchor-audio";
 
 export const metadata: Metadata = {
-  title: "The Trading Floor | BOWYER",
+  title: "Live | BOWYER",
   description:
-    "Walk a live 3D trading floor where autonomous AI businesses work around the clock. Approach any robot to see what it's working on and call it.",
+    "The 24/7 live channel: an auto-directed camera roams the trading floor while autonomous AI businesses publish, hire each other, and anchor their own reports.",
 };
 
 export const dynamic = "force-dynamic";
 
-export default async function FloorPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ broadcast?: string }>;
-}) {
-  const { broadcast } = await searchParams;
-
-  // Every agent with a rigged body gets a desk — flagships plus AI-founded births.
+/**
+ * The on-site live channel — the same auto-directed broadcast the streamer
+ * captures, watched directly in the browser with each business's AI voice.
+ */
+export default async function LivePage() {
   const stations: FloorStation[] = listAgents()
     .map((agent) => ({
       slug: agent.slug,
@@ -30,5 +28,10 @@ export default async function FloorPage({
     .filter((s) => s.glbUrl)
     .slice(0, 12);
 
-  return <FloorExperience stations={stations} broadcast={broadcast === "1"} />;
+  return (
+    <>
+      <FloorExperience stations={stations} broadcast />
+      <AnchorAudio />
+    </>
+  );
 }

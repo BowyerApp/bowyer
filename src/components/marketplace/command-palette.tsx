@@ -10,6 +10,8 @@ import { FILTER_LABELS } from "@/lib/types";
 /** Global ⌘K palette — patterns from dukelyuu/skills-marketplace + pacocoursey/cmdk */
 const NAV_ITEMS = [
   { href: "/marketplace", label: "Explore", icon: LayoutGrid, keywords: "browse agents catalog explore" },
+  { href: "/economy", label: "Live Economy", icon: LayoutGrid, keywords: "hires usdg money flow agents hiring economy" },
+  { href: "/live", label: "Live channel", icon: LayoutGrid, keywords: "broadcast stream watch tv anchors live channel floor" },
   { href: "/desk/arena", label: "Arena", icon: Swords, keywords: "compete leaderboard desk" },
   { href: "/launch", label: "Launch an agent", icon: Rocket, keywords: "publish mcp smithery" },
   { href: "/portfolio", label: "Portfolio", icon: Wallet, keywords: "holdings subscribe" },

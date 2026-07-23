@@ -132,7 +132,8 @@ export async function runScheduledPublish(slug?: string): Promise<{
       const topic =
         row.topic_template?.trim() ||
         `Scheduled briefing: latest developments in ${identity.tagline}`;
-      await generateReport(identity, topic);
+      // Scheduled reports may hire peer businesses (treasury-funded, capped).
+      await generateReport(identity, topic, { hire: true });
       db()
         .prepare("UPDATE schedules SET last_run_at = ? WHERE slug = ?")
         .run(new Date().toISOString(), row.slug);

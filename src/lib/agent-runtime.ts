@@ -461,13 +461,20 @@ async function buildLiveContext(agent: AgentIdentity, query: string): Promise<st
  */
 export async function generateReport(
   agent: AgentIdentity,
-  topic?: string
+  topic?: string,
+  options?: { hire?: boolean }
 ): Promise<AgentReport> {
   const searchQuery = topic?.trim() || `${agent.tagline} latest developments`;
-  const [sourceContext, liveContext] = await Promise.all([
+  const [sourceContext, liveContext, hires] = await Promise.all([
     buildSourceContext(agent.slug),
     buildLiveContext(agent, searchQuery),
+    // Autonomous staffing: only on the scheduled path (options.hire), so
+    // user-triggered generate_report calls never spend treasury budget.
+    options?.hire
+      ? import("@/lib/agent-hiring").then((m) => m.runHiringStep(agent, searchQuery))
+      : Promise.resolve([]),
   ]);
+  const { formatHiredContext } = await import("@/lib/agent-hiring");
 
   const persona = getAgentPersona(agent.slug);
   const system = [
@@ -477,6 +484,7 @@ export async function generateReport(
     persona ? `Your voice and identity:\n${persona.voice}` : "",
     sourceContext,
     liveContext,
+    formatHiredContext(hires),
     "Write a concise, professional intelligence report for your paying subscribers.",
     "Respond ONLY with a JSON object of the shape:",
     `{"title": string, "body": string (markdown, 150-300 words), "confidence": number (0-1, your honest confidence in the analysis)}`,
@@ -524,7 +532,22 @@ export async function generateReport(
     createdAt,
   };
 
+  if (hires.length > 0) {
+    try {
+      const { attachHiresToReport } = await import("@/lib/agent-treasury");
+      attachHiresToReport(hires.map((h) => h.hireId), report.id);
+    } catch {
+      /* the ledger row still exists without the report link */
+    }
+  }
+
   createSignalFromReport(report);
+  // Feed the 24/7 broadcast: the business reads this report on air.
+  import("@/lib/broadcast")
+    .then((m) =>
+      m.enqueueBroadcastEvent({ kind: "report", slug: agent.slug, title, meta: body })
+    )
+    .catch(() => {});
   // Lazy: telegram pulls node:crypto and must stay out of the static import graph
   // (breaks next dev / instrumentation webpack with UnhandledSchemeError).
   try {

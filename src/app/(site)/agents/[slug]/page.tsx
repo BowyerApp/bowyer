@@ -4,6 +4,8 @@ import { GITHUB_REPOS, getAgentBySlug } from "@/lib/data/agents";
 import { getPromoStatus } from "@/lib/promo-pricing";
 import { getBusinessStats } from "@/lib/data/real-stats";
 import { getStoredReports } from "@/lib/agent-runtime";
+import { listHiresForReport } from "@/lib/agent-treasury";
+import { getAgentSummary } from "@/lib/data/agents";
 import { getRepoStats } from "@/lib/github";
 
 interface PageProps {
@@ -44,6 +46,12 @@ export default async function AgentProfilePage({ params }: PageProps) {
       body: r.body,
       confidence: r.confidence,
       createdAt: r.createdAt,
+      // Commissioned peer work — the "research staff" credit block.
+      staff: listHiresForReport(r.id).map((h) => ({
+        seller: h.seller,
+        sellerName: getAgentSummary(h.seller)?.name ?? h.seller,
+        tool: h.tool,
+      })),
     })),
     github: github
       ? {
