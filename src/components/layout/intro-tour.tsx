@@ -85,10 +85,14 @@ export function IntroTour() {
   const [step, setStep] = useState(0);
 
   useEffect(() => {
-    // Never interrupt the 24/7 broadcast picture with onboarding.
+    // Never interrupt the 24/7 broadcast picture or the V2 lockdown with onboarding.
+    // The lockdown is detected via DOM because middleware rewrites keep the
+    // original pathname (e.g. "/") while serving the /v2 page.
     if (
       new URLSearchParams(window.location.search).get("broadcast") === "1" ||
-      window.location.pathname === "/live"
+      window.location.pathname === "/live" ||
+      window.location.pathname === "/v2" ||
+      document.getElementById("v2-lockdown") !== null
     )
       return;
     const heroSeen = localStorage.getItem(HERO_STORAGE_KEY) === "1";
