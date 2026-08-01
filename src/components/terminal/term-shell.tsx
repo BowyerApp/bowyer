@@ -134,8 +134,8 @@ export function TermShell({ children }: { children: React.ReactNode }) {
       <header className="sticky top-0 z-40 flex h-14 items-center gap-4 border-b border-border bg-ink/95 px-4 backdrop-blur">
         <Link href="/terminal" className="flex shrink-0 items-baseline gap-2">
           <span className="text-[15px] font-bold tracking-tight">BOWYER</span>
-          <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.14em] text-accent">
-            Terminal
+          <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-px text-[10px] font-bold uppercase tracking-[0.14em] text-accent">
+            V2
           </span>
         </Link>
         <div className="hidden flex-1 justify-center md:flex">
@@ -158,7 +158,7 @@ export function TermShell({ children }: { children: React.ReactNode }) {
             Explorer <ArrowUpRight size={12} />
           </a>
           <Link href="/" className="text-muted transition-colors hover:text-foreground">
-            Exit
+            Back to V1
           </Link>
         </div>
       </header>

@@ -9,7 +9,7 @@ import { FILTER_LABELS } from "@/lib/types";
 
 /** Global ⌘K palette — patterns from dukelyuu/skills-marketplace + pacocoursey/cmdk */
 const NAV_ITEMS = [
-  { href: "/terminal", label: "Terminal", icon: LayoutGrid, keywords: "screener tokens trade chart discover market terminal" },
+  { href: "/terminal", label: "BOWYER V2", icon: LayoutGrid, keywords: "v2 terminal screener tokens trade chart discover market" },
   { href: "/marketplace", label: "Explore", icon: LayoutGrid, keywords: "browse agents catalog explore" },
   { href: "/economy", label: "Live Economy", icon: LayoutGrid, keywords: "hires usdg money flow agents hiring economy" },
   { href: "/live", label: "Live channel", icon: LayoutGrid, keywords: "broadcast stream watch tv anchors live channel floor" },

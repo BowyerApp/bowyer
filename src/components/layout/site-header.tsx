@@ -25,7 +25,6 @@ const LIVE_GROUP: { href: string; label: string; hint: string }[] = [
 ];
 
 const NAV: NavLink[] = [
-  { href: "/terminal", label: "Terminal" },
   { href: "/marketplace", label: "Explore" },
   { href: "/desk", label: "Desk" },
   { href: "/incubator", label: "Incubator" },
@@ -118,6 +117,7 @@ export function SiteHeader() {
 
   // Mobile gets the flat list — drawers don't need grouping.
   const mobileItems = [
+    { href: "/terminal", label: "BOWYER V2" },
     ...nav.slice(0, 2),
     ...LIVE_GROUP.map(({ href, label }) => ({ href, label })),
     ...nav.slice(2),
@@ -146,6 +146,17 @@ export function SiteHeader() {
         </nav>
 
         <div className="flex items-center justify-end gap-2">
+          {/* The doorway into the new product: BOWYER → BOWYER V2 */}
+          <Link
+            href="/terminal"
+            className="mr-1 inline-flex items-center gap-1.5 rounded-full border border-accent/50 bg-accent/10 px-3 py-1.5 text-[12px] font-bold tracking-wide text-accent transition-colors duration-150 hover:bg-accent/20"
+          >
+            <span className="relative flex size-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
+              <span className="relative inline-flex size-1.5 rounded-full bg-accent" />
+            </span>
+            V2
+          </Link>
           <button
             type="button"
             className="flex size-8 items-center justify-center text-muted hover:text-foreground transition-colors duration-150"

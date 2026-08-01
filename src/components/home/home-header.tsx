@@ -44,6 +44,17 @@ export function HomeHeader() {
           ))}
         </nav>
         <div className="flex items-center gap-2">
+          {/* The doorway into the new product: BOWYER → BOWYER V2 */}
+          <Link
+            href="/terminal"
+            className="mr-1 inline-flex items-center gap-1.5 rounded-full border border-[#D7FF00]/50 bg-[#D7FF00]/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[#D7FF00] transition-colors hover:bg-[#D7FF00]/20"
+          >
+            <span className="relative flex size-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#D7FF00] opacity-60" />
+              <span className="relative inline-flex size-1.5 rounded-full bg-[#D7FF00]" />
+            </span>
+            V2
+          </Link>
           <a
             href="https://x.com/Bowyer_App"
             target="_blank"
@@ -75,7 +86,7 @@ export function HomeHeader() {
             <Search className="size-4" />
           </button>
           <WalletButton uppercase />
-          <MobileMenu items={nav} light />
+          <MobileMenu items={[{ href: "/terminal", label: "BOWYER V2" }, ...nav]} light />
         </div>
       </div>
     </header>
