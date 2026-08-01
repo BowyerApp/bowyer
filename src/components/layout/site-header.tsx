@@ -25,6 +25,7 @@ const LIVE_GROUP: { href: string; label: string; hint: string }[] = [
 ];
 
 const NAV: NavLink[] = [
+  { href: "/terminal", label: "Terminal" },
   { href: "/marketplace", label: "Explore" },
   { href: "/desk", label: "Desk" },
   { href: "/incubator", label: "Incubator" },

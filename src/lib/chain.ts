@@ -66,7 +66,10 @@ export const USDG_ADDRESS = (
 export const USDG_DECIMALS = 6;
 
 /** Conversion rate for pricing USD amounts in native ETH. */
-export const USD_PER_ETH = 3200;
+// Rough ETH/USD used for on-chain depth estimates when no oracle is available.
+// Override with USD_PER_ETH env; keep loosely current — stale values skew
+// every USD figure derived from raw WETH balances.
+export const USD_PER_ETH = Number(process.env.USD_PER_ETH) > 0 ? Number(process.env.USD_PER_ETH) : 1950;
 
 export function usdToWei(usd: number): bigint {
   return BigInt(Math.round((usd / USD_PER_ETH) * 1e6)) * BigInt(1e12);

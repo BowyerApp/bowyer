@@ -92,6 +92,7 @@ export function IntroTour() {
       new URLSearchParams(window.location.search).get("broadcast") === "1" ||
       window.location.pathname === "/live" ||
       window.location.pathname === "/v2" ||
+      window.location.pathname.startsWith("/terminal") ||
       document.getElementById("v2-lockdown") !== null
     )
       return;

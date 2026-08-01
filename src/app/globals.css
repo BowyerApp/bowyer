@@ -289,4 +289,85 @@
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
+
+  /* ---------- V2 terminal theme (scoped under .term) ---------- */
+
+  .term {
+    background-color: #0a0c0f;
+  }
+
+  .term .bg-ink {
+    background-color: #0c0e12;
+  }
+
+  .term .bg-raised {
+    background-color: #14171d;
+  }
+
+  .term .card-frame {
+    background-color: #101318;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 10px;
+  }
+
+  .term .font-mono-num {
+    font-family: var(--font-geist-mono), monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  .term .text-up {
+    color: #2dd4a7;
+  }
+
+  .term .text-down {
+    color: #f45d7e;
+  }
+
+  .term .text-gold {
+    color: #e8b04b;
+  }
+
+  .term .sun-rays {
+    background:
+      radial-gradient(80% 120% at 85% -20%, rgba(200, 255, 0, 0.09), transparent 55%),
+      radial-gradient(60% 100% at 10% -10%, rgba(45, 212, 167, 0.06), transparent 50%),
+      #0c0e12;
+  }
+
+  @keyframes term-tick-up {
+    0% {
+      background-color: rgba(45, 212, 167, 0.18);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+
+  @keyframes term-tick-down {
+    0% {
+      background-color: rgba(244, 93, 126, 0.16);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+
+  .term .tick-up {
+    animation: term-tick-up 0.9s ease-out;
+  }
+
+  .term .tick-down {
+    animation: term-tick-down 0.9s ease-out;
+  }
+
+  .term ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .term ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.09);
+    border-radius: 4px;
+  }
 }
