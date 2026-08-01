@@ -385,7 +385,7 @@ const PRODUCTS = [
     line: "Large-transfer surveillance on Robinhood Chain.",
   },
   {
-    href: "/agents/castles-trading",
+    href: "/agents/atlas-macro",
     name: "Macro Reports",
     line: "Creator-run daily macro radar for traders.",
   },

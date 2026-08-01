@@ -69,12 +69,16 @@ function NavLink({
 function SearchBox() {
   const router = useRouter();
   const [value, setValue] = useState("");
+  const [invalid, setInvalid] = useState(false);
 
   const go = () => {
     const trimmed = value.trim();
     if (/^0x[a-fA-F0-9]{40}$/.test(trimmed)) {
       router.push(`/terminal/t/${trimmed.toLowerCase()}`);
       setValue("");
+    } else if (trimmed) {
+      setInvalid(true);
+      setTimeout(() => setInvalid(false), 1600);
     }
   };
 
@@ -87,8 +91,15 @@ function SearchBox() {
         onKeyDown={(e) => e.key === "Enter" && go()}
         placeholder="Paste a token address (0x…)"
         spellCheck={false}
-        className="w-full rounded-md border border-border bg-raised py-2 pl-9 pr-3 font-mono-num text-[12px] text-foreground placeholder:text-subtle focus:border-accent/40 focus:outline-none"
+        className={`w-full rounded-md border bg-raised py-2 pl-9 pr-3 font-mono-num text-[12px] text-foreground placeholder:text-subtle focus:outline-none ${
+          invalid ? "border-[#f45d7e]/60" : "border-border focus:border-accent/40"
+        }`}
       />
+      {invalid && (
+        <div className="absolute left-0 top-full mt-1 text-[10.5px] text-down">
+          Not a token address — expected 0x followed by 40 hex characters.
+        </div>
+      )}
     </div>
   );
 }

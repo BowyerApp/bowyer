@@ -309,7 +309,7 @@ export function DiscoverView({ mode }: { mode: "meme" | "equity" }) {
                       >
                         Trade <ArrowUpRight size={11} />
                       </a>
-                    ) : (
+                    ) : clickable ? (
                       <Link
                         href={`/terminal/t/${token.address}`}
                         onClick={(e) => e.stopPropagation()}
@@ -317,6 +317,8 @@ export function DiscoverView({ mode }: { mode: "meme" | "equity" }) {
                       >
                         View
                       </Link>
+                    ) : (
+                      <span className="text-[11px] text-subtle">—</span>
                     )}
                   </td>
                 </tr>
