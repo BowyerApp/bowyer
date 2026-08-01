@@ -7,11 +7,21 @@ const DEXSCREENER_CHAIN_ID = process.env.DEXSCREENER_CHAIN_ID?.trim() || "robinh
 
 const RPC_RETRY_DELAYS_MS = [1000, 3000];
 
+/**
+ * Wide-range eth_getLogs is unsupported on many third-party RPCs; when a pool
+ * of providers rotates, range-halving retries collapse the scan window before
+ * a capable endpoint is reached. RADAR_RPC_URL pins radar scans to one
+ * endpoint known to handle them (e.g. the official chain RPC).
+ */
+function radarRpcUrl(): string {
+  return process.env.RADAR_RPC_URL?.trim() || rpcUrl();
+}
+
 async function rpc<T>(method: string, params: unknown[]): Promise<T> {
   let lastError: Error = new Error(`RPC ${method} failed`);
   for (let attempt = 0; attempt <= RPC_RETRY_DELAYS_MS.length; attempt++) {
     try {
-      const res = await fetch(rpcUrl(), {
+      const res = await fetch(radarRpcUrl(), {
         method: "POST",
         headers: HEADERS,
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
