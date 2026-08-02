@@ -83,7 +83,7 @@ function NavLink({
   );
 }
 
-function SearchBox() {
+function SearchBox({ autoFocus, onNavigate }: { autoFocus?: boolean; onNavigate?: () => void }) {
   const router = useRouter();
   const [value, setValue] = useState("");
   const [invalid, setInvalid] = useState(false);
@@ -93,6 +93,7 @@ function SearchBox() {
     if (/^0x[a-fA-F0-9]{40}$/.test(trimmed)) {
       router.push(`/terminal/t/${trimmed.toLowerCase()}`);
       setValue("");
+      onNavigate?.();
     } else if (trimmed) {
       setInvalid(true);
       setTimeout(() => setInvalid(false), 1600);
@@ -108,6 +109,7 @@ function SearchBox() {
         onKeyDown={(e) => e.key === "Enter" && go()}
         placeholder="Paste a token address (0x…)"
         spellCheck={false}
+        autoFocus={autoFocus}
         className={`w-full rounded-md border bg-raised py-2 pl-9 pr-3 font-mono-num text-[12px] text-foreground placeholder:text-subtle focus:outline-none ${
           invalid ? "border-[#f45d7e]/60" : "border-border focus:border-accent/40"
         }`}
@@ -123,6 +125,7 @@ function SearchBox() {
 
 export function TermShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [mobileSearch, setMobileSearch] = useState(false);
 
   const isActive = (href: string, exact?: boolean) =>
     exact ? pathname === href : pathname.startsWith(href);
@@ -178,6 +181,18 @@ export function TermShell({ children }: { children: React.ReactNode }) {
           <SearchBox />
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-3 text-[12px]">
+          <button
+            type="button"
+            aria-label="Search token"
+            onClick={() => setMobileSearch((v) => !v)}
+            className={`flex h-8 w-8 items-center justify-center rounded-md border transition-colors md:hidden ${
+              mobileSearch
+                ? "border-accent/40 bg-accent/10 text-accent"
+                : "border-border bg-raised text-muted"
+            }`}
+          >
+            <Search size={14} />
+          </button>
           <Link
             href={`/terminal/t/${BOWYER_TOKEN}`}
             className="hidden items-center rounded-md border border-border bg-raised px-2.5 py-1.5 text-muted transition-colors hover:text-foreground sm:flex"
@@ -200,6 +215,13 @@ export function TermShell({ children }: { children: React.ReactNode }) {
           </span>
         </div>
       </header>
+
+      {/* mobile search row */}
+      {mobileSearch && (
+        <div className="sticky top-14 z-30 border-b border-border bg-ink px-4 py-2.5 md:hidden">
+          <SearchBox autoFocus onNavigate={() => setMobileSearch(false)} />
+        </div>
+      )}
 
       <div className="flex flex-1">
         {/* sidebar */}

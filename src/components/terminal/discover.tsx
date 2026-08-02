@@ -200,8 +200,59 @@ export function DiscoverView({
         </div>
       </div>
 
+      {/* mobile cards */}
+      <div className="mt-3 space-y-2 md:hidden">
+        {!data && !error && (
+          <div className="card-frame px-4 py-14 text-center text-[13px] text-muted">
+            <div className="animate-pulse">Scanning Robinhood Chain…</div>
+            <div className="mt-1 text-[11px] text-subtle">First scan takes up to 20 seconds.</div>
+          </div>
+        )}
+        {error && !data && (
+          <div className="card-frame px-4 py-14 text-center text-[13px] text-down">
+            {error} — retrying automatically.
+          </div>
+        )}
+        {data && rows.length === 0 && (
+          <div className="card-frame px-4 py-14 text-center text-[13px] text-muted">
+            Nothing matches this filter right now.
+          </div>
+        )}
+        {rows.map((token) => {
+          const clickable = token.address.startsWith("0x");
+          return (
+            <div
+              key={token.address}
+              onClick={() => clickable && router.push(`/terminal/t/${token.address}`)}
+              className={`card-frame flex items-center gap-3 px-3 py-3 ${clickable ? "cursor-pointer active:bg-raised/60" : ""}`}
+            >
+              <TokenAvatar imageUrl={token.imageUrl} symbol={token.symbol} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[13px] font-semibold">{token.symbol}</span>
+                  {token.fresh && (
+                    <span className="rounded border border-accent/40 bg-accent/10 px-1 py-px text-[9px] font-bold uppercase text-accent">
+                      new
+                    </span>
+                  )}
+                  {!isEquity && <AgentBadge verdict={token.agent} />}
+                </div>
+                <div className="mt-0.5 truncate text-[10.5px] text-subtle">
+                  {fmtUsd(token.volume24h)} vol · {fmtUsd(token.liquidityUsd)} liq
+                  {!isEquity && token.ageMinutes !== null ? ` · ${fmtAge(token.ageMinutes)}` : ""}
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="font-mono-num text-[13px]">{fmtUsd(token.priceUsd, false)}</div>
+                <Pct v={token.change24h} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
       {/* table */}
-      <div className="card-frame mt-3 overflow-x-auto">
+      <div className="card-frame mt-3 hidden overflow-x-auto md:block">
         <table className="w-full min-w-[980px] border-collapse text-[12.5px]">
           <thead>
             <tr className="border-b border-border text-left text-[10px] uppercase tracking-[0.12em] text-subtle">
