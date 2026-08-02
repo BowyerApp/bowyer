@@ -11,4 +11,8 @@ export async function register() {
   const { prewarmMarketData } = await import("@/lib/market-data");
   prewarmMarketData();
   setInterval(prewarmMarketData, 60_000).unref?.();
+
+  // Trading agents: evaluates every active instance each minute.
+  const { startTradingEngine } = await import("@/lib/trading/engine");
+  startTradingEngine();
 }

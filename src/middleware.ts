@@ -46,6 +46,7 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   // Everything except API routes, Next internals, the Telegram mini app,
+  // referral links (/r/<code> must set its cookie even during lockdown),
   // and static files (any path containing a dot: videos, images, models...).
-  matcher: ["/((?!api|_next|telegram|.*\\..*).*)"],
+  matcher: ["/((?!api|_next|telegram|r/|.*\\..*).*)"],
 };

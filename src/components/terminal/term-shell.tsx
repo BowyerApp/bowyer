@@ -6,7 +6,6 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Radar,
   Activity,
-  LineChart,
   Wallet,
   Store,
   Briefcase,
@@ -17,25 +16,40 @@ import {
   Search,
   CandlestickChart,
   Landmark,
+  Bot,
+  Plug,
+  Gift,
+  Hammer,
+  Banknote,
 } from "lucide-react";
 import { BOWYER_TOKEN } from "@/lib/market-data";
+import { TermWallet } from "@/components/terminal/term-wallet";
+import { TermTour, TermTourButton } from "@/components/terminal/term-tour";
 
 const TRADE_NAV = [
-  { href: "/terminal", label: "Discover", icon: Radar, exact: true },
-  { href: "/terminal/pulse", label: "The Hood", icon: Activity },
-  { href: "/terminal/equities", label: "Equities", icon: Landmark },
-  { href: "/terminal/tracker", label: "Tracker", icon: Wallet },
+  { href: "/terminal", label: "Discover", icon: Radar, exact: true, tour: "discover" },
+  { href: "/terminal/pulse", label: "The Hood", icon: Activity, tour: "pulse" },
+  { href: "/terminal/equities", label: "Equities", icon: Landmark, tour: "equities" },
+  { href: "/terminal/trading", label: "Trading agents", icon: Bot, tour: "trading" },
+  { href: "/terminal/tracker", label: "Tracker", icon: Wallet, tour: "tracker" },
 ];
 
 const TRADE_SOON = [
   { label: "Perps", icon: CandlestickChart },
-  { label: "Yield", icon: LineChart },
+];
+
+const ACCOUNT_NAV = [
+  { href: "/terminal/agents", label: "My agents", icon: Bot },
+  { href: "/terminal/connections", label: "Connections", icon: Plug },
+  { href: "/terminal/affiliate", label: "Affiliate", icon: Gift },
 ];
 
 const AGENT_NAV = [
   { href: "/marketplace", label: "Marketplace", icon: Store },
   { href: "/desk", label: "Desk", icon: Briefcase },
+  { href: "/launch", label: "Builder", icon: Hammer },
   { href: "/incubator", label: "Incubator", icon: FlaskConical },
+  { href: "/agents/robinhood-trading-agent", label: "Brokerage", icon: Banknote },
   { href: "/live", label: "Live channel", icon: Radio },
   { href: "/economy", label: "Economy", icon: Network },
 ];
@@ -45,15 +59,18 @@ function NavLink({
   label,
   icon: Icon,
   active,
+  tour,
 }: {
   href: string;
   label: string;
   icon: typeof Radar;
   active: boolean;
+  tour?: string;
 }) {
   return (
     <Link
       href={href}
+      data-tour={tour}
       className={`flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors ${
         active
           ? "bg-raised text-foreground"
@@ -131,6 +148,14 @@ export function TermShell({ children }: { children: React.ReactNode }) {
         </div>
       ))}
       <div className="px-3 pb-2 pt-6 text-[10px] font-semibold uppercase tracking-[0.16em] text-subtle">
+        Account
+      </div>
+      <div data-tour="account">
+        {ACCOUNT_NAV.map((item) => (
+          <NavLink key={item.href} {...item} active={isActive(item.href)} />
+        ))}
+      </div>
+      <div className="px-3 pb-2 pt-6 text-[10px] font-semibold uppercase tracking-[0.16em] text-subtle">
         Agents
       </div>
       {AGENT_NAV.map((item) => (
@@ -149,15 +174,14 @@ export function TermShell({ children }: { children: React.ReactNode }) {
             V2
           </span>
         </Link>
-        <div className="hidden flex-1 justify-center md:flex">
+        <div className="hidden flex-1 justify-center md:flex" data-tour="search">
           <SearchBox />
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-3 text-[12px]">
           <Link
             href={`/terminal/t/${BOWYER_TOKEN}`}
-            className="hidden items-center gap-1.5 rounded-md border border-border bg-raised px-2.5 py-1.5 text-muted transition-colors hover:text-foreground sm:flex"
+            className="hidden items-center rounded-md border border-border bg-raised px-2.5 py-1.5 text-muted transition-colors hover:text-foreground sm:flex"
           >
-            <span className="h-1.5 w-1.5 rounded-full bg-accent" />
             $BOWYER
           </Link>
           <a
@@ -168,9 +192,12 @@ export function TermShell({ children }: { children: React.ReactNode }) {
           >
             Explorer <ArrowUpRight size={12} />
           </a>
-          <Link href="/" className="text-muted transition-colors hover:text-foreground">
+          <Link href="/" className="hidden text-muted transition-colors hover:text-foreground sm:block">
             Back to V1
           </Link>
+          <span data-tour="wallet">
+            <TermWallet />
+          </span>
         </div>
       </header>
 
@@ -178,8 +205,11 @@ export function TermShell({ children }: { children: React.ReactNode }) {
         {/* sidebar */}
         <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-52 shrink-0 flex-col overflow-y-auto border-r border-border bg-ink px-2 pb-6 lg:flex">
           {nav}
-          <div className="mt-auto px-3 pt-6 text-[10px] leading-relaxed text-subtle">
-            Live data from Robinhood Chain, DexScreener and Blockscout. Not financial advice.
+          <div className="mt-auto pt-6">
+            <TermTourButton />
+            <div className="px-3 pt-3 text-[10px] leading-relaxed text-subtle">
+              Live data from Robinhood Chain, DexScreener and Blockscout. Not financial advice.
+            </div>
           </div>
         </aside>
 
@@ -201,6 +231,8 @@ export function TermShell({ children }: { children: React.ReactNode }) {
 
         <main className="min-w-0 flex-1 bg-ink pb-20 lg:pb-0">{children}</main>
       </div>
+
+      <TermTour />
     </div>
   );
 }

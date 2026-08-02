@@ -31,9 +31,15 @@ type Tab = "all" | "fresh" | "passed";
 
 const POLL_MS = 30_000;
 
-export function DiscoverView({ mode }: { mode: "meme" | "equity" }) {
+export function DiscoverView({
+  mode,
+  initialData,
+}: {
+  mode: "meme" | "equity";
+  initialData?: ScreenerPayload | null;
+}) {
   const router = useRouter();
-  const [data, setData] = useState<ScreenerPayload | null>(null);
+  const [data, setData] = useState<ScreenerPayload | null>(initialData ?? null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("all");
   const [query, setQuery] = useState("");

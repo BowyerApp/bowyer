@@ -366,11 +366,17 @@ function rowFromPair(
     riskCache.delete(address);
     scan = null;
   }
+  const rowName = pair?.baseToken?.name ?? hint?.name ?? universe?.name ?? scan?.name ?? "Unknown";
+  const rowSymbol = pair?.baseToken?.symbol ?? hint?.symbol ?? universe?.symbol ?? scan?.symbol ?? "?";
+  const isEquity = isTokenizedEquity(
+    pair?.baseToken?.name ?? universe?.name ?? null,
+    pair?.baseToken?.symbol ?? universe?.symbol ?? null
+  );
   return {
     address,
-    name: pair?.baseToken?.name ?? hint?.name ?? universe?.name ?? scan?.name ?? "Unknown",
-    symbol: pair?.baseToken?.symbol ?? hint?.symbol ?? universe?.symbol ?? scan?.symbol ?? "?",
-    imageUrl: pair?.info?.imageUrl ?? null,
+    name: rowName,
+    symbol: rowSymbol,
+    imageUrl: pair?.info?.imageUrl ?? (isEquity ? equityLogoUrl(rowSymbol) : null),
     priceUsd: Number.isFinite(price) ? price : universe?.exchangeRate ?? null,
     change5m: num(pair?.priceChange?.m5),
     change1h: num(pair?.priceChange?.h1),
@@ -399,13 +405,21 @@ function rowFromPair(
     riskFlags: scan?.flags ?? [],
     spark: sparkFor(address),
     fresh,
-    kind: isTokenizedEquity(
-      pair?.baseToken?.name ?? universe?.name ?? null,
-      pair?.baseToken?.symbol ?? universe?.symbol ?? null
-    )
-      ? "equity"
-      : "meme",
+    kind: isEquity ? "equity" : "meme",
   };
+}
+
+/**
+ * Company logo for a tokenized equity, keyed by its underlying ticker.
+ * Robinhood tokens append a lowercase "x" (AAPLx, METAx) — strip it to reach
+ * the real ticker. Parqet serves clean per-ticker logos; the UI falls back to
+ * initials if a given ticker has no logo.
+ */
+export function equityLogoUrl(symbol: string, underlying?: string | null): string | null {
+  const raw = (underlying || symbol || "").replace(/x$/, "");
+  const ticker = raw.toUpperCase().replace(/[^A-Z0-9.]/g, "");
+  if (!ticker) return null;
+  return `https://assets.parqet.com/logos/symbol/${ticker}?format=png&size=64`;
 }
 
 /** Robinhood's tokenized stocks carry a "• Robinhood" suffix in their name. */
@@ -520,6 +534,37 @@ export function prewarmMarketData() {
   getScreener().catch(() => {});
 }
 
+/**
+ * Non-blocking cached read for server-side rendering. Returns the current
+ * cached screener if we have one (even slightly stale) and kicks off a refresh
+ * in the background; returns null instead of blocking on a cold radar scan so
+ * a fresh deploy never makes the page hang. The client poll fills in the rest.
+ */
+export function getScreenerCached(): ScreenerResult | null {
+  if (!screenerCache) {
+    prewarmMarketData();
+    return null;
+  }
+  if (Date.now() - screenerCache.at >= SCREENER_TTL_MS) prewarmMarketData();
+  return screenerCache.data;
+}
+
+export function getMemeScreenerCached(): ScreenerResult | null {
+  const all = getScreenerCached();
+  if (!all) return null;
+  return { ...all, tokens: all.tokens.filter((t) => t.kind === "meme") };
+}
+
+/**
+ * Cached equities for SSR — the chain-indexed tokenized stocks only. Curated
+ * seed quotes (which need Yahoo/Stooq calls) are added by the client poll.
+ */
+export function getEquityScreenerCached(): ScreenerResult | null {
+  const all = getScreenerCached();
+  if (!all) return null;
+  return { ...all, tokens: all.tokens.filter((t) => t.kind === "equity") };
+}
+
 /** Meme/community tokens only — what the Discover tab shows. */
 export async function getMemeScreener(): Promise<ScreenerResult> {
   const all = await getScreener();
@@ -548,7 +593,7 @@ export async function getEquityScreener(): Promise<ScreenerResult> {
         address,
         name: q.name,
         symbol: q.symbol,
-        imageUrl: null,
+        imageUrl: equityLogoUrl(q.symbol, q.underlying),
         priceUsd: q.dexPriceUsd ?? q.referencePriceUsd,
         change5m: null,
         change1h: null,
@@ -670,23 +715,71 @@ async function recentTrades(
   }
 }
 
+const TOKEN_DETAIL_TTL_MS = 20_000;
+const tokenDetailCache = new Map<string, { data: TokenDetail; at: number }>();
+const tokenDetailInFlight = new Map<string, Promise<TokenDetail>>();
+
 export async function getTokenDetail(address: string): Promise<TokenDetail> {
   const normalized = address.toLowerCase();
   if (!/^0x[a-f0-9]{40}$/.test(normalized)) throw new Error("A valid token address is required");
 
+  const cached = tokenDetailCache.get(normalized);
+  if (cached && Date.now() - cached.at < TOKEN_DETAIL_TTL_MS) return cached.data;
+  const inFlight = tokenDetailInFlight.get(normalized);
+  if (inFlight) return inFlight;
+
+  const promise = buildTokenDetail(normalized)
+    .then((data) => {
+      tokenDetailCache.set(normalized, { data, at: Date.now() });
+      if (tokenDetailCache.size > 200) {
+        const oldest = [...tokenDetailCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+        if (oldest) tokenDetailCache.delete(oldest[0]);
+      }
+      return data;
+    })
+    .finally(() => {
+      tokenDetailInFlight.delete(normalized);
+    });
+  tokenDetailInFlight.set(normalized, promise);
+  // Serve slightly stale data instantly while the refresh happens in background.
+  if (cached) return cached.data;
+  return promise;
+}
+
+/**
+ * Non-blocking cached read for SSR: returns the cached detail if we have one
+ * and warms the cache in the background otherwise. Never blocks navigation.
+ */
+export function getTokenDetailCached(address: string): TokenDetail | null {
+  const normalized = address.toLowerCase();
+  const cached = tokenDetailCache.get(normalized);
+  getTokenDetail(normalized).catch(() => {});
+  return cached?.data ?? null;
+}
+
+async function buildTokenDetail(normalized: string): Promise<TokenDetail> {
+
+  // The risk scan can take several seconds on a cold token (RPC + Blockscout
+  // holder crawl), so give it a short budget here. If it misses the window it
+  // keeps running in the background and lands in riskCache for the next poll.
+  const scanPromise = (async () => {
+    const cachedScan = riskCache.get(normalized);
+    if (cachedScan && Date.now() - cachedScan.at < RISK_TTL_MS) return cachedScan.scan;
+    try {
+      const scan = await scanTokenRisk(normalized);
+      riskCache.set(normalized, { scan, at: Date.now() });
+      return scan;
+    } catch {
+      return null;
+    }
+  })();
+
   const [pairsMap, scanRaw] = await Promise.all([
     fetchDexPairsFor([normalized]),
-    (async () => {
-      const cached = riskCache.get(normalized);
-      if (cached && Date.now() - cached.at < RISK_TTL_MS) return cached.scan;
-      try {
-        const scan = await scanTokenRisk(normalized);
-        riskCache.set(normalized, { scan, at: Date.now() });
-        return scan;
-      } catch {
-        return null;
-      }
-    })(),
+    Promise.race([
+      scanPromise,
+      new Promise<TokenRiskScan | null>((resolve) => setTimeout(() => resolve(null), 1500)),
+    ]),
   ]);
 
   let scanSettled = scanRaw;

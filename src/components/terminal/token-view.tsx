@@ -33,8 +33,14 @@ function CopyAddr({ address }: { address: string }) {
   );
 }
 
-export function TokenView({ address }: { address: string }) {
-  const [detail, setDetail] = useState<TokenDetail | null>(null);
+export function TokenView({
+  address,
+  initialDetail,
+}: {
+  address: string;
+  initialDetail?: TokenDetail | null;
+}) {
+  const [detail, setDetail] = useState<TokenDetail | null>(initialDetail ?? null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {

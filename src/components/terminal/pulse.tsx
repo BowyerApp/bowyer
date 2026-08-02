@@ -88,8 +88,8 @@ function Column({
   );
 }
 
-export function PulseView() {
-  const [data, setData] = useState<ScreenerPayload | null>(null);
+export function PulseView({ initialData }: { initialData?: ScreenerPayload | null }) {
+  const [data, setData] = useState<ScreenerPayload | null>(initialData ?? null);
 
   const load = useCallback(async () => {
     try {

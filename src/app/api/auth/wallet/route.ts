@@ -6,6 +6,7 @@ import {
   getSessionWallet,
   sessionCookie,
 } from "@/lib/wallet-auth";
+import { claimReferral, REF_COOKIE } from "@/lib/referrals";
 
 export const runtime = "nodejs";
 
@@ -36,6 +37,19 @@ export async function POST(req: Request) {
   });
   if (!token) {
     return NextResponse.json({ ok: false, error: "Wallet signature could not be verified" }, { status: 401 });
+  }
+
+  // Referral attribution: first signed session from a referred browser
+  // credits the referrer. Idempotent and self-referral-safe.
+  const refCode = req.headers
+    .get("cookie")
+    ?.match(new RegExp(`${REF_COOKIE}=([0-9a-f]{6,12})`))?.[1];
+  if (refCode) {
+    try {
+      claimReferral(String(body.wallet ?? ""), refCode);
+    } catch {
+      // Attribution must never block sign-in.
+    }
   }
 
   const res = NextResponse.json({ ok: true });

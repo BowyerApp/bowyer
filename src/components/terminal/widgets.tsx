@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { AgentVerdict } from "@/lib/market-data";
 
 /* ---------- formatting ---------- */
@@ -115,15 +116,23 @@ export function TokenAvatar({
   size?: "sm" | "md" | "lg";
 }) {
   const sizes = { sm: "h-7 w-7 text-[11px]", md: "h-9 w-9 text-[13px]", lg: "h-12 w-12 text-[16px]" };
+  const [broken, setBroken] = useState(false);
+  const initials = symbol.replace(/[^a-zA-Z0-9]/g, "").slice(0, 2).toUpperCase() || "?";
   return (
     <div
       className={`flex shrink-0 select-none items-center justify-center overflow-hidden rounded-full border border-border bg-raised font-bold text-muted ${sizes[size]}`}
     >
-      {imageUrl ? (
+      {imageUrl && !broken ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={imageUrl} alt="" className="h-full w-full object-cover" />
+        <img
+          src={imageUrl}
+          alt=""
+          className="h-full w-full object-cover"
+          onError={() => setBroken(true)}
+          loading="lazy"
+        />
       ) : (
-        <span>{symbol.replace(/[^a-zA-Z0-9]/g, "").slice(0, 2).toUpperCase() || "?"}</span>
+        <span>{initials}</span>
       )}
     </div>
   );
