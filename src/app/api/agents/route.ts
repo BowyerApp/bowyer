@@ -82,7 +82,7 @@ export async function POST(req: Request) {
     : [];
   const sources: KnowledgeSource[] = [];
   for (const source of requestedSources) {
-    const isHttp = source.type === "website" || source.type === "rss" || source.type === "github";
+    const isHttp = ["website", "rss", "github", "pdf", "api"].includes(source.type);
     if (isHttp && !(await isSafePublicHttpUrl(source.url))) continue;
     sources.push(source);
   }

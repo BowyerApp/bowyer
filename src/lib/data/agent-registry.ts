@@ -15,7 +15,7 @@ function cryptoStore(): { encryptSecret(value: string): string; decryptSecret(va
  */
 
 export interface KnowledgeSource {
-  /** website | github | rss */
+  /** website | github | rss | notion | discord | x | pdf | wallet | telegram | api */
   type: string;
   url: string;
 }

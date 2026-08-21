@@ -17,7 +17,7 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   outputFileTracingRoot: path.join(__dirname),
   output: "standalone",
-  serverExternalPackages: ["better-sqlite3"],
+  serverExternalPackages: ["better-sqlite3", "unpdf"],
   async redirects() {
     return [{ source: "/build", destination: "/docs", permanent: true }];
   },

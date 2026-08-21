@@ -24,6 +24,7 @@
     "recharts": "^2.15.0",
     "tailwind-merge": "^2.6.0",
     "three": "^0.185.1",
+    "unpdf": "^1.7.0",
     "viem": "^2.55.0"
   },
   "devDependencies": {

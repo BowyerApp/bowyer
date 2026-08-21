@@ -168,12 +168,12 @@ const SOURCES = [
   { id: "github", label: "GitHub", icon: Github, live: true, placeholder: "https://github.com/owner/repo" },
   { id: "rss", label: "RSS", icon: Rss, live: true, placeholder: "https://blog.example.com/feed.xml" },
   { id: "x", label: "X", icon: MessageCircle, live: true, placeholder: "" },
-  { id: "pdf", label: "PDF", icon: FileText, live: false, placeholder: "" },
+  { id: "pdf", label: "PDF", icon: FileText, live: true, placeholder: "https://example.com/whitepaper.pdf" },
   { id: "notion", label: "Notion", icon: BookOpen, live: true, placeholder: "" },
-  { id: "wallet", label: "Wallet", icon: Wallet, live: false, placeholder: "" },
+  { id: "wallet", label: "Wallet", icon: Wallet, live: true, placeholder: "0x1234…  (any Robinhood Chain address)" },
   { id: "discord", label: "Discord", icon: MessageCircle, live: true, placeholder: "" },
-  { id: "telegram", label: "Telegram", icon: Send, live: false, placeholder: "" },
-  { id: "api", label: "Custom API", icon: Key, live: false, placeholder: "" },
+  { id: "telegram", label: "Telegram", icon: Send, live: true, placeholder: "@channelname or t.me/channelname" },
+  { id: "api", label: "Custom API", icon: Key, live: true, placeholder: "https://api.example.com/data.json" },
 ];
 
 interface ConnectedSource {
@@ -185,6 +185,11 @@ function sourceHostname(url: string): string {
   if (url.startsWith("notion://page/")) return "Notion page";
   if (url.startsWith("discord://channel/")) return "Discord channel";
   if (url.startsWith("x://user/")) return `@${url.replace("x://user/", "")}`;
+  if (url.startsWith("wallet://")) {
+    const addr = url.replace("wallet://", "");
+    return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+  }
+  if (url.startsWith("telegram://channel/")) return `@${url.replace("telegram://channel/", "")}`;
   try {
     return new URL(url).hostname.replace(/^www\./, "");
   } catch {
@@ -429,16 +434,33 @@ export function LaunchExperience() {
 
   function addSource() {
     if (!activeSource) return;
-    const url = sourceUrl.trim();
+    let url = sourceUrl.trim();
     let valid = false;
     if (activeSource === "notion") valid = /^notion:\/\/page\//.test(url);
     else if (activeSource === "discord") valid = /^discord:\/\/channel\/\d+\/\d+/.test(url);
     else if (activeSource === "x") valid = /^x:\/\/user\/[A-Za-z0-9_]{1,15}$/.test(url);
-    else {
+    else if (activeSource === "wallet") {
+      if (/^0x[0-9a-fA-F]{40}$/.test(url)) {
+        url = `wallet://${url.toLowerCase()}`;
+        valid = true;
+      }
+    } else if (activeSource === "telegram") {
+      const name = url
+        .replace(/^https?:\/\/t\.me\/(s\/)?/i, "")
+        .replace(/^@/, "")
+        .replace(/\/.*$/, "");
+      if (/^[A-Za-z0-9_]{4,32}$/.test(name)) {
+        url = `telegram://channel/${name}`;
+        valid = true;
+      }
+    } else {
       try {
         const u = new URL(url);
         valid = u.protocol === "https:" || u.protocol === "http:";
         if (activeSource === "github" && !/github\.com\/[^/]+\/[^/]+/.test(url)) {
+          valid = false;
+        }
+        if (activeSource === "pdf" && !/\.pdf(\?|#|$)/i.test(url)) {
           valid = false;
         }
       } catch {
@@ -449,9 +471,15 @@ export function LaunchExperience() {
       setSourceError(
         activeSource === "github"
           ? "Enter a full repository URL, e.g. https://github.com/owner/repo"
-          : activeSource === "notion" || activeSource === "discord" || activeSource === "x"
-            ? "Connect the service above and pick from the list."
-            : "Enter a full URL starting with https://"
+          : activeSource === "wallet"
+            ? "Enter a valid wallet address (0x followed by 40 hex characters)."
+            : activeSource === "telegram"
+              ? "Enter a public channel like @channelname or t.me/channelname"
+              : activeSource === "pdf"
+                ? "Enter a direct link to a PDF file ending in .pdf"
+                : activeSource === "notion" || activeSource === "discord" || activeSource === "x"
+                  ? "Connect the service above and pick from the list."
+                  : "Enter a full URL starting with https://"
       );
       return;
     }
@@ -1278,20 +1306,37 @@ export function LaunchExperience() {
                   </>
                 )}
 
-                {(activeSource === "website" || activeSource === "rss") && (
+                {(activeSource === "website" ||
+                  activeSource === "rss" ||
+                  activeSource === "pdf" ||
+                  activeSource === "wallet" ||
+                  activeSource === "telegram" ||
+                  activeSource === "api") && (
                   <p className="text-[12.5px] text-muted">
                     {activeSource === "rss"
                       ? "Paste an RSS or Atom feed URL. Your business reads the latest items."
-                      : "Paste a public webpage URL. Your business reads its content."}
+                      : activeSource === "pdf"
+                        ? "Paste a direct link to a PDF. Your business reads the document text."
+                        : activeSource === "wallet"
+                          ? "Paste any Robinhood Chain address. Your business reads its live balances and recent transfers."
+                          : activeSource === "telegram"
+                            ? "Paste a public Telegram channel. Your business reads the latest posts — no bot required."
+                            : activeSource === "api"
+                              ? "Paste any public JSON or text endpoint. Your business fetches it fresh on every report."
+                              : "Paste a public webpage URL. Your business reads its content."}
                   </p>
                 )}
 
                 {(activeSource === "website" ||
                   activeSource === "rss" ||
-                  activeSource === "github") && (
+                  activeSource === "github" ||
+                  activeSource === "pdf" ||
+                  activeSource === "wallet" ||
+                  activeSource === "telegram" ||
+                  activeSource === "api") && (
                   <div className="mt-3 flex flex-col gap-3 sm:flex-row">
                     <input
-                      type="url"
+                      type={activeSource === "wallet" || activeSource === "telegram" ? "text" : "url"}
                       value={sourceUrl}
                       onChange={(e) => {
                         setSourceUrl(e.target.value);
