@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { forgeAgentModel, forgedModelPath, getAgentAvatarGlbFromDb } from "@/lib/agent-forge";
+import { AGENT_AVATAR_GLB } from "@/lib/agent-avatars";
+import { agentSummaries } from "@/lib/data/agents";
 
 export const runtime = "nodejs";
 
@@ -35,7 +37,7 @@ function missingAvatarSlugs(): string[] {
   const rows = db()
     .prepare("SELECT slug FROM agents")
     .all() as { slug: string }[];
-  return rows
+  const dbMissing = rows
     .map((r) => r.slug)
     .filter((slug) => {
       const stored = getAgentAvatarGlbFromDb(slug);
@@ -44,6 +46,11 @@ function missingAvatarSlugs(): string[] {
       if (stored.startsWith("/api/models/")) return !fileExists(forgedModelPath(slug));
       return false;
     });
+  // Catalog agents without a bundled GLB get forged onto the volume too.
+  const catalogMissing = agentSummaries
+    .map((a) => a.slug)
+    .filter((slug) => !AGENT_AVATAR_GLB[slug] && !fileExists(forgedModelPath(slug)));
+  return [...new Set([...dbMissing, ...catalogMissing])];
 }
 
 export async function GET(req: Request) {
@@ -77,7 +84,10 @@ export async function POST(req: Request) {
         const row = db()
           .prepare("SELECT summary FROM agents WHERE slug = ?")
           .get(slug) as { summary: string | null } | undefined;
-        let name = slug, tagline = "autonomous business", category = "research";
+        const catalog = agentSummaries.find((a) => a.slug === slug);
+        let name = catalog?.name ?? slug;
+        let tagline = catalog?.tagline ?? "autonomous business";
+        let category = catalog?.category ?? "research";
         try {
           const parsed = JSON.parse(row?.summary ?? "{}") as {
             name?: string;

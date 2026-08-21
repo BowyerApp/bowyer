@@ -15,6 +15,8 @@ export const AGENT_AVATAR_GLB: Record<string, string> = {
   "atlas-macro": "/models/agents/atlas-macro.glb",
   "nyx-forensics": "/models/agents/nyx-forensics.glb",
   "vega-narrative": "/models/agents/vega-narrative.glb",
+  // Forged on the data volume by /api/admin/forge-avatars, served from /api/models.
+  "desk-arb-radar": "/api/models/desk-arb-radar",
 };
 
 export const RIGGED_AGENTS = new Set(Object.keys(AGENT_AVATAR_GLB));
