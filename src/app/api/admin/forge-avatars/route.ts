@@ -47,9 +47,14 @@ function missingAvatarSlugs(): string[] {
       return false;
     });
   // Catalog agents without a bundled GLB get forged onto the volume too.
+  // Map entries pointing at /api/models are volume-backed: missing until forged.
   const catalogMissing = agentSummaries
     .map((a) => a.slug)
-    .filter((slug) => !AGENT_AVATAR_GLB[slug] && !fileExists(forgedModelPath(slug)));
+    .filter((slug) => {
+      const mapped = AGENT_AVATAR_GLB[slug];
+      if (mapped && !mapped.startsWith("/api/models/")) return false;
+      return !fileExists(forgedModelPath(slug));
+    });
   return [...new Set([...dbMissing, ...catalogMissing])];
 }
 
