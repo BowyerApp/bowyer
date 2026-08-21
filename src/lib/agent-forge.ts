@@ -8,6 +8,8 @@
  */
 
 import { db } from "@/lib/db";
+import { AGENT_AVATAR_GLB } from "@/lib/agent-avatars";
+import { agentSummaries } from "@/lib/data/agents";
 
 // Node built-ins are eval-required (db.ts pattern) so this module stays
 // importable from the instrumentation/scheduler webpack graph.
@@ -230,4 +232,73 @@ export async function forgeAgentModel(input: {
     console.error(`[forge] ${input.slug}: ${error instanceof Error ? error.message : error}`);
     return null;
   }
+}
+
+function modelFileExists(slug: string): boolean {
+  try {
+    const req = eval("require") as NodeRequire;
+    return (req("node:fs") as typeof import("node:fs")).existsSync(forgedModelPath(slug));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Agents (DB-backed and catalog) whose 3D body is missing: never forged,
+ * or forged onto a volume that has since been wiped.
+ */
+export function missingAvatarSlugs(): string[] {
+  const rows = db().prepare("SELECT slug FROM agents").all() as { slug: string }[];
+  const dbMissing = rows
+    .map((r) => r.slug)
+    .filter((slug) => {
+      const stored = getAgentAvatarGlbFromDb(slug);
+      if (!stored) return true;
+      if (stored.startsWith("/api/models/")) return !modelFileExists(slug);
+      return false;
+    });
+
+  const catalogMissing = agentSummaries
+    .map((a) => a.slug)
+    .filter((slug) => {
+      const mapped = AGENT_AVATAR_GLB[slug];
+      if (mapped && !mapped.startsWith("/api/models/")) return false;
+      return !modelFileExists(slug);
+    });
+
+  return [...new Set([...dbMissing, ...catalogMissing])];
+}
+
+/**
+ * Forge exactly one missing avatar. Called from the scheduler tick so the
+ * fleet self-heals at a pace three.ws's free lane tolerates (one job / 15min).
+ */
+export async function healOneMissingAvatar(): Promise<string | null> {
+  const missing = missingAvatarSlugs();
+  if (missing.length === 0) return null;
+  const slug = missing[0];
+
+  const catalog = agentSummaries.find((a) => a.slug === slug);
+  let name = catalog?.name ?? slug;
+  let tagline = catalog?.tagline ?? "autonomous business";
+  let category = catalog?.category ?? "research";
+  try {
+    const row = db().prepare("SELECT summary FROM agents WHERE slug = ?").get(slug) as
+      | { summary: string | null }
+      | undefined;
+    const parsed = JSON.parse(row?.summary ?? "{}") as {
+      name?: string;
+      tagline?: string;
+      category?: string;
+    };
+    if (parsed.name) name = parsed.name;
+    if (parsed.tagline) tagline = parsed.tagline;
+    if (parsed.category) category = parsed.category;
+  } catch {
+    /* catalog/defaults hold */
+  }
+
+  const url = await forgeAgentModel({ slug, name, tagline, category });
+  console.log(`[forge] heal ${slug}: ${url ? "forged" : "failed"} (${missing.length} missing)`);
+  return url ? slug : null;
 }

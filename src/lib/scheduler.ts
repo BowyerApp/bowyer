@@ -165,6 +165,15 @@ export async function runScheduledPublish(slug?: string): Promise<{
     } catch (err) {
       console.error("[incubator] cycle failed:", err);
     }
+
+    // Avatar self-heal: forge at most one missing 3D body per tick, so
+    // launch-time forge failures recover without hammering three.ws.
+    try {
+      const { healOneMissingAvatar } = await import("@/lib/agent-forge");
+      await healOneMissingAvatar();
+    } catch (err) {
+      console.error("[forge] heal failed:", err);
+    }
   }
   return { ran, skipped, errors };
 }
