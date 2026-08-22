@@ -245,7 +245,7 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
     cashUsd,
     fillsToday: done,
   };
-  const orders = STRATEGIES[agent.strategy](input).slice(0, Math.max(0, remaining));
+  const orders = (await STRATEGIES[agent.strategy](input)).slice(0, Math.max(0, remaining));
 
   let executed = 0;
   let lastError: string | null = null;

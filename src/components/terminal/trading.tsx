@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Bot,
+  BrainCircuit,
   Check,
   Copy,
   Crosshair,
@@ -79,6 +80,7 @@ const ICONS: Record<string, typeof Crosshair> = {
   "wave-rider": Waves,
   "grid-maker": Grid3x3,
   "dip-hunter": TrendingUp,
+  "signal-analyst": BrainCircuit,
 };
 
 const TINTS: Record<string, string> = {
@@ -86,7 +88,24 @@ const TINTS: Record<string, string> = {
   "wave-rider": "#f45d7e",
   "grid-maker": "#e8b04b",
   "dip-hunter": "#b78af7",
+  "signal-analyst": "#8ee83d",
 };
+
+/** Turn a pasted line into a typed knowledge source the API accepts. */
+function detectSource(line: string): { type: string; url: string } | null {
+  const s = line.trim();
+  if (!s) return null;
+  if (/^0x[0-9a-fA-F]{40}$/.test(s)) return { type: "wallet", url: `wallet://${s.toLowerCase()}` };
+  const tg = /^(?:https?:\/\/)?t\.me\/(?:s\/)?([A-Za-z0-9_]{4,32})/i.exec(s);
+  if (tg) return { type: "telegram", url: `telegram://channel/${tg[1]}` };
+  if (/^@[A-Za-z0-9_]{4,32}$/.test(s)) return { type: "telegram", url: `telegram://channel/${s.slice(1)}` };
+  if (!/^https?:\/\//i.test(s)) return null;
+  if (/\.pdf(\?|#|$)/i.test(s)) return { type: "pdf", url: s };
+  if (/github\.com\/[^/]+\/[^/]+/i.test(s)) return { type: "github", url: s };
+  if (/(\/feed|\.xml|\/rss)/i.test(s)) return { type: "rss", url: s };
+  if (/api\.|\/api\/|\.json(\?|#|$)/i.test(s)) return { type: "api", url: s };
+  return { type: "website", url: s };
+}
 
 const fmt = (n: number, d = 2) =>
   n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -97,6 +116,9 @@ export function TradingView() {
   const [state, setState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [analystMode, setAnalystMode] = useState<"paper" | "live" | null>(null);
+  const [analystBrief, setAnalystBrief] = useState("");
+  const [analystSources, setAnalystSources] = useState("");
 
   const load = useCallback(
     async (auth = true) => {
@@ -141,16 +163,36 @@ export function TradingView() {
     }
   };
 
-  const createAgent = (strategy: string, mode: "paper" | "live") =>
+  const createAgent = (
+    strategy: string,
+    mode: "paper" | "live",
+    extra?: { brief?: string; sources?: { type: string; url: string }[] }
+  ) =>
     act(
       () =>
         fetch("/api/trading/agents", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ strategy, mode }),
+          body: JSON.stringify({ strategy, mode, ...extra }),
         }),
       `create-${strategy}-${mode}`
     );
+
+  const deployAnalyst = async () => {
+    if (!analystMode) return;
+    const sources = analystSources
+      .split(/\n|,/)
+      .map(detectSource)
+      .filter((s): s is { type: string; url: string } => s !== null)
+      .slice(0, 4);
+    await createAgent("signal-analyst", analystMode, {
+      brief: analystBrief.trim() || undefined,
+      sources: sources.length > 0 ? sources : undefined,
+    });
+    setAnalystMode(null);
+    setAnalystBrief("");
+    setAnalystSources("");
+  };
 
   const patch = (id: string, action: "pause" | "resume") =>
     act(
@@ -302,7 +344,9 @@ export function TradingView() {
                     <button
                       type="button"
                       disabled={busy === `create-${c.id}-paper`}
-                      onClick={() => createAgent(c.id, "paper")}
+                      onClick={() =>
+                        c.id === "signal-analyst" ? setAnalystMode("paper") : createAgent(c.id, "paper")
+                      }
                       className="flex h-8 items-center rounded-md bg-accent px-3.5 text-[12px] font-semibold text-background transition-opacity hover:opacity-90 disabled:opacity-50"
                     >
                       Run simulation
@@ -311,13 +355,57 @@ export function TradingView() {
                       <button
                         type="button"
                         disabled={busy === `create-${c.id}-live`}
-                        onClick={() => createAgent(c.id, "live")}
+                        onClick={() =>
+                          c.id === "signal-analyst" ? setAnalystMode("live") : createAgent(c.id, "live")
+                        }
                         className="flex h-8 items-center rounded-md border border-border px-3.5 text-[12px] text-foreground transition-colors hover:border-accent/40 disabled:opacity-50"
                       >
                         Run live
                       </button>
                     )}
                   </div>
+                  {c.id === "signal-analyst" && analystMode && (
+                    <div className="mt-3 flex flex-col gap-2 rounded-md border border-border bg-raised/40 p-3">
+                      <label className="text-[10.5px] font-semibold uppercase tracking-wide text-subtle">
+                        Mandate — what should it trade and why?
+                      </label>
+                      <textarea
+                        value={analystBrief}
+                        onChange={(e) => setAnalystBrief(e.target.value)}
+                        rows={2}
+                        maxLength={600}
+                        placeholder="e.g. Trade momentum on tokens with real volume. Follow whale wallet flows — sell when the whale sells. Stay in cash when nothing is moving."
+                        className="w-full rounded-sm border border-border bg-background px-2.5 py-2 text-[12px] text-foreground outline-none placeholder:text-subtle focus:border-accent/60"
+                      />
+                      <label className="mt-1 text-[10.5px] font-semibold uppercase tracking-wide text-subtle">
+                        Data sources (optional, up to 4 — one per line)
+                      </label>
+                      <textarea
+                        value={analystSources}
+                        onChange={(e) => setAnalystSources(e.target.value)}
+                        rows={3}
+                        placeholder={"0x… wallet to watch\n@telegramchannel\nhttps://api.example.com/data.json"}
+                        className="w-full rounded-sm border border-border bg-background px-2.5 py-2 font-mono text-[11.5px] text-foreground outline-none placeholder:text-subtle focus:border-accent/60"
+                      />
+                      <div className="mt-1 flex gap-2">
+                        <button
+                          type="button"
+                          disabled={busy === `create-signal-analyst-${analystMode}`}
+                          onClick={deployAnalyst}
+                          className="flex h-8 items-center rounded-md bg-accent px-3.5 text-[12px] font-semibold text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+                        >
+                          {analystMode === "live" ? "Deploy live analyst" : "Deploy analyst simulation"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAnalystMode(null)}
+                          className="flex h-8 items-center rounded-md border border-border px-3 text-[12px] text-muted transition-colors hover:border-accent/40"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}

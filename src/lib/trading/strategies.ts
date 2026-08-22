@@ -10,6 +10,7 @@
 
 import type { ScreenerToken } from "@/lib/market-data";
 import type { PositionRow, StrategyConfig, StrategyId, TradingAgentRow } from "@/lib/trading/store";
+import { signalAnalyst } from "@/lib/trading/analyst";
 
 export interface StrategyInput {
   agent: TradingAgentRow;
@@ -35,7 +36,7 @@ export interface Order {
 
 const STABLE_SYMBOLS = new Set(["USDG", "USDC", "USDT", "USDE", "DAI", "WETH", "ETH"]);
 
-function tradeable(t: ScreenerToken, cfg: StrategyConfig): boolean {
+export function tradeable(t: ScreenerToken, cfg: StrategyConfig): boolean {
   return (
     t.kind === "meme" &&
     t.agent !== "failed" &&
@@ -61,7 +62,7 @@ function mean(xs: number[]): number {
 
 /* ---------------- exits shared by entry strategies ---------------- */
 
-function stopAndTrailExits(
+export function stopAndTrailExits(
   input: StrategyInput,
   opts: { trailPct?: number; takeProfitPct?: number; maxHoldHours?: number }
 ): Order[] {
@@ -325,9 +326,13 @@ function dipHunter(input: StrategyInput): Order[] {
   return orders;
 }
 
-export const STRATEGIES: Record<StrategyId, (input: StrategyInput) => Order[]> = {
+export const STRATEGIES: Record<
+  StrategyId,
+  (input: StrategyInput) => Order[] | Promise<Order[]>
+> = {
   "momentum-sniper": momentumSniper,
   "wave-rider": waveRider,
   "grid-maker": gridMaker,
   "dip-hunter": dipHunter,
+  "signal-analyst": signalAnalyst,
 };

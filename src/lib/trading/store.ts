@@ -12,7 +12,12 @@
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 
-export type StrategyId = "momentum-sniper" | "wave-rider" | "grid-maker" | "dip-hunter";
+export type StrategyId =
+  | "momentum-sniper"
+  | "wave-rider"
+  | "grid-maker"
+  | "dip-hunter"
+  | "signal-analyst";
 export type AgentMode = "paper" | "live";
 export type AgentStatus = "active" | "paused";
 
@@ -32,6 +37,10 @@ export interface StrategyConfig {
   stopLossPct: number;
   /** Minimum pool liquidity for any traded token (USD). */
   minLiquidityUsd: number;
+  /** signal-analyst only: the owner's mandate, injected into the LLM prompt. */
+  brief?: string;
+  /** signal-analyst only: knowledge sources fetched live before each decision. */
+  sources?: { type: string; url: string }[];
 }
 
 export interface TradingAgentRow {
@@ -105,6 +114,14 @@ export const STRATEGY_DEFAULTS: Record<StrategyId, StrategyConfig> = {
     stopLossPct: 0.25,
     minLiquidityUsd: 25_000,
   },
+  "signal-analyst": {
+    clipUsd: 100,
+    maxPositionUsd: 250,
+    maxOpenPositions: 3,
+    dailyTradeCap: 8,
+    stopLossPct: 0.2,
+    minLiquidityUsd: 25_000,
+  },
 };
 
 export const STRATEGY_META: Record<
@@ -130,6 +147,12 @@ export const STRATEGY_META: Record<
     name: "Dip Hunter",
     style: "MEAN REVERT",
     blurb: "Buys -15% panic moves on audited tokens with real liquidity, scales out on the bounce.",
+  },
+  "signal-analyst": {
+    name: "Signal Analyst",
+    style: "AI ANALYST",
+    blurb:
+      "An LLM reads your connected data — wallets, Telegram, APIs, news — plus the live market, and decides every trade. You write the mandate; hard risk caps stay mechanical.",
   },
 };
 
@@ -231,6 +254,7 @@ export function createAgentInstance(input: {
   strategy: StrategyId;
   mode: AgentMode;
   walletAddress?: string;
+  config?: Partial<StrategyConfig>;
 }): TradingAgentRow {
   ensureTables();
   const owner = input.owner.toLowerCase();
@@ -246,7 +270,14 @@ export function createAgentInstance(input: {
       `INSERT INTO trading_agents (id, owner, strategy, mode, status, config_json, wallet_address)
        VALUES (?, ?, ?, ?, 'active', ?, ?)`
     )
-    .run(id, owner, input.strategy, input.mode, "{}", input.walletAddress ?? null);
+    .run(
+      id,
+      owner,
+      input.strategy,
+      input.mode,
+      JSON.stringify(input.config ?? {}),
+      input.walletAddress ?? null
+    );
   if (input.mode === "paper") {
     db()
       .prepare("INSERT OR REPLACE INTO trading_cash (agent_id, usd) VALUES (?, ?)")

@@ -72,7 +72,12 @@ export async function POST(req: Request) {
   const wallet = getSessionWallet(req);
   if (!wallet) return NextResponse.json({ ok: false, error: "Wallet session required" }, { status: 401 });
 
-  let body: { strategy?: string; mode?: string };
+  let body: {
+    strategy?: string;
+    mode?: string;
+    brief?: string;
+    sources?: { type?: string; url?: string }[];
+  };
   try {
     body = await req.json();
   } catch {
@@ -91,8 +96,36 @@ export async function POST(req: Request) {
     );
   }
 
+  // signal-analyst carries a mandate + knowledge sources in its config.
+  let config: { brief?: string; sources?: { type: string; url: string }[] } | undefined;
+  if (strategy === "signal-analyst") {
+    const { isValidSourceUrl, isSafePublicHttpUrl, SUPPORTED_SOURCE_TYPES } = await import(
+      "@/lib/knowledge-sources"
+    );
+    // OAuth-bound types are keyed to business agents, not trading instances.
+    const allowed = (SUPPORTED_SOURCE_TYPES as readonly string[]).filter(
+      (t) => !["notion", "x"].includes(t)
+    );
+    const requested = Array.isArray(body.sources)
+      ? body.sources
+          .map((s) => ({ type: String(s?.type ?? ""), url: String(s?.url ?? "").trim() }))
+          .filter((s) => allowed.includes(s.type) && isValidSourceUrl(s.url))
+          .slice(0, 4)
+      : [];
+    const sources: { type: string; url: string }[] = [];
+    for (const s of requested) {
+      const isHttp = ["website", "rss", "github", "pdf", "api"].includes(s.type);
+      if (isHttp && !(await isSafePublicHttpUrl(s.url))) continue;
+      sources.push(s);
+    }
+    config = {
+      brief: String(body.brief ?? "").slice(0, 600) || undefined,
+      sources: sources.length > 0 ? sources : undefined,
+    };
+  }
+
   try {
-    const agent = createAgentInstance({ owner: wallet, strategy, mode });
+    const agent = createAgentInstance({ owner: wallet, strategy, mode, config });
     if (mode === "live") {
       const address = ensureAgentWallet(agent.id, wallet);
       const { db } = await import("@/lib/db");

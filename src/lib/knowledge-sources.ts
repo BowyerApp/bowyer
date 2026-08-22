@@ -527,12 +527,24 @@ async function fetchOne(source: KnowledgeSource, slug?: string): Promise<string 
 }
 
 export async function buildSourceContext(slug: string): Promise<string> {
-  const sources = getAgentSources(slug).slice(0, MAX_SOURCES);
+  return buildContextFromSources(getAgentSources(slug), slug);
+}
+
+/**
+ * Same live-fetch pipeline, but for callers that carry their own source list
+ * (e.g. trading instances). `scope` keys the cache and OAuth lookups; scopes
+ * without stored OAuth tokens simply skip Notion/X sources.
+ */
+export async function buildContextFromSources(
+  allSources: KnowledgeSource[],
+  scope: string
+): Promise<string> {
+  const sources = allSources.slice(0, MAX_SOURCES);
   if (sources.length === 0) return "";
 
   const results = await Promise.all(
     sources.map(async (s) => {
-      const text = await fetchOne(s, slug);
+      const text = await fetchOne(s, scope);
       if (!text) return null;
       return `--- Source (${s.type}): ${s.url} ---\n${text}`;
     })
