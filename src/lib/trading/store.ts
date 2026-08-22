@@ -43,6 +43,8 @@ export interface StrategyConfig {
   sources?: { type: string; url: string }[];
   /** signal-analyst only: bull/bear/risk-officer debate before each decision (default on). */
   debate?: boolean;
+  /** Execution venue: Robinhood Chain spot (default) or Hyperliquid perps. */
+  venue?: "rhc" | "hyperliquid";
 }
 
 export interface TradingAgentRow {

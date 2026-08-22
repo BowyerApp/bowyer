@@ -39,6 +39,13 @@ import {
   tokenDecimals,
 } from "@/lib/trading/dex";
 import { liveTradingEnabled, loadAgentWallet } from "@/lib/trading/wallets";
+import {
+  hlAccountValueUsd,
+  hlPlaceOrder,
+  hlScreener,
+  hlSymbolFromAddress,
+  isHlToken,
+} from "@/lib/trading/hyperliquid";
 
 const MIN_GAS_WEI = BigInt(3e14); // 0.0003 ETH keeps ~15 swaps of headroom
 
@@ -97,7 +104,54 @@ async function liveRoute(token: string): Promise<{ quote: string; pair: string }
   return null;
 }
 
+/** Live Hyperliquid perp execution — long-only, IOC market-like orders. */
+async function executeLiveHl(agent: TradingAgentRow, order: Order) {
+  const wallet = loadAgentWallet(agent.id);
+  if (!wallet) throw new Error("agent wallet missing");
+  const symbol = hlSymbolFromAddress(order.token);
+
+  if (order.side === "buy") {
+    const usd = order.usd ?? 0;
+    if (usd < 10) return;
+    const fill = await hlPlaceOrder({ account: wallet.account, symbol, isBuy: true, sizeUsd: usd });
+    recordFill({
+      agentId: agent.id,
+      side: "buy",
+      token: order.token,
+      symbol: order.symbol,
+      qty: fill.filledQty,
+      priceUsd: fill.avgPriceUsd,
+      txHash: fill.txHash,
+      reason: order.reason,
+    });
+  } else {
+    const pos = positionsFor(agent.id).find((p) => p.token === order.token);
+    if (!pos) return;
+    const qty = pos.qty * Math.min(1, Math.max(0, order.fraction ?? 1));
+    const fill = await hlPlaceOrder({
+      account: wallet.account,
+      symbol,
+      isBuy: false,
+      sizeAsset: qty,
+      reduceOnly: true,
+    });
+    recordFill({
+      agentId: agent.id,
+      side: "sell",
+      token: order.token,
+      symbol: order.symbol,
+      qty: fill.filledQty,
+      priceUsd: fill.avgPriceUsd,
+      txHash: fill.txHash,
+      reason: order.reason,
+    });
+  }
+  if (order.meta) setPositionMeta(agent.id, order.token, order.meta);
+}
+
 async function executeLive(agent: TradingAgentRow, order: Order) {
+  if (isHlToken(order.token)) return executeLiveHl(agent, order);
+
   const wallet = loadAgentWallet(agent.id);
   if (!wallet) throw new Error("agent wallet missing");
 
@@ -195,7 +249,8 @@ async function executeLive(agent: TradingAgentRow, order: Order) {
 
 /** Market-sell every open position (owner-triggered flatten). Returns fills executed. */
 export async function closeAllPositions(agent: TradingAgentRow, reason: string): Promise<number> {
-  const { tokens } = await getMemeScreener();
+  const tokens =
+    agent.config.venue === "hyperliquid" ? await hlScreener() : (await getMemeScreener()).tokens;
   const priceOf = new Map(tokens.map((t) => [t.address.toLowerCase(), t.priceUsd ?? null]));
   let closed = 0;
   for (const pos of positionsFor(agent.id)) {
@@ -272,6 +327,22 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
   let cashUsd: number;
   if (agent.mode === "paper") {
     cashUsd = cashFor(agent.id);
+  } else if (agent.config.venue === "hyperliquid") {
+    const wallet = loadAgentWallet(agent.id);
+    if (!wallet) {
+      noteTick(agent.id, "live wallet missing — recreate the agent");
+      return;
+    }
+    const accountValue = await hlAccountValueUsd(wallet.address);
+    const positionNotional = positions.reduce((sum, p) => {
+      const px = priceOf.get(p.token) ?? p.avgCostUsd;
+      return sum + p.qty * (px ?? p.avgCostUsd);
+    }, 0);
+    cashUsd = Math.max(0, accountValue - positionNotional);
+    if (accountValue < 10 && positions.length === 0) {
+      noteTick(agent.id, "fund the agent on Hyperliquid: send USDC (Arbitrum) to its wallet, then deposit on app.hyperliquid.xyz");
+      return;
+    }
   } else {
     const wallet = loadAgentWallet(agent.id);
     if (!wallet) {
@@ -372,14 +443,34 @@ export async function tradingTick(): Promise<{ agents: number; errors: number }>
     const agents = listActiveAgents();
     if (agents.length === 0) return { agents: 0, errors: 0 };
     const { tokens } = await getMemeScreener();
+
+    // One shared Hyperliquid snapshot per tick, only when someone trades there.
+    let hlTokens: ScreenerToken[] | null = null;
+    if (agents.some((a) => a.config.venue === "hyperliquid")) {
+      try {
+        hlTokens = await hlScreener();
+      } catch (err) {
+        console.error("[trading] hyperliquid screener failed:", (err as Error).message);
+      }
+    }
+
     let errors = 0;
     for (const agent of agents) {
-      if (agent.mode === "live" && (!liveTradingEnabled() || ACTIVE_CHAIN.chainIdDecimal !== 4663)) {
+      const onHl = agent.config.venue === "hyperliquid";
+      if (agent.mode === "live" && !liveTradingEnabled()) {
         noteTick(agent.id, "live trading disabled on this server");
         continue;
       }
+      if (agent.mode === "live" && !onHl && ACTIVE_CHAIN.chainIdDecimal !== 4663) {
+        noteTick(agent.id, "live trading disabled on this server");
+        continue;
+      }
+      if (onHl && !hlTokens) {
+        noteTick(agent.id, "hyperliquid data unavailable this tick");
+        continue;
+      }
       try {
-        await tickAgent(agent, tokens);
+        await tickAgent(agent, onHl ? hlTokens! : tokens);
       } catch (err) {
         errors += 1;
         console.error(`[trading] tick failed for ${agent.id.slice(0, 8)}:`, err);

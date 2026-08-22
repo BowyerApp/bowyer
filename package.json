@@ -2,6 +2,9 @@
   "name": "bowyer",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "rm -rf .next && next dev -p 3005",
     "dev:fast": "next dev -p 3005",
@@ -12,6 +15,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@nktkas/hyperliquid": "^0.33.3",
     "@types/three": "^0.185.1",
     "better-sqlite3": "^12.11.1",
     "clsx": "^2.1.1",

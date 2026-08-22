@@ -57,6 +57,7 @@ interface Instance {
   meta: { name: string; style: string; blurb: string };
   mode: "paper" | "live";
   status: "active" | "paused";
+  config?: { venue?: string };
   walletAddress: string | null;
   createdAt: string;
   lastTickAt: string | null;
@@ -130,6 +131,7 @@ export function TradingView() {
   const [analystMode, setAnalystMode] = useState<"paper" | "live" | null>(null);
   const [analystBrief, setAnalystBrief] = useState("");
   const [analystSources, setAnalystSources] = useState("");
+  const [analystVenue, setAnalystVenue] = useState<"rhc" | "hyperliquid">("rhc");
 
   const load = useCallback(
     async (auth = true) => {
@@ -177,7 +179,7 @@ export function TradingView() {
   const createAgent = (
     strategy: string,
     mode: "paper" | "live",
-    extra?: { brief?: string; sources?: { type: string; url: string }[] }
+    extra?: { brief?: string; sources?: { type: string; url: string }[]; venue?: string }
   ) =>
     act(
       () =>
@@ -199,10 +201,12 @@ export function TradingView() {
     await createAgent("signal-analyst", analystMode, {
       brief: analystBrief.trim() || undefined,
       sources: sources.length > 0 ? sources : undefined,
+      venue: analystVenue === "hyperliquid" ? "hyperliquid" : undefined,
     });
     setAnalystMode(null);
     setAnalystBrief("");
     setAnalystSources("");
+    setAnalystVenue("rhc");
   };
 
   const patch = (id: string, action: "pause" | "resume") =>
@@ -378,6 +382,36 @@ export function TradingView() {
                   {c.id === "signal-analyst" && analystMode && (
                     <div className="mt-3 flex flex-col gap-2 rounded-md border border-border bg-raised/40 p-3">
                       <label className="text-[10.5px] font-semibold uppercase tracking-wide text-subtle">
+                        Venue
+                      </label>
+                      <div className="flex gap-2">
+                        {(
+                          [
+                            ["rhc", "Robinhood Chain spot"],
+                            ["hyperliquid", "Hyperliquid perps"],
+                          ] as const
+                        ).map(([v, label]) => (
+                          <button
+                            key={v}
+                            type="button"
+                            onClick={() => setAnalystVenue(v)}
+                            className={`flex h-7 items-center rounded border px-2.5 text-[11px] transition-colors ${
+                              analystVenue === v
+                                ? "border-accent/60 bg-accent/10 text-foreground"
+                                : "border-border text-muted hover:border-accent/40"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      {analystVenue === "hyperliquid" && analystMode === "live" && (
+                        <p className="text-[10.5px] leading-relaxed text-subtle">
+                          Live Hyperliquid agents trade perps (long-only, no leverage stacking).
+                          Fund the agent wallet with USDC on Hyperliquid after deploying.
+                        </p>
+                      )}
+                      <label className="mt-1 text-[10.5px] font-semibold uppercase tracking-wide text-subtle">
                         Mandate — what should it trade and why?
                       </label>
                       <textarea
@@ -511,6 +545,11 @@ function InstanceCard({
             >
               {a.mode === "live" ? "LIVE" : "SIM"}
             </span>
+            {a.config?.venue === "hyperliquid" && (
+              <span className="rounded border border-[#97fce4]/40 bg-[#97fce4]/10 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-[#97fce4]">
+                HYPERLIQUID
+              </span>
+            )}
             <span
               className={`rounded border px-1.5 py-px text-[9px] font-bold uppercase tracking-wide ${
                 a.status === "active"
@@ -565,7 +604,11 @@ function InstanceCard({
               <span className="ml-auto shrink-0 text-subtle">{timeAgo(f.at)} ago</span>
               {f.txHash !== "paper" && (
                 <a
-                  href={`${EXPLORER}/tx/${f.txHash}`}
+                  href={
+                    f.txHash.startsWith("hl:")
+                      ? `https://app.hyperliquid.xyz/trade/${f.symbol}`
+                      : `${EXPLORER}/tx/${f.txHash}`
+                  }
                   target="_blank"
                   rel="noreferrer"
                   className="shrink-0 text-accent"

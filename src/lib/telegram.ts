@@ -659,9 +659,10 @@ export async function notifyTradeFill(input: {
     `${emoji} ${input.strategyName} [${mode}] — ${input.side.toUpperCase()} ${input.symbol}`,
     `$${input.valueUsd.toFixed(2)} @ $${input.priceUsd.toPrecision(4)}`,
     input.reason ? `\n${input.reason}` : "",
-    input.txHash && input.txHash !== "paper"
+    input.txHash && input.txHash !== "paper" && !input.txHash.startsWith("hl:")
       ? `\nhttps://robinhoodchain.blockscout.com/tx/${input.txHash}`
       : "",
+    input.txHash.startsWith("hl:") ? `\nhttps://app.hyperliquid.xyz/trade/${input.symbol}` : "",
   ].filter(Boolean);
 
   const queued = enqueueTelegramDelivery({

@@ -81,6 +81,7 @@ export async function POST(req: Request) {
     mode?: string;
     brief?: string;
     sources?: { type?: string; url?: string }[];
+    venue?: string;
   };
   try {
     body = await req.json();
@@ -101,7 +102,9 @@ export async function POST(req: Request) {
   }
 
   // signal-analyst carries a mandate + knowledge sources in its config.
-  let config: { brief?: string; sources?: { type: string; url: string }[] } | undefined;
+  let config:
+    | { brief?: string; sources?: { type: string; url: string }[]; venue?: "rhc" | "hyperliquid" }
+    | undefined;
   if (strategy === "signal-analyst") {
     const { isValidSourceUrl, isSafePublicHttpUrl, SUPPORTED_SOURCE_TYPES } = await import(
       "@/lib/knowledge-sources"
@@ -125,6 +128,7 @@ export async function POST(req: Request) {
     config = {
       brief: String(body.brief ?? "").slice(0, 600) || undefined,
       sources: sources.length > 0 ? sources : undefined,
+      venue: body.venue === "hyperliquid" ? "hyperliquid" : undefined,
     };
   }
 
