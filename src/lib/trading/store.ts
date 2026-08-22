@@ -691,7 +691,10 @@ export function leaderboard(limit = 50): LeaderboardRow[] {
       .prepare("SELECT COUNT(*) AS n FROM trading_fills WHERE agent_id = ?")
       .get(a.id) as { n: number };
     if (!eq && trades.n === 0) continue; // never ticked — nothing to verify
-    const start = a.mode === "paper" ? PAPER_START_USD + netDeposits(a.id) : Math.max(netDeposits(a.id), 0.01);
+    const deposits = netDeposits(a.id);
+    // Live agents without a recorded deposit have no verifiable baseline.
+    if (a.mode === "live" && deposits <= 0) continue;
+    const start = a.mode === "paper" ? PAPER_START_USD + deposits : deposits;
     const equity = eq?.equity_usd ?? (a.mode === "paper" ? cashFor(a.id) : 0);
     const sells = db()
       .prepare("SELECT reason FROM trading_fills WHERE agent_id = ? AND side = 'sell'")
