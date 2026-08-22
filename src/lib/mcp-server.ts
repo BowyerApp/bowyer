@@ -466,6 +466,161 @@ function buildRobinhoodTradingServer(ctx: McpAgentContext): McpAgentServer {
   };
 }
 
+/* ---------- trading ops: control your trading agents from any MCP client ---------- */
+
+/**
+ * Wallet-scoped MCP server for the trading desk. Built per-request with the
+ * authenticated wallet baked in — tools can only see and control agents owned
+ * by that wallet. Exposed at /api/mcp/trading (wallet session required).
+ */
+export function buildTradingOpsServer(wallet: string): McpAgentServer {
+  const owner = wallet.toLowerCase();
+
+  return {
+    name: "trading",
+    version: "1.0.0",
+    tools: [
+      {
+        name: "list_agents",
+        description:
+          "List your trading agents with live equity, PnL, open positions, and status.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "agent_detail",
+        description:
+          "Full detail for one trading agent: positions, recent fills, LLM decision trail, and lessons learned.",
+        inputSchema: {
+          type: "object",
+          properties: { agentId: { type: "string", description: "Agent instance id from list_agents" } },
+          required: ["agentId"],
+        },
+      },
+      {
+        name: "pause_agent",
+        description: "Pause a trading agent. Open positions remain (stops stop managing them).",
+        inputSchema: {
+          type: "object",
+          properties: { agentId: { type: "string" } },
+          required: ["agentId"],
+        },
+      },
+      {
+        name: "resume_agent",
+        description: "Resume a paused trading agent — next tick within 60 seconds.",
+        inputSchema: {
+          type: "object",
+          properties: { agentId: { type: "string" } },
+          required: ["agentId"],
+        },
+      },
+      {
+        name: "exit_positions",
+        description:
+          "Flatten a trading agent: market-sell every open position, then pause it.",
+        inputSchema: {
+          type: "object",
+          properties: { agentId: { type: "string" } },
+          required: ["agentId"],
+        },
+      },
+      {
+        name: "leaderboard",
+        description: "Public verified-PnL leaderboard across all Bowyer trading agents.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "get_status",
+        description: "Operational status of the trading desk MCP.",
+        inputSchema: { type: "object", properties: {} },
+      },
+    ],
+    async callTool(name, args) {
+      const store = await import("@/lib/trading/store");
+
+      const ownedAgent = (id: unknown) => {
+        const agent = store.getAgent(String(id ?? ""));
+        if (!agent || agent.owner !== owner) throw new Error("Not your agent");
+        return agent;
+      };
+
+      const summarize = (a: import("@/lib/trading/store").TradingAgentRow) => {
+        const series = store.equitySeries(a.id, 1);
+        const equity = series.length
+          ? series[series.length - 1].equityUsd
+          : a.mode === "paper"
+            ? store.cashFor(a.id)
+            : 0;
+        const start =
+          a.mode === "paper"
+            ? store.PAPER_START_USD + store.netDeposits(a.id)
+            : Math.max(store.netDeposits(a.id), 0.01);
+        return {
+          agentId: a.id,
+          strategy: store.STRATEGY_META[a.strategy].name,
+          mode: a.mode,
+          status: a.status,
+          equityUsd: Number(equity.toFixed(2)),
+          pnlPct: start > 0 ? Number((((equity - start) / start) * 100).toFixed(2)) : 0,
+          openPositions: store.positionsFor(a.id).length,
+          lastNote: a.lastNote,
+        };
+      };
+
+      switch (name) {
+        case "list_agents":
+          return { wallet: owner, agents: store.listAgentsFor(owner).map(summarize) };
+
+        case "agent_detail": {
+          const agent = ownedAgent(args.agentId);
+          return {
+            ...summarize(agent),
+            positions: store.positionsFor(agent.id),
+            fills: store.fillsFor(agent.id, 15),
+            decisions: store.decisionsFor(agent.id, 5),
+            lessons: store.memoriesFor(agent.id, 8),
+          };
+        }
+
+        case "pause_agent": {
+          const agent = ownedAgent(args.agentId);
+          store.setAgentStatus(agent.id, "paused");
+          return { status: "paused", agentId: agent.id };
+        }
+
+        case "resume_agent": {
+          const agent = ownedAgent(args.agentId);
+          store.setAgentStatus(agent.id, "active");
+          return { status: "active", agentId: agent.id, note: "Next tick within 60 seconds." };
+        }
+
+        case "exit_positions": {
+          const agent = ownedAgent(args.agentId);
+          const { closeAllPositions } = await import("@/lib/trading/engine");
+          const closed = await closeAllPositions(agent, "owner exit via MCP");
+          store.setAgentStatus(agent.id, "paused");
+          return { status: "flattened", agentId: agent.id, positionsClosed: closed };
+        }
+
+        case "leaderboard":
+          return { leaderboard: store.leaderboard(25) };
+
+        case "get_status":
+          return {
+            desk: "bowyer trading",
+            wallet: owner,
+            agents: store.listAgentsFor(owner).length,
+            tick: "60s",
+            updatedAt: new Date().toISOString(),
+          };
+
+        default:
+          throw new Error(`Unknown tool: ${name}`);
+      }
+    },
+  };
+}
+
 /* ---------- generic server for every other agent ---------- */
 
 function buildGenericServer(ctx: McpAgentContext): McpAgentServer {

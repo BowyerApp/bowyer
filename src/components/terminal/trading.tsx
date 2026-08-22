@@ -42,6 +42,15 @@ interface Position {
   avgCostUsd: number;
 }
 
+interface Decision {
+  id: string;
+  reasoning: string;
+  orders: { side: string; symbol: string; usd?: number; fraction?: number; reason?: string }[];
+  debate: { role: string; view: string }[] | null;
+  contextNote: string;
+  at: string;
+}
+
 interface Instance {
   id: string;
   strategy: string;
@@ -58,6 +67,8 @@ interface Instance {
   positions: Position[];
   fills: Fill[];
   equitySeries: { at: string; equityUsd: number }[];
+  decisions?: Decision[];
+  memories?: { lesson: string; at: string }[];
 }
 
 interface CatalogEntry {
@@ -411,6 +422,8 @@ export function TradingView() {
             })}
           </div>
 
+          <Leaderboard />
+
           <p className="mt-6 rounded-lg border border-border bg-raised/40 p-4 text-[11.5px] leading-relaxed text-subtle">
             Simulations trade a virtual $1,000 at live market prices with realistic slippage. Live
             agents trade real funds from a dedicated wallet that can only swap on-chain and withdraw
@@ -565,6 +578,10 @@ function InstanceCard({
         </div>
       )}
 
+      {a.decisions && a.decisions.length > 0 && (
+        <DecisionTrail decisions={a.decisions} memories={a.memories ?? []} />
+      )}
+
       {a.mode === "live" && a.walletAddress && (
         <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-border bg-raised/50 px-3 py-2">
           <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-subtle">
@@ -654,6 +671,174 @@ function InstanceCard({
         <span className="ml-auto font-mono-num text-[10px] text-subtle">
           started {timeAgo(a.createdAt)} ago · baseline ${fmt(a.startUsd, 0)}
         </span>
+      </div>
+    </div>
+  );
+}
+
+/** Every LLM decision, auditable: desk debate, final reasoning, resulting orders. */
+function DecisionTrail({
+  decisions,
+  memories,
+}: {
+  decisions: Decision[];
+  memories: { lesson: string; at: string }[];
+}) {
+  const [open, setOpen] = useState(false);
+  const latest = decisions[0];
+
+  return (
+    <div className="mt-3 rounded-md border border-border bg-raised/40">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+      >
+        <BrainCircuit size={12} className="shrink-0 text-subtle" />
+        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-subtle">
+          Decision trail
+        </span>
+        <span className="truncate font-mono-num text-[10.5px] text-muted">
+          {latest.reasoning.slice(0, 90)}
+          {latest.reasoning.length > 90 ? "…" : ""}
+        </span>
+        <span className="ml-auto shrink-0 font-mono-num text-[10px] text-subtle">
+          {open ? "hide" : `${decisions.length} decisions`}
+        </span>
+      </button>
+
+      {open && (
+        <div className="divide-y divide-border border-t border-border px-3">
+          {decisions.slice(0, 5).map((d) => (
+            <div key={d.id} className="py-2.5">
+              <div className="flex items-center gap-2 font-mono-num text-[10px] text-subtle">
+                <span>{timeAgo(d.at)} ago</span>
+                <span>· {d.contextNote}</span>
+                <span className="ml-auto">
+                  {d.orders.length === 0
+                    ? "no trade"
+                    : d.orders.map((o) => `${o.side.toUpperCase()} ${o.symbol}`).join(", ")}
+                </span>
+              </div>
+              {d.debate && d.debate.length > 0 && (
+                <div className="mt-1.5 grid gap-1.5 sm:grid-cols-2">
+                  {d.debate.map((v) => (
+                    <div
+                      key={v.role}
+                      className={`rounded border px-2 py-1.5 text-[10.5px] leading-relaxed ${
+                        v.role === "bull"
+                          ? "border-[#2dd4a7]/30 bg-[#2dd4a7]/5 text-up"
+                          : "border-[#f45d7e]/30 bg-[#f45d7e]/5 text-down"
+                      }`}
+                    >
+                      <span className="font-bold uppercase">{v.role}: </span>
+                      <span className="text-muted">{v.view}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
+                <span className="font-bold uppercase text-subtle">Risk officer: </span>
+                {d.reasoning}
+              </p>
+            </div>
+          ))}
+          {memories.length > 0 && (
+            <div className="py-2.5">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-subtle">
+                Lessons learned
+              </span>
+              <div className="mt-1 flex flex-col gap-0.5">
+                {memories.slice(0, 5).map((m, i) => (
+                  <span key={i} className="font-mono-num text-[10.5px] text-muted">
+                    {m.lesson}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface LeaderRow {
+  agentId: string;
+  ownerShort: string;
+  strategyName: string;
+  style: string;
+  mode: "paper" | "live";
+  status: string;
+  equityUsd: number;
+  pnlPct: number;
+  trades: number;
+  winRate: number | null;
+  createdAt: string;
+}
+
+/** Public verified-PnL leaderboard — every row derives from recorded fills. */
+function Leaderboard() {
+  const [rows, setRows] = useState<LeaderRow[] | null>(null);
+
+  useEffect(() => {
+    fetch("/api/trading/leaderboard")
+      .then((r) => r.json())
+      .then((j) => setRows(j.leaderboard ?? []))
+      .catch(() => setRows([]));
+  }, []);
+
+  if (!rows || rows.length === 0) return null;
+
+  return (
+    <div className="mt-10">
+      <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-subtle">
+        Leaderboard — verified PnL
+      </h2>
+      <div className="card-frame mt-3 overflow-x-auto rounded-lg">
+        <table className="w-full text-left font-mono-num text-[11px]">
+          <thead>
+            <tr className="border-b border-border text-[10px] uppercase tracking-wide text-subtle">
+              <th className="px-3 py-2">#</th>
+              <th className="px-3 py-2">Agent</th>
+              <th className="px-3 py-2">Owner</th>
+              <th className="px-3 py-2">Mode</th>
+              <th className="px-3 py-2 text-right">Equity</th>
+              <th className="px-3 py-2 text-right">PnL</th>
+              <th className="px-3 py-2 text-right">Trades</th>
+              <th className="px-3 py-2 text-right">Win rate</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.slice(0, 15).map((r, i) => (
+              <tr key={r.agentId} className="text-muted">
+                <td className="px-3 py-2 text-subtle">{i + 1}</td>
+                <td className="px-3 py-2 text-foreground">{r.strategyName}</td>
+                <td className="px-3 py-2">{r.ownerShort}</td>
+                <td className="px-3 py-2">
+                  <span
+                    className={`rounded border px-1.5 py-px text-[9px] font-bold uppercase ${
+                      r.mode === "live"
+                        ? "border-[#f45d7e]/50 bg-[#f45d7e]/10 text-down"
+                        : "border-border text-subtle"
+                    }`}
+                  >
+                    {r.mode === "live" ? "LIVE" : "SIM"}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-right text-foreground">${fmt(r.equityUsd)}</td>
+                <td className={`px-3 py-2 text-right ${r.pnlPct >= 0 ? "text-up" : "text-down"}`}>
+                  {r.pnlPct >= 0 ? "+" : ""}
+                  {fmt(r.pnlPct, 1)}%
+                </td>
+                <td className="px-3 py-2 text-right">{r.trades}</td>
+                <td className="px-3 py-2 text-right">
+                  {r.winRate !== null ? `${r.winRate.toFixed(0)}%` : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

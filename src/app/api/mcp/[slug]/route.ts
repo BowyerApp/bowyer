@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getOrCreateMcpServer, handleMcpJsonRpc } from "@/lib/mcp-server";
+import { buildTradingOpsServer, getOrCreateMcpServer, handleMcpJsonRpc } from "@/lib/mcp-server";
 import { GITHUB_REPOS, getAgentSummary } from "@/lib/data/agents";
 import { getRegisteredDescription, hasSubscription } from "@/lib/data/agent-registry";
 import { rateLimit } from "@/lib/rate-limit";
@@ -35,7 +35,8 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
-  const server = resolveServer(slug);
+  // Trading desk MCP: tool listing is public, calls need a wallet session.
+  const server = slug === "trading" ? buildTradingOpsServer("0x0") : resolveServer(slug);
   if (!server) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -87,6 +88,37 @@ export async function POST(
       { jsonrpc: "2.0", error: { code: -32600, message: "Invalid Request" }, id: body.id ?? null },
       { status: 400 }
     );
+  }
+
+  // Trading desk MCP — wallet-scoped, session-authenticated, no x402 gating.
+  if (slug === "trading") {
+    const wallet = requireWalletSession(req);
+    if (!wallet && body.method === "tools/call") {
+      return NextResponse.json(
+        {
+          jsonrpc: "2.0",
+          error: {
+            code: -32003,
+            message: "Signed BOWYER wallet session required — authenticate on bowyer.app first.",
+          },
+          id: body.id ?? null,
+        },
+        { status: 401 }
+      );
+    }
+    const response = await handleMcpJsonRpc(buildTradingOpsServer(wallet ?? "0x0"), {
+      jsonrpc: "2.0",
+      method: body.method,
+      id: body.id,
+      params: body.params,
+    });
+    if ("error" in response && !("result" in response)) {
+      return NextResponse.json(
+        { jsonrpc: "2.0", error: response.error, id: body.id ?? null },
+        { status: response.error?.code === -32001 ? 404 : 400 }
+      );
+    }
+    return NextResponse.json({ jsonrpc: "2.0", ...response });
   }
 
   const toolName =

@@ -6,11 +6,13 @@ import {
   STRATEGY_DEFAULTS,
   STRATEGY_META,
   createAgentInstance,
+  decisionsFor,
   deleteAgent,
   equitySeries,
   fillsFor,
   getAgent,
   listAgentsFor,
+  memoriesFor,
   netDeposits,
   positionsFor,
   cashFor,
@@ -47,6 +49,8 @@ function agentPayload(id: string) {
     positions: positionsFor(agent.id),
     fills: fillsFor(agent.id, 25),
     equitySeries: series,
+    decisions: decisionsFor(agent.id, 10),
+    memories: memoriesFor(agent.id, 8),
   };
 }
 

@@ -41,6 +41,8 @@ export interface StrategyConfig {
   brief?: string;
   /** signal-analyst only: knowledge sources fetched live before each decision. */
   sources?: { type: string; url: string }[];
+  /** signal-analyst only: bull/bear/risk-officer debate before each decision (default on). */
+  debate?: boolean;
 }
 
 export interface TradingAgentRow {
@@ -220,6 +222,23 @@ function ensureTables() {
       amount_usd REAL NOT NULL,
       at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS trading_memories (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      lesson TEXT NOT NULL,
+      at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_trading_memories_agent ON trading_memories (agent_id, at DESC);
+    CREATE TABLE IF NOT EXISTS trading_decisions (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      reasoning TEXT NOT NULL,
+      orders_json TEXT NOT NULL DEFAULT '[]',
+      debate_json TEXT,
+      context_note TEXT NOT NULL DEFAULT '',
+      at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_trading_decisions_agent ON trading_decisions (agent_id, at DESC);
   `);
 }
 
@@ -420,6 +439,14 @@ export function recordFill(input: {
           input.token.toLowerCase()
         );
       }
+      // Every realized exit becomes a lesson the agent can learn from.
+      if (pos.avg_cost_usd > 0) {
+        const pnlPct = ((input.priceUsd - pos.avg_cost_usd) / pos.avg_cost_usd) * 100;
+        addMemory(
+          input.agentId,
+          `${pnlPct >= 0 ? "WIN" : "LOSS"} ${input.symbol} ${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}% (entry $${pos.avg_cost_usd.toPrecision(4)}, exit $${input.priceUsd.toPrecision(4)}) — ${input.reason.slice(0, 120)}`
+        );
+      }
     }
   }
 }
@@ -541,6 +568,150 @@ export function netDeposits(agentId: string): number {
     )
     .get(agentId) as { n: number };
   return r.n;
+}
+
+/* ---------------- agent memory (lessons that survive restarts) ---------------- */
+
+export function addMemory(agentId: string, lesson: string): void {
+  ensureTables();
+  db()
+    .prepare("INSERT INTO trading_memories (id, agent_id, lesson) VALUES (?, ?, ?)")
+    .run(randomUUID(), agentId, lesson.slice(0, 300));
+  // Keep the memory bounded — the newest 40 lessons per agent.
+  db()
+    .prepare(
+      `DELETE FROM trading_memories WHERE agent_id = ? AND id NOT IN (
+         SELECT id FROM trading_memories WHERE agent_id = ? ORDER BY at DESC LIMIT 40
+       )`
+    )
+    .run(agentId, agentId);
+}
+
+export function memoriesFor(agentId: string, limit = 12): { lesson: string; at: string }[] {
+  ensureTables();
+  return db()
+    .prepare("SELECT lesson, at FROM trading_memories WHERE agent_id = ? ORDER BY at DESC LIMIT ?")
+    .all(agentId, limit) as { lesson: string; at: string }[];
+}
+
+/* ---------------- decision trail (every LLM decision, auditable) ---------------- */
+
+export interface DecisionRow {
+  id: string;
+  agentId: string;
+  reasoning: string;
+  orders: { side: string; symbol: string; usd?: number; fraction?: number; reason?: string }[];
+  debate: { role: string; view: string }[] | null;
+  contextNote: string;
+  at: string;
+}
+
+export function recordDecision(input: {
+  agentId: string;
+  reasoning: string;
+  orders: unknown[];
+  debate?: { role: string; view: string }[];
+  contextNote?: string;
+}): void {
+  ensureTables();
+  db()
+    .prepare(
+      `INSERT INTO trading_decisions (id, agent_id, reasoning, orders_json, debate_json, context_note)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      randomUUID(),
+      input.agentId,
+      input.reasoning.slice(0, 2000),
+      JSON.stringify(input.orders),
+      input.debate ? JSON.stringify(input.debate) : null,
+      (input.contextNote ?? "").slice(0, 200)
+    );
+  db()
+    .prepare(
+      `DELETE FROM trading_decisions WHERE agent_id = ? AND id NOT IN (
+         SELECT id FROM trading_decisions WHERE agent_id = ? ORDER BY at DESC LIMIT 100
+       )`
+    )
+    .run(input.agentId, input.agentId);
+}
+
+export function decisionsFor(agentId: string, limit = 20): DecisionRow[] {
+  ensureTables();
+  const rows = db()
+    .prepare("SELECT * FROM trading_decisions WHERE agent_id = ? ORDER BY at DESC LIMIT ?")
+    .all(agentId, limit) as {
+    id: string;
+    agent_id: string;
+    reasoning: string;
+    orders_json: string;
+    debate_json: string | null;
+    context_note: string;
+    at: string;
+  }[];
+  return rows.map((r) => ({
+    id: r.id,
+    agentId: r.agent_id,
+    reasoning: r.reasoning,
+    orders: JSON.parse(r.orders_json || "[]"),
+    debate: r.debate_json ? JSON.parse(r.debate_json) : null,
+    contextNote: r.context_note,
+    at: r.at,
+  }));
+}
+
+/* ---------------- public leaderboard (verified PnL, no self-reporting) ---------------- */
+
+export interface LeaderboardRow {
+  agentId: string;
+  ownerShort: string;
+  strategy: StrategyId;
+  mode: AgentMode;
+  status: AgentStatus;
+  equityUsd: number;
+  startUsd: number;
+  pnlPct: number;
+  trades: number;
+  winRate: number | null;
+  createdAt: string;
+}
+
+export function leaderboard(limit = 50): LeaderboardRow[] {
+  ensureTables();
+  const agents = db()
+    .prepare("SELECT * FROM trading_agents ORDER BY created_at ASC")
+    .all() as Parameters<typeof rowToAgent>[0][];
+  const out: LeaderboardRow[] = [];
+  for (const raw of agents) {
+    const a = rowToAgent(raw);
+    const eq = db()
+      .prepare("SELECT equity_usd FROM trading_equity WHERE agent_id = ? ORDER BY at DESC LIMIT 1")
+      .get(a.id) as { equity_usd: number } | undefined;
+    const trades = db()
+      .prepare("SELECT COUNT(*) AS n FROM trading_fills WHERE agent_id = ?")
+      .get(a.id) as { n: number };
+    if (!eq && trades.n === 0) continue; // never ticked — nothing to verify
+    const start = a.mode === "paper" ? PAPER_START_USD + netDeposits(a.id) : Math.max(netDeposits(a.id), 0.01);
+    const equity = eq?.equity_usd ?? (a.mode === "paper" ? cashFor(a.id) : 0);
+    const sells = db()
+      .prepare("SELECT reason FROM trading_fills WHERE agent_id = ? AND side = 'sell'")
+      .all(a.id) as { reason: string }[];
+    const wins = sells.filter((s) => /\+[\d.]+%/.test(s.reason)).length;
+    out.push({
+      agentId: a.id,
+      ownerShort: `${a.owner.slice(0, 6)}…${a.owner.slice(-4)}`,
+      strategy: a.strategy,
+      mode: a.mode,
+      status: a.status,
+      equityUsd: equity,
+      startUsd: start,
+      pnlPct: start > 0 ? ((equity - start) / start) * 100 : 0,
+      trades: trades.n,
+      winRate: sells.length > 0 ? (wins / sells.length) * 100 : null,
+      createdAt: a.createdAt,
+    });
+  }
+  return out.sort((x, y) => y.pnlPct - x.pnlPct).slice(0, limit);
 }
 
 /** Real aggregate stats per strategy across all instances — from actual fills only. */

@@ -16,6 +16,7 @@
 import { resolveRuntimeLlm } from "@/lib/llm-config";
 import type { StrategyInput, Order } from "@/lib/trading/strategies";
 import { stopAndTrailExits, tradeable } from "@/lib/trading/strategies";
+import { memoriesFor, recordDecision } from "@/lib/trading/store";
 import type { ScreenerToken } from "@/lib/market-data";
 
 const LLM_INTERVAL_MS = 15 * 60 * 1000;
@@ -117,6 +118,35 @@ function validateOrders(
   return orders;
 }
 
+async function llmChat(
+  system: string,
+  user: string,
+  opts: { json?: boolean; maxTokens?: number } = {}
+): Promise<string> {
+  const { model, apiKey, baseUrl } = resolveRuntimeLlm(null);
+  const res = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey ?? "ollama"}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      temperature: 0.3,
+      max_tokens: opts.maxTokens ?? 500,
+      ...(opts.json ? { response_format: { type: "json_object" } } : {}),
+    }),
+    signal: AbortSignal.timeout(45_000),
+  });
+  if (!res.ok) throw new Error(`analyst LLM ${res.status}`);
+  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  return json.choices?.[0]?.message?.content ?? "";
+}
+
 export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
   const { agent, tokens, positions, cashUsd } = input;
   const cfg = agent.config;
@@ -148,47 +178,86 @@ export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
           })
           .join("\n");
 
-  const system =
-    "You are a disciplined trading analyst managing a small on-chain portfolio. " +
-    "You only trade tokens from the provided market table. You respond with strict JSON: " +
-    '{"orders":[{"side":"buy"|"sell","symbol":"...","usd":number,"fraction":number,"reason":"..."}]} ' +
-    `with at most ${MAX_ORDERS_PER_DECISION} orders. An empty orders array is a valid and often correct answer. ` +
-    "For buys set usd (position size). For sells set fraction (0.1-1.0 of the position). " +
-    "Every reason must cite the concrete data that motivated it. Do not trade without an edge.";
+  const lessons = memoriesFor(agent.id, 10);
+  const lessonLines =
+    lessons.length === 0 ? "" : lessons.map((m) => `- ${m.lesson}`).join("\n");
 
-  const user = [
-    agent.config.brief ? `OWNER'S MANDATE:\n${cfg.brief}` : "",
+  const briefing = [
+    cfg.brief ? `OWNER'S MANDATE:\n${cfg.brief}` : "",
     context ? `LIVE INTELLIGENCE:\n${context}` : "",
+    lessonLines ? `LESSONS FROM THIS AGENT'S OWN PAST TRADES:\n${lessonLines}` : "",
     `MARKET (only these are tradeable):\n${marketTable(universe)}`,
     `OPEN POSITIONS:\n${positionLines}`,
     `CASH: $${cashUsd.toFixed(0)} | max clip $${cfg.clipUsd} | max position $${cfg.maxPositionUsd} | open ${positions.length}/${cfg.maxOpenPositions}`,
-    "Decide now. JSON only.",
   ]
     .filter(Boolean)
     .join("\n\n");
 
-  const { model, apiKey, baseUrl } = resolveRuntimeLlm(null);
-  const res = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey ?? "ollama"}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      temperature: 0.3,
-      max_tokens: 500,
-      response_format: { type: "json_object" },
-    }),
-    signal: AbortSignal.timeout(45_000),
-  });
-  if (!res.ok) throw new Error(`analyst LLM ${res.status}`);
-  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-  const content = json.choices?.[0]?.message?.content ?? "";
+  // Debate mode (default on): bull and bear argue in parallel, the
+  // risk officer reads both cases and makes the final call.
+  const debate: { role: string; view: string }[] = [];
+  let debateBlock = "";
+  if (cfg.debate !== false) {
+    try {
+      const [bull, bear] = await Promise.all([
+        llmChat(
+          "You are the BULL analyst on a trading desk. Argue the strongest case FOR deploying capital right now: which token, why, what concrete data supports it. If nothing is worth buying, say so and explain. 120 words max.",
+          briefing,
+          { maxTokens: 220 }
+        ),
+        llmChat(
+          "You are the BEAR analyst on a trading desk. Argue the strongest case AGAINST deploying capital right now: what could go wrong, which positions look stretched, what the data warns about. 120 words max.",
+          briefing,
+          { maxTokens: 220 }
+        ),
+      ]);
+      debate.push({ role: "bull", view: bull.trim() }, { role: "bear", view: bear.trim() });
+      debateBlock = `\n\nDESK DEBATE:\nBULL CASE:\n${bull.trim()}\n\nBEAR CASE:\n${bear.trim()}`;
+    } catch {
+      /* debate is an enhancement — fall through to the single-call decision */
+    }
+  }
 
-  return validateOrders(parseOrders(content), input, universe);
+  const system =
+    "You are the RISK OFFICER — the final word on a trading desk managing a small on-chain portfolio. " +
+    (debateBlock ? "Weigh the bull and bear cases from your desk, then decide. " : "") +
+    "You only trade tokens from the provided market table. You respond with strict JSON: " +
+    '{"reasoning":"one paragraph explaining your decision","orders":[{"side":"buy"|"sell","symbol":"...","usd":number,"fraction":number,"reason":"..."}]} ' +
+    `with at most ${MAX_ORDERS_PER_DECISION} orders. An empty orders array is a valid and often correct answer. ` +
+    "For buys set usd (position size). For sells set fraction (0.1-1.0 of the position). " +
+    "Every reason must cite the concrete data that motivated it. Do not trade without an edge.";
+
+  const content = await llmChat(system, `${briefing}${debateBlock}\n\nDecide now. JSON only.`, {
+    json: true,
+    maxTokens: 600,
+  });
+
+  let reasoning = "";
+  try {
+    reasoning = String((JSON.parse(content) as { reasoning?: string }).reasoning ?? "");
+  } catch {
+    /* orders parsing below has its own fallback */
+  }
+
+  const orders = validateOrders(parseOrders(content), input, universe);
+
+  try {
+    recordDecision({
+      agentId: agent.id,
+      reasoning: reasoning || "(no reasoning returned)",
+      orders: orders.map((o) => ({
+        side: o.side,
+        symbol: o.symbol,
+        usd: o.usd,
+        fraction: o.fraction,
+        reason: o.reason,
+      })),
+      debate: debate.length > 0 ? debate : undefined,
+      contextNote: `${universe.length} tokens screened, ${context ? "sources fetched" : "no sources"}, ${lessons.length} lessons`,
+    });
+  } catch {
+    /* the trail must never block trading */
+  }
+
+  return orders;
 }

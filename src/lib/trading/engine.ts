@@ -193,6 +193,56 @@ async function executeLive(agent: TradingAgentRow, order: Order) {
   if (order.meta) setPositionMeta(agent.id, order.token, order.meta);
 }
 
+/** Market-sell every open position (owner-triggered flatten). Returns fills executed. */
+export async function closeAllPositions(agent: TradingAgentRow, reason: string): Promise<number> {
+  const { tokens } = await getMemeScreener();
+  const priceOf = new Map(tokens.map((t) => [t.address.toLowerCase(), t.priceUsd ?? null]));
+  let closed = 0;
+  for (const pos of positionsFor(agent.id)) {
+    const order: Order = {
+      side: "sell",
+      token: pos.token,
+      symbol: pos.symbol,
+      fraction: 1,
+      priceUsd: priceOf.get(pos.token) ?? pos.avgCostUsd,
+      reason,
+    };
+    try {
+      if (agent.mode === "paper") {
+        await executePaper(agent, order, tokens.find((t) => t.address.toLowerCase() === pos.token));
+      } else {
+        await executeLive(agent, order);
+      }
+      closed += 1;
+    } catch (err) {
+      console.error(`[trading] flatten failed for ${pos.symbol}:`, (err as Error).message);
+    }
+  }
+  if (closed > 0) {
+    noteTick(agent.id, `flattened ${closed} position(s) — ${reason}`);
+    try {
+      const { notifyTradeFill } = await import("@/lib/telegram");
+      const { STRATEGY_META } = await import("@/lib/trading/store");
+      for (const fill of fillsFor(agent.id, closed)) {
+        await notifyTradeFill({
+          owner: agent.owner,
+          strategyName: STRATEGY_META[agent.strategy].name,
+          mode: agent.mode,
+          side: fill.side,
+          symbol: fill.symbol,
+          valueUsd: fill.valueUsd,
+          priceUsd: fill.priceUsd,
+          reason: fill.reason,
+          txHash: fill.txHash,
+        }).catch(() => {});
+      }
+    } catch {
+      /* receipts are best-effort */
+    }
+  }
+  return closed;
+}
+
 export async function liveEquityUsd(agentId: string, tokens: ScreenerToken[]): Promise<number> {
   const wallet = loadAgentWallet(agentId);
   if (!wallet) return 0;

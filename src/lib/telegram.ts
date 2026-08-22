@@ -55,6 +55,11 @@ const BOT_COMMANDS = [
   { command: "use", description: "Select an agent: /use slug" },
   { command: "ask", description: "Ask your selected paid agent" },
   { command: "deskalerts", description: "Stock Token dislocation alerts: on/off" },
+  { command: "trading", description: "Your trading agents: status + positions" },
+  { command: "pnl", description: "Live PnL for your trading agents" },
+  { command: "pause", description: "Pause a trading agent: /pause 1" },
+  { command: "resume", description: "Resume a trading agent: /resume 1" },
+  { command: "exit", description: "Sell all positions + pause: /exit 1" },
   { command: "referral", description: "Get your invite link" },
 ];
 const BOT_SHORT_DESCRIPTION = "Talk to your trading agent in Telegram.";
@@ -668,6 +673,113 @@ export async function notifyTradeFill(input: {
   return queued;
 }
 
+/* ---------------- trading agent control commands ---------------- */
+
+const TRADING_CMD = /^\/(trading|positions|pnl|pause|resume|exit)\b/;
+
+/** Full remote control of the owner's trading agents from a linked chat. */
+async function handleTradingCommand(
+  chatId: string,
+  wallet: string | undefined,
+  text: string
+): Promise<void> {
+  if (!wallet) {
+    await sendMessage(
+      chatId,
+      "Link your wallet first: bowyer.app/portfolio → Connections. Once linked, your trading agents obey this chat.",
+      { inline_keyboard: [[{ text: "Link wallet", url: `${SITE}/portfolio` }]] }
+    );
+    return;
+  }
+
+  const store = await import("@/lib/trading/store");
+  const agents = store.listAgentsFor(wallet);
+  if (agents.length === 0) {
+    await sendMessage(
+      chatId,
+      "No trading agents yet. Deploy one in the terminal — paper mode is free and takes one click.",
+      { inline_keyboard: [[{ text: "Open trading terminal", url: `${SITE}/terminal/trading` }]] }
+    );
+    return;
+  }
+
+  const [, cmd] = text.match(TRADING_CMD) ?? [];
+  const arg = text.replace(TRADING_CMD, "").trim();
+
+  const describe = (a: (typeof agents)[number], i: number): string => {
+    const series = store.equitySeries(a.id, 1);
+    const equity = series.length
+      ? series[series.length - 1].equityUsd
+      : a.mode === "paper"
+        ? store.cashFor(a.id)
+        : 0;
+    const start =
+      a.mode === "paper"
+        ? store.PAPER_START_USD + store.netDeposits(a.id)
+        : Math.max(store.netDeposits(a.id), 0.01);
+    const pnl = start > 0 ? ((equity - start) / start) * 100 : 0;
+    const positions = store.positionsFor(a.id);
+    return [
+      `${i + 1}. ${store.STRATEGY_META[a.strategy].name} [${a.mode.toUpperCase()}] — ${a.status === "active" ? "▶ running" : "⏸ paused"}`,
+      `   $${equity.toFixed(2)} equity (${pnl >= 0 ? "+" : ""}${pnl.toFixed(1)}%) · ${positions.length} open`,
+      ...(cmd === "trading" || cmd === "positions"
+        ? positions.map((p) => `   • ${p.symbol}: ${p.qty.toPrecision(4)} @ $${p.avgCostUsd.toPrecision(4)}`)
+        : []),
+      a.lastNote ? `   ${a.lastNote.slice(0, 100)}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  };
+
+  if (cmd === "trading" || cmd === "positions" || cmd === "pnl") {
+    const lines = agents.map(describe);
+    await sendMessage(
+      chatId,
+      [`Your trading agents:`, "", ...lines, "", "Control: /pause N · /resume N · /exit N (flatten + pause)"].join("\n"),
+      { inline_keyboard: [[{ text: "Open trading terminal", url: `${SITE}/terminal/trading` }]] }
+    );
+    return;
+  }
+
+  // Mutating commands need a target: the Nth agent from the list, or the only one.
+  const idx = arg ? Number.parseInt(arg, 10) - 1 : agents.length === 1 ? 0 : -1;
+  const target = agents[idx];
+  if (!target) {
+    await sendMessage(
+      chatId,
+      `Which agent? Send /${cmd} N — the number from /trading:\n\n${agents
+        .map((a, i) => `${i + 1}. ${store.STRATEGY_META[a.strategy].name} [${a.mode.toUpperCase()}]`)
+        .join("\n")}`
+    );
+    return;
+  }
+
+  const name = `${store.STRATEGY_META[target.strategy].name} [${target.mode.toUpperCase()}]`;
+  if (cmd === "pause") {
+    store.setAgentStatus(target.id, "paused");
+    await sendMessage(chatId, `⏸ ${name} paused. Open positions stay open (stops no longer manage them). /resume ${idx + 1} to restart, /exit ${idx + 1} to flatten.`);
+    return;
+  }
+  if (cmd === "resume") {
+    store.setAgentStatus(target.id, "active");
+    await sendMessage(chatId, `▶ ${name} resumed. Next tick within 60 seconds.`);
+    return;
+  }
+  if (cmd === "exit") {
+    await sendMessage(chatId, `Flattening ${name} — selling every open position at market…`);
+    const { closeAllPositions } = await import("@/lib/trading/engine");
+    const closed = await closeAllPositions(target, "owner /exit via Telegram");
+    store.setAgentStatus(target.id, "paused");
+    await sendMessage(
+      chatId,
+      closed > 0
+        ? `Done. ${closed} position(s) closed, agent paused. Fill receipts above. /resume ${idx + 1} when ready.`
+        : `No open positions to close. Agent paused. /resume ${idx + 1} when ready.`
+    );
+    return;
+  }
+}
+
 /** One alert per symbol/side per chat per 6-hour window (delivery-queue dedupe). */
 function deskAlertDedupeBucket(): string {
   return String(Math.floor(Date.now() / (6 * 60 * 60 * 1000)));
@@ -957,6 +1069,11 @@ export async function handleTelegramUpdate(update: {
       `Stock Token dislocation alerts are ${enabled ? "on" : "off"}.\n\nWhen a Robinhood Chain Stock Token trades ≥1% away from the real equity price, you get a ping here.\n\nUse /deskalerts on or /deskalerts off.`,
       { inline_keyboard: [[{ text: "Open the desk", url: `${SITE}/desk` }]] }
     );
+    return;
+  }
+
+  if (TRADING_CMD.test(text)) {
+    await handleTradingCommand(chatId, wallet?.wallet, text);
     return;
   }
 
