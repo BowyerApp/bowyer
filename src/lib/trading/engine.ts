@@ -263,6 +263,29 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
     }
   }
 
+  // Fill alerts to the owner's linked Telegram — never blocks the tick.
+  if (executed > 0) {
+    try {
+      const { notifyTradeFill } = await import("@/lib/telegram");
+      const { STRATEGY_META } = await import("@/lib/trading/store");
+      for (const fill of fillsFor(agent.id, executed)) {
+        await notifyTradeFill({
+          owner: agent.owner,
+          strategyName: STRATEGY_META[agent.strategy].name,
+          mode: agent.mode,
+          side: fill.side,
+          symbol: fill.symbol,
+          valueUsd: fill.valueUsd,
+          priceUsd: fill.priceUsd,
+          reason: fill.reason,
+          txHash: fill.txHash,
+        }).catch(() => {});
+      }
+    } catch {
+      /* alerts are best-effort */
+    }
+  }
+
   // Equity snapshot + status note.
   const equity =
     agent.mode === "paper"

@@ -626,6 +626,48 @@ export async function notifyReportPublished(
   return queued;
 }
 
+/**
+ * Trade fill alert to the owner's linked Telegram chat. Fired by the trading
+ * engine after every executed order; silently a no-op when the owner never
+ * linked Telegram or the bot is not configured.
+ */
+export async function notifyTradeFill(input: {
+  owner: string;
+  strategyName: string;
+  mode: "paper" | "live";
+  side: "buy" | "sell";
+  symbol: string;
+  valueUsd: number;
+  priceUsd: number;
+  reason: string;
+  txHash: string;
+}): Promise<boolean> {
+  if (!telegramConfigured()) return false;
+  const link = db()
+    .prepare("SELECT chat_id FROM telegram_links WHERE wallet = ?")
+    .get(input.owner.toLowerCase()) as { chat_id: string } | undefined;
+  if (!link) return false;
+
+  const emoji = input.side === "buy" ? "🟢" : "🔴";
+  const mode = input.mode === "live" ? "LIVE" : "SIM";
+  const lines = [
+    `${emoji} ${input.strategyName} [${mode}] — ${input.side.toUpperCase()} ${input.symbol}`,
+    `$${input.valueUsd.toFixed(2)} @ $${input.priceUsd.toPrecision(4)}`,
+    input.reason ? `\n${input.reason}` : "",
+    input.txHash && input.txHash !== "paper"
+      ? `\nhttps://robinhoodchain.blockscout.com/tx/${input.txHash}`
+      : "",
+  ].filter(Boolean);
+
+  const queued = enqueueTelegramDelivery({
+    chatId: link.chat_id,
+    text: lines.join("\n"),
+    dedupeKey: `fill:${input.txHash}:${input.owner}:${input.symbol}:${input.side}:${Date.now()}`,
+  });
+  if (queued) await processTelegramDeliveryQueue(5);
+  return queued;
+}
+
 /** One alert per symbol/side per chat per 6-hour window (delivery-queue dedupe). */
 function deskAlertDedupeBucket(): string {
   return String(Math.floor(Date.now() / (6 * 60 * 60 * 1000)));
