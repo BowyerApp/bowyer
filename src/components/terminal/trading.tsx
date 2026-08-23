@@ -169,7 +169,8 @@ export function TradingView() {
     try {
       const res = await fn();
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) setNotice(body.error ?? "Request failed");
+      // Truncate so an upstream provider error page never floods the panel.
+      if (!res.ok) setNotice(String(body.error ?? "Request failed").slice(0, 240));
       await load(false);
     } finally {
       setBusy(null);

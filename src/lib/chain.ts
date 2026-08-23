@@ -6,6 +6,8 @@
  * end-to-end. Set NEXT_PUBLIC_BOWYER_NETWORK=mainnet for production.
  */
 
+import { fallback, http } from "viem";
+
 export const CHAINS = {
   mainnet: {
     chainId: "0x1237", // 4663
@@ -40,13 +42,19 @@ export const ACTIVE_CHAIN = CHAINS[network];
 let rpcCursor = 0;
 
 function rpcPool(): string[] {
+  const configured: string[] = [];
   const multi = process.env.CHAIN_RPC_URLS?.trim();
-  if (multi) {
-    const urls = multi.split(",").map((u) => u.trim()).filter(Boolean);
-    if (urls.length > 0) return urls;
+  if (multi) configured.push(...multi.split(",").map((u) => u.trim()).filter(Boolean));
+  else {
+    const single = process.env.CHAIN_RPC_URL?.trim();
+    if (single) configured.push(single);
   }
-  const single = process.env.CHAIN_RPC_URL?.trim();
-  return single ? [single] : [...ACTIVE_CHAIN.rpcUrls];
+  // Official RPC rides along as a last resort so a single dead provider
+  // (e.g. ArrowRPC behind a broken Cloudflare tunnel) can't take trading down.
+  for (const official of ACTIVE_CHAIN.rpcUrls) {
+    if (!configured.includes(official)) configured.push(official);
+  }
+  return configured;
 }
 
 export function rpcUrl(): string {
@@ -54,6 +62,28 @@ export function rpcUrl(): string {
   const url = pool[rpcCursor % pool.length];
   rpcCursor = (rpcCursor + 1) % pool.length;
   return url;
+}
+
+/**
+ * Viem transport with automatic failover: when one provider is down (e.g. a
+ * Cloudflare 530 from a dead tunnel), the request retries on the next
+ * endpoint in the pool instead of surfacing the outage to the caller.
+ */
+let fallbackTransportCache: ReturnType<typeof fallback> | null = null;
+
+export function rpcFallbackTransport() {
+  // Memoized: rank() pings providers in the background and reorders them by
+  // health, which only pays off if the same transport instance is reused.
+  if (!fallbackTransportCache) {
+    const pool = rpcPool();
+    fallbackTransportCache = fallback(
+      // No per-transport retries: a dead endpoint costs one ~6s timeout, then
+      // the request moves to the next provider.
+      pool.map((u) => http(u, { retryCount: 0, timeout: 6_000 })),
+      { retryCount: 1, rank: true }
+    );
+  }
+  return fallbackTransportCache;
 }
 
 /** Canonical USDG on Robinhood Chain mainnet (Paxos). */

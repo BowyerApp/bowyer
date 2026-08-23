@@ -5,6 +5,7 @@ import {
   PAPER_START_USD,
   STRATEGY_DEFAULTS,
   STRATEGY_META,
+  briefError,
   createAgentInstance,
   decisionsFor,
   deleteAgent,
@@ -141,7 +142,7 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({ ok: true, agent: agentPayload(agent.id) });
   } catch (err) {
-    return NextResponse.json({ ok: false, error: (err as Error).message }, { status: 400 });
+    return NextResponse.json({ ok: false, error: briefError(err) }, { status: 400 });
   }
 }
 

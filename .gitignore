@@ -53,6 +53,10 @@ __pycache__/
 # server env reference (never commit)
 .env.production.server
 
+# promo video project (source only — deps and renders stay local)
+promo-video/node_modules/
+promo-video/out/
+
 # local screenshots (never ship)
 public/images/Screenshot*
 public/images/IMAGE_2026*

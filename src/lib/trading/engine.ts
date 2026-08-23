@@ -12,6 +12,7 @@
 import { getMemeScreener, type ScreenerToken } from "@/lib/market-data";
 import { ACTIVE_CHAIN } from "@/lib/chain";
 import {
+  briefError,
   cashFor,
   fillsFor,
   fillsToday,
@@ -379,7 +380,7 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
       }
       executed += 1;
     } catch (err) {
-      lastError = (err as Error).message;
+      lastError = briefError(err);
       console.error(`[trading] ${agent.strategy}/${agent.id.slice(0, 8)} order failed:`, lastError);
     }
   }
@@ -474,7 +475,7 @@ export async function tradingTick(): Promise<{ agents: number; errors: number }>
       } catch (err) {
         errors += 1;
         console.error(`[trading] tick failed for ${agent.id.slice(0, 8)}:`, err);
-        noteTick(agent.id, `tick error: ${(err as Error).message}`);
+        noteTick(agent.id, `tick error: ${briefError(err)}`);
       }
     }
     return { agents: agents.length, errors };

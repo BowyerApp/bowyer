@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionWallet } from "@/lib/wallet-auth";
 import { rateLimit } from "@/lib/rate-limit";
-import { getAgent, recordDeposit, setAgentStatus } from "@/lib/trading/store";
+import { briefError, getAgent, recordDeposit, setAgentStatus } from "@/lib/trading/store";
 import { loadAgentWallet } from "@/lib/trading/wallets";
 import {
   USDG,
@@ -68,6 +68,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, txs, withdrawnUsd });
   } catch (err) {
-    return NextResponse.json({ ok: false, error: (err as Error).message }, { status: 500 });
+    return NextResponse.json({ ok: false, error: briefError(err) }, { status: 500 });
   }
 }

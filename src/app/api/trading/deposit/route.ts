@@ -29,10 +29,18 @@ export async function POST(req: Request) {
   }
 
   await syncDeposits(agent.id).catch(() => 0);
-  const [usdg, eth] = await Promise.all([
-    erc20Balance(USDG, agent.walletAddress),
-    nativeBalance(agent.walletAddress),
-  ]);
+  let usdg: bigint, eth: bigint;
+  try {
+    [usdg, eth] = await Promise.all([
+      erc20Balance(USDG, agent.walletAddress),
+      nativeBalance(agent.walletAddress),
+    ]);
+  } catch {
+    return NextResponse.json(
+      { ok: false, error: "RPC providers are unreachable right now — balances will refresh once the chain endpoint recovers. Deposits are safe on-chain." },
+      { status: 502 }
+    );
+  }
 
   return NextResponse.json({
     ok: true,

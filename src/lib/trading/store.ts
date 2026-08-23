@@ -342,6 +342,16 @@ export function deleteAgent(id: string): void {
   // must survive instance deletion so funds are always recoverable.
 }
 
+/**
+ * First line of an error, truncated — viem errors embed entire upstream
+ * response bodies (e.g. a Cloudflare 530 HTML page), which must never reach
+ * the UI or the database whole.
+ */
+export function briefError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.split("\n")[0].slice(0, 240) || "Request failed";
+}
+
 export function noteTick(id: string, note: string): void {
   db()
     .prepare("UPDATE trading_agents SET last_tick_at = datetime('now'), last_note = ? WHERE id = ?")

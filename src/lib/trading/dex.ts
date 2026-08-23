@@ -14,12 +14,11 @@
 import {
   createPublicClient,
   createWalletClient,
-  http,
   parseAbi,
   encodeFunctionData,
   type PrivateKeyAccount,
 } from "viem";
-import { ACTIVE_CHAIN, rpcUrl } from "@/lib/chain";
+import { ACTIVE_CHAIN, rpcFallbackTransport } from "@/lib/chain";
 
 export const V2_FACTORY = "0x8bceaa40b9acdfaedf85adf4ff01f5ad6517937f" as const;
 export const WETH = "0x0bd7d308f8e1639fab988df18a8011f41eacad73" as const;
@@ -53,11 +52,11 @@ const PAIR = parseAbi([
 const FACTORY = parseAbi(["function getPair(address, address) view returns (address)"]);
 
 export function publicClient() {
-  return createPublicClient({ chain, transport: http(rpcUrl()) });
+  return createPublicClient({ chain, transport: rpcFallbackTransport() });
 }
 
 function walletClient(account: PrivateKeyAccount) {
-  return createWalletClient({ account, chain, transport: http(rpcUrl()) });
+  return createWalletClient({ account, chain, transport: rpcFallbackTransport() });
 }
 
 /* ---------------- pair discovery + quotes ---------------- */

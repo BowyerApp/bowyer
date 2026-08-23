@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { rateLimit } from "@/lib/rate-limit";
 import { hlScreener } from "@/lib/trading/hyperliquid";
+import { briefError } from "@/lib/trading/store";
 
 export const runtime = "nodejs";
 
@@ -25,6 +26,6 @@ export async function GET(req: Request) {
       { headers: { "Cache-Control": "public, max-age=30" } }
     );
   } catch (err) {
-    return NextResponse.json({ ok: false, error: (err as Error).message }, { status: 502 });
+    return NextResponse.json({ ok: false, error: briefError(err) }, { status: 502 });
   }
 }
