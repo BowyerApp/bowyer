@@ -23,12 +23,20 @@ export function db(): DatabaseT.Database {
     const fs = req("node:fs") as typeof import("node:fs");
     const path = req("node:path") as typeof import("node:path");
 
-    const dbPath =
-      process.env.BOWYER_DB_PATH ?? path.join(process.cwd(), "data", "bowyer.db");
+    // During `next build`, prerender workers run in parallel processes and
+    // must not fight over one file — each gets a throwaway per-process DB.
+    // Real data only ever lives at BOWYER_DB_PATH (mounted volume in prod).
+    const os = req("node:os") as typeof import("node:os");
+    const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
+    const dbPath = isBuildPhase
+      ? path.join(os.tmpdir(), `bowyer-build-${process.pid}.db`)
+      : process.env.BOWYER_DB_PATH ?? path.join(process.cwd(), "data", "bowyer.db");
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     const instance = new Database(dbPath);
-    instance.pragma("journal_mode = WAL");
+    // busy_timeout first: it must already be active when journal_mode takes
+    // the lock it needs, or a concurrent opener fails with SQLITE_BUSY.
     instance.pragma("busy_timeout = 5000");
+    instance.pragma("journal_mode = WAL");
     instance.pragma("synchronous = NORMAL");
     migrate(instance);
     globalDb.__bowyerDb = instance;
