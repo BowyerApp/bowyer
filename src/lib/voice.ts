@@ -4,7 +4,7 @@
  * via ElevenLabs, with a distinct voice per flagship agent.
  */
 
-import { db } from "@/lib/db";
+import { addColumnIfMissing, db } from "@/lib/db";
 
 const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
 /** Low-latency model — quality is close to multilingual v2 at ~2x speed. */
@@ -116,13 +116,8 @@ function ensureVoiceTables() {
     CREATE INDEX IF NOT EXISTS idx_voice_calls_caller
       ON voice_calls (slug, caller, at DESC);
   `);
-  const cols = db().prepare("PRAGMA table_info(voice_calls)").all() as { name: string }[];
-  if (!cols.some((c) => c.name === "share_token")) {
-    db().exec("ALTER TABLE voice_calls ADD COLUMN share_token TEXT");
-  }
-  if (!cols.some((c) => c.name === "has_audio")) {
-    db().exec("ALTER TABLE voice_calls ADD COLUMN has_audio INTEGER NOT NULL DEFAULT 0");
-  }
+  addColumnIfMissing(db(), "voice_calls", "share_token TEXT");
+  addColumnIfMissing(db(), "voice_calls", "has_audio INTEGER NOT NULL DEFAULT 0");
 }
 
 export const FREE_VOICE_QUESTIONS_PER_DAY = 3;

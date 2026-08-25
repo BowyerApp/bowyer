@@ -36,6 +36,20 @@ export function db(): DatabaseT.Database {
   return globalDb.__bowyerDb;
 }
 
+/**
+ * Race-proof additive migration. During `next build`, multiple prerender
+ * workers open the same fresh DB in parallel; a PRAGMA-check-then-ALTER can
+ * have two processes pass the check and one lose the ALTER. Swallowing the
+ * "duplicate column" error makes the migration idempotent under that race.
+ */
+export function addColumnIfMissing(d: DatabaseT.Database, table: string, columnDdl: string) {
+  try {
+    d.exec(`ALTER TABLE ${table} ADD COLUMN ${columnDdl}`);
+  } catch (err) {
+    if (!String((err as Error).message).includes("duplicate column name")) throw err;
+  }
+}
+
 function migrate(d: DatabaseT.Database) {
   d.exec(`
     CREATE TABLE IF NOT EXISTS agents (
@@ -87,30 +101,13 @@ function migrate(d: DatabaseT.Database) {
     CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents (owner_address);
   `);
 
-  // Additive migration: knowledge sources (JSON array of {type,url}).
-  const cols = d.prepare("PRAGMA table_info(agents)").all() as { name: string }[];
-  if (!cols.some((c) => c.name === "sources")) {
-    d.exec("ALTER TABLE agents ADD COLUMN sources TEXT");
-  }
-  if (!cols.some((c) => c.name === "llm_config")) {
-    d.exec("ALTER TABLE agents ADD COLUMN llm_config TEXT");
-  }
-  // Additive migration: marketplace listing state (1 = visible, 0 = unlisted).
-  if (!cols.some((c) => c.name === "listed")) {
-    d.exec("ALTER TABLE agents ADD COLUMN listed INTEGER NOT NULL DEFAULT 1");
-  }
-  // Additive migration: incubator lineage — which agent founded this business
-  // and the GitHub repo it wraps.
-  if (!cols.some((c) => c.name === "founded_by")) {
-    d.exec("ALTER TABLE agents ADD COLUMN founded_by TEXT");
-  }
-  if (!cols.some((c) => c.name === "source_repo")) {
-    d.exec("ALTER TABLE agents ADD COLUMN source_repo TEXT");
-  }
-  // Additive migration: auto-forged three.ws avatar path (DB-backed avatar map).
-  if (!cols.some((c) => c.name === "avatar_glb")) {
-    d.exec("ALTER TABLE agents ADD COLUMN avatar_glb TEXT");
-  }
+  // Additive migrations (all idempotent + safe under parallel build workers).
+  addColumnIfMissing(d, "agents", "sources TEXT");
+  addColumnIfMissing(d, "agents", "llm_config TEXT");
+  addColumnIfMissing(d, "agents", "listed INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing(d, "agents", "founded_by TEXT");
+  addColumnIfMissing(d, "agents", "source_repo TEXT");
+  addColumnIfMissing(d, "agents", "avatar_glb TEXT");
 
   d.exec(`
     CREATE TABLE IF NOT EXISTS schedules (
