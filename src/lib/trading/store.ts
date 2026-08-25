@@ -686,6 +686,9 @@ export interface LeaderboardRow {
   trades: number;
   winRate: number | null;
   createdAt: string;
+  /** Public wallet for live agents — every fill is verifiable on-chain. */
+  walletAddress: string | null;
+  venue: "hyperliquid" | "rhc";
 }
 
 export function leaderboard(limit = 50): LeaderboardRow[] {
@@ -724,6 +727,8 @@ export function leaderboard(limit = 50): LeaderboardRow[] {
       trades: trades.n,
       winRate: sells.length > 0 ? (wins / sells.length) * 100 : null,
       createdAt: a.createdAt,
+      walletAddress: a.mode === "live" ? a.walletAddress ?? null : null,
+      venue: a.config?.venue === "hyperliquid" ? "hyperliquid" : "rhc",
     });
   }
   return out.sort((x, y) => y.pnlPct - x.pnlPct).slice(0, limit);

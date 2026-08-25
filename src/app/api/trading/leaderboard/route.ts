@@ -7,7 +7,8 @@ export const runtime = "nodejs";
 /**
  * Public verified-PnL leaderboard. Every number is derived from recorded
  * fills and equity snapshots — no self-reported figures. Owners appear as
- * shortened addresses only.
+ * shortened addresses; live agents also expose their trading wallet address
+ * so anyone can verify every fill on-chain.
  */
 export async function GET(req: Request) {
   const limit = rateLimit(req, "trading-leaderboard", 60, 60_000);

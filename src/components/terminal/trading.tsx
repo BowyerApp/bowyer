@@ -819,6 +819,15 @@ interface LeaderRow {
   trades: number;
   winRate: number | null;
   createdAt: string;
+  walletAddress: string | null;
+  venue: "hyperliquid" | "rhc";
+}
+
+function walletExplorerUrl(r: LeaderRow): string | null {
+  if (!r.walletAddress) return null;
+  return r.venue === "hyperliquid"
+    ? `https://app.hyperliquid.xyz/explorer/address/${r.walletAddress}`
+    : `${EXPLORER}/address/${r.walletAddress}`;
 }
 
 /** Public verified-PnL leaderboard — every row derives from recorded fills. */
@@ -846,6 +855,7 @@ function Leaderboard() {
               <th className="px-3 py-2">#</th>
               <th className="px-3 py-2">Agent</th>
               <th className="px-3 py-2">Owner</th>
+              <th className="px-3 py-2">Wallet</th>
               <th className="px-3 py-2">Mode</th>
               <th className="px-3 py-2 text-right">Equity</th>
               <th className="px-3 py-2 text-right">PnL</th>
@@ -859,6 +869,21 @@ function Leaderboard() {
                 <td className="px-3 py-2 text-subtle">{i + 1}</td>
                 <td className="px-3 py-2 text-foreground">{r.strategyName}</td>
                 <td className="px-3 py-2">{r.ownerShort}</td>
+                <td className="px-3 py-2">
+                  {walletExplorerUrl(r) ? (
+                    <a
+                      href={walletExplorerUrl(r)!}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-foreground underline decoration-border underline-offset-2 hover:decoration-foreground"
+                      title="Verify every fill on-chain"
+                    >
+                      {r.walletAddress!.slice(0, 6)}…{r.walletAddress!.slice(-4)}
+                    </a>
+                  ) : (
+                    <span className="text-subtle">—</span>
+                  )}
+                </td>
                 <td className="px-3 py-2">
                   <span
                     className={`rounded border px-1.5 py-px text-[9px] font-bold uppercase ${
