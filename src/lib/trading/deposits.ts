@@ -13,7 +13,8 @@ const BLOCKSCOUT_API =
 interface BlockscoutTransfer {
   transaction_hash?: string;
   to?: { hash?: string };
-  token?: { address?: string };
+  /** Newer Blockscout versions send address_hash, older ones address. */
+  token?: { address?: string; address_hash?: string };
   total?: { value?: string; decimals?: string };
 }
 
@@ -30,7 +31,8 @@ export async function syncDeposits(agentId: string): Promise<number> {
 
   let synced = 0;
   for (const item of data.items ?? []) {
-    if (item.token?.address?.toLowerCase() !== USDG) continue;
+    const tokenAddr = (item.token?.address_hash ?? item.token?.address ?? "").toLowerCase();
+    if (tokenAddr !== USDG) continue;
     if (item.to?.hash?.toLowerCase() !== agent.walletAddress.toLowerCase()) continue;
     const hash = item.transaction_hash;
     if (!hash) continue;
