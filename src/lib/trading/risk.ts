@@ -13,6 +13,7 @@
  */
 
 import { equitySeries, memoriesFor, type StrategyConfig } from "@/lib/trading/store";
+import { db } from "@/lib/db";
 
 export interface RiskProfile {
   clipUsd: number;
@@ -120,4 +121,104 @@ export function adaptiveRisk(agentId: string, cfg: StrategyConfig): RiskProfile 
     sizeMult,
     rationale: `risk budget ${sizeMult.toFixed(2)}x (${parts.join(", ")}) — stop ${(stopLossPct * 100).toFixed(1)}%, trail ${(trailPct * 100).toFixed(0)}%`,
   };
+}
+
+/* ---------------- protections (freqtrade-style) ---------------- */
+
+export interface Protections {
+  /** Non-null reason string when ALL new entries are blocked. */
+  entriesHalted: string | null;
+  /** Token addresses locked from re-entry (cooldown after a recent exit). */
+  cooldownTokens: Set<string>;
+  /** Human-readable summary for the LLM prompt and decision trail. */
+  summary: string;
+}
+
+const COOLDOWN_HOURS = 4;
+const STOPLOSS_GUARD_LIMIT = 3; // stop-losses in the lookback window …
+const STOPLOSS_GUARD_LOOKBACK_HOURS = 24; // … halts entries
+const DRAWDOWN_HALT = 0.2;
+
+/**
+ * Freqtrade-style protections, adapted:
+ * - CooldownPeriod: a token that was just sold is locked for a few hours, so
+ *   the agent can't revenge-buy the thing that just stopped it out.
+ * - StoplossGuard: several stop-losses within a day means the market regime
+ *   is hostile — stop opening new positions until it passes.
+ * - MaxDrawdown halt: beyond the sizing cuts, a deep equity drawdown blocks
+ *   all new entries entirely. Exits always remain allowed.
+ */
+export function protections(agentId: string): Protections {
+  const cooldownTokens = new Set<string>();
+  const recentSells = db()
+    .prepare(
+      `SELECT token, MAX(at) AS last_sell FROM trading_fills
+       WHERE agent_id = ? AND side = 'sell'
+       GROUP BY token
+       HAVING last_sell >= datetime('now', ?)`
+    )
+    .all(agentId, `-${COOLDOWN_HOURS} hours`) as { token: string }[];
+  for (const r of recentSells) cooldownTokens.add(r.token.toLowerCase());
+
+  let entriesHalted: string | null = null;
+
+  const stops = db()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM trading_fills
+       WHERE agent_id = ? AND side = 'sell' AND reason LIKE 'stop-loss%'
+       AND at >= datetime('now', ?)`
+    )
+    .get(agentId, `-${STOPLOSS_GUARD_LOOKBACK_HOURS} hours`) as { n: number };
+  if (stops.n >= STOPLOSS_GUARD_LIMIT) {
+    entriesHalted = `stoploss guard: ${stops.n} stop-losses in ${STOPLOSS_GUARD_LOOKBACK_HOURS}h — market regime is hostile, entries paused`;
+  }
+
+  if (!entriesHalted) {
+    const series = equitySeries(agentId, 100);
+    if (series.length > 1) {
+      const peak = Math.max(...series.map((s) => s.equityUsd));
+      const last = series[series.length - 1].equityUsd;
+      const dd = peak > 0 ? (peak - last) / peak : 0;
+      if (dd > DRAWDOWN_HALT) {
+        entriesHalted = `max drawdown halt: ${(dd * 100).toFixed(0)}% off peak equity — entries paused until recovery`;
+      }
+    }
+  }
+
+  const bits = [
+    entriesHalted ? `ENTRIES HALTED (${entriesHalted})` : "",
+    cooldownTokens.size > 0 ? `${cooldownTokens.size} token(s) on post-exit cooldown` : "",
+  ].filter(Boolean);
+
+  return {
+    entriesHalted,
+    cooldownTokens,
+    summary: bits.length > 0 ? bits.join("; ") : "none active",
+  };
+}
+
+/* ---------------- per-order sizing caps ---------------- */
+
+/**
+ * Final per-buy size cap combining three sizing disciplines from the
+ * open-source playbook:
+ * - risk-per-trade: size × stop distance ≤ ~1.5% of equity, so any single
+ *   stopped-out trade costs a fixed, survivable fraction.
+ * - volatility targeting: hotter tokens get smaller clips (|24h change| as
+ *   the vol proxy), calm ones can size up slightly.
+ * - market impact: never more than 0.5% of pool liquidity in one clip.
+ */
+export function buySizeCap(
+  proposedUsd: number,
+  args: { equityUsd: number; stopLossPct: number; change24hPct: number | null; liquidityUsd: number | null }
+): number {
+  const riskPerTrade = 0.015 * args.equityUsd;
+  const byStop = args.stopLossPct > 0 ? riskPerTrade / args.stopLossPct : proposedUsd;
+
+  const vol = Math.abs(args.change24hPct ?? 10);
+  const volMult = clamp(10 / Math.max(vol, 1), 0.5, 1.5);
+
+  const byLiquidity = args.liquidityUsd ? args.liquidityUsd * 0.005 : Infinity;
+
+  return Math.min(proposedUsd * volMult, byStop, byLiquidity);
 }

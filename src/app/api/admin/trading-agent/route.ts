@@ -76,13 +76,22 @@ export async function GET(req: Request) {
   if (!authorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
-  const owner = new URL(req.url).searchParams.get("owner")?.toLowerCase() ?? "";
+  const url = new URL(req.url);
+  const owner = url.searchParams.get("owner")?.toLowerCase() ?? "";
   if (!/^0x[0-9a-f]{40}$/.test(owner)) {
     return NextResponse.json({ ok: false, error: "owner must be a 0x address" }, { status: 400 });
   }
+  if (url.searchParams.get("sync") === "1") {
+    const { syncDeposits } = await import("@/lib/trading/deposits");
+    for (const a of listAgentsFor(owner)) {
+      if (a.mode === "live" && a.walletAddress) await syncDeposits(a.id).catch(() => 0);
+    }
+  }
+  const { netDeposits } = await import("@/lib/trading/store");
   return NextResponse.json({
     ok: true,
     agents: listAgentsFor(owner).map((a) => ({
+      netDepositsUsd: netDeposits(a.id),
       id: a.id,
       strategy: a.strategy,
       mode: a.mode,

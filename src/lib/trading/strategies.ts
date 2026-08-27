@@ -70,6 +70,8 @@ export function stopAndTrailExits(
     maxHoldHours?: number;
     /** Override the config stop — used by the adaptive risk engine. */
     stopLossPct?: number;
+    /** Once up this much from entry, never let the trade go red again. */
+    breakevenAfterPct?: number;
   }
 ): Order[] {
   const { positions, tokens, agent } = input;
@@ -91,6 +93,21 @@ export function stopAndTrailExits(
         fraction: 1,
         priceUsd: price,
         reason: `stop-loss ${(fromAvg * 100).toFixed(1)}% from entry`,
+      });
+      continue;
+    }
+    if (
+      opts.breakevenAfterPct !== undefined &&
+      pos.highWaterUsd >= pos.avgCostUsd * (1 + opts.breakevenAfterPct) &&
+      fromAvg <= 0
+    ) {
+      orders.push({
+        side: "sell",
+        token: pos.token,
+        symbol: pos.symbol,
+        fraction: 1,
+        priceUsd: price,
+        reason: `breakeven stop — was +${(((pos.highWaterUsd - pos.avgCostUsd) / pos.avgCostUsd) * 100).toFixed(1)}%, refusing to go red`,
       });
       continue;
     }

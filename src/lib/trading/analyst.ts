@@ -19,7 +19,7 @@ import { resolveRuntimeLlm } from "@/lib/llm-config";
 import type { StrategyInput, Order } from "@/lib/trading/strategies";
 import { stopAndTrailExits, tradeable } from "@/lib/trading/strategies";
 import { memoriesFor, recordDecision } from "@/lib/trading/store";
-import { adaptiveRisk, type RiskProfile } from "@/lib/trading/risk";
+import { adaptiveRisk, buySizeCap, protections, type Protections, type RiskProfile } from "@/lib/trading/risk";
 import type { ScreenerToken } from "@/lib/market-data";
 
 const LLM_INTERVAL_MS = 15 * 60 * 1000;
@@ -70,7 +70,8 @@ function validateOrders(
   proposals: LlmOrder[],
   input: StrategyInput,
   universe: ScreenerToken[],
-  risk: RiskProfile
+  risk: RiskProfile,
+  guard: Protections
 ): Order[] {
   const { positions, cashUsd } = input;
   const bySymbol = new Map(universe.map((t) => [t.symbol.toUpperCase(), t]));
@@ -78,19 +79,33 @@ function validateOrders(
   const orders: Order[] = [];
   let cashLeft = cashUsd;
   let openCount = positions.length;
+  const equityUsd =
+    cashUsd +
+    positions.reduce((sum, p) => {
+      const t = universe.find((x) => x.address.toLowerCase() === p.token);
+      return sum + p.qty * (t?.priceUsd ?? p.avgCostUsd);
+    }, 0);
 
   for (const p of proposals.slice(0, MAX_ORDERS_PER_DECISION)) {
     const symbol = String(p.symbol ?? "").toUpperCase();
     const reason = `analyst: ${String(p.reason ?? "no reason given").slice(0, 180)}`;
 
     if (p.side === "buy") {
+      if (guard.entriesHalted) continue;
       const t = bySymbol.get(symbol);
       if (!t || !t.priceUsd) continue;
+      if (guard.cooldownTokens.has(t.address.toLowerCase())) continue;
       const pos = held.get(symbol);
       const currentValue = pos ? pos.qty * t.priceUsd : 0;
       if (!pos && openCount >= risk.maxOpenPositions) continue;
       const room = risk.maxPositionUsd - currentValue;
-      const usd = Math.min(Number(p.usd) || risk.clipUsd, risk.clipUsd, room, cashLeft);
+      let usd = Math.min(Number(p.usd) || risk.clipUsd, risk.clipUsd, room, cashLeft);
+      usd = buySizeCap(usd, {
+        equityUsd,
+        stopLossPct: risk.stopLossPct,
+        change24hPct: t.change24h ?? null,
+        liquidityUsd: t.liquidityUsd ?? null,
+      });
       if (usd < 10) continue;
       cashLeft -= usd;
       if (!pos) openCount += 1;
@@ -162,9 +177,13 @@ export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
   const exits = stopAndTrailExits(input, {
     trailPct: risk.trailPct,
     stopLossPct: risk.stopLossPct,
+    breakevenAfterPct: 0.08,
     maxHoldHours: 96,
   });
   if (exits.length > 0) return exits;
+
+  // Freqtrade-style protections: cooldowns and entry halts.
+  const guard = protections(agent.id);
 
   const last = lastDecisionAt.get(agent.id) ?? 0;
   if (Date.now() - last < LLM_INTERVAL_MS) return [];
@@ -201,6 +220,7 @@ export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
     `OPEN POSITIONS:\n${positionLines}`,
     `CASH: $${cashUsd.toFixed(0)} | max clip $${risk.clipUsd} | max position $${risk.maxPositionUsd} | open ${positions.length}/${risk.maxOpenPositions}`,
     `CURRENT RISK BUDGET (earned by your own track record, recalculated every cycle): ${risk.rationale}`,
+    `ACTIVE PROTECTIONS: ${guard.summary}`,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -251,7 +271,7 @@ export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
     /* orders parsing below has its own fallback */
   }
 
-  const orders = validateOrders(parseOrders(content), input, universe, risk);
+  const orders = validateOrders(parseOrders(content), input, universe, risk, guard);
 
   try {
     recordDecision({
@@ -265,7 +285,7 @@ export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
         reason: o.reason,
       })),
       debate: debate.length > 0 ? debate : undefined,
-      contextNote: `${universe.length} tokens screened, ${context ? "sources fetched" : "no sources"}, ${lessons.length} lessons | ${risk.rationale}`,
+      contextNote: `${universe.length} tokens screened, ${context ? "sources fetched" : "no sources"}, ${lessons.length} lessons | ${risk.rationale} | protections: ${guard.summary}`,
     });
   } catch {
     /* the trail must never block trading */
