@@ -8,15 +8,18 @@
  * orders as strict JSON.
  *
  * The LLM proposes; the rails dispose. Its output is filtered to tokens in
- * the tradeable universe, clamped to the instance's clip/position/daily caps,
- * and executed by the same swap path as every other strategy. It cannot name
- * an arbitrary token, size beyond caps, or move funds anywhere but the pair.
+ * the tradeable universe and clamped to an ADAPTIVE risk budget: the agent's
+ * realized win rate, streak, and drawdown expand or shrink its size, stops,
+ * and position count every cycle (see risk.ts), inside a fixed outer
+ * envelope. It cannot name an arbitrary token, size beyond the budget, or
+ * move funds anywhere but the pair.
  */
 
 import { resolveRuntimeLlm } from "@/lib/llm-config";
 import type { StrategyInput, Order } from "@/lib/trading/strategies";
 import { stopAndTrailExits, tradeable } from "@/lib/trading/strategies";
 import { memoriesFor, recordDecision } from "@/lib/trading/store";
+import { adaptiveRisk, type RiskProfile } from "@/lib/trading/risk";
 import type { ScreenerToken } from "@/lib/market-data";
 
 const LLM_INTERVAL_MS = 15 * 60 * 1000;
@@ -62,14 +65,14 @@ function parseOrders(raw: string): LlmOrder[] {
   }
 }
 
-/** Turn LLM proposals into engine orders, enforcing every hard rail. */
+/** Turn LLM proposals into engine orders, enforcing the current risk budget. */
 function validateOrders(
   proposals: LlmOrder[],
   input: StrategyInput,
-  universe: ScreenerToken[]
+  universe: ScreenerToken[],
+  risk: RiskProfile
 ): Order[] {
-  const { agent, positions, cashUsd } = input;
-  const cfg = agent.config;
+  const { positions, cashUsd } = input;
   const bySymbol = new Map(universe.map((t) => [t.symbol.toUpperCase(), t]));
   const held = new Map(positions.map((p) => [p.symbol.toUpperCase(), p]));
   const orders: Order[] = [];
@@ -85,9 +88,9 @@ function validateOrders(
       if (!t || !t.priceUsd) continue;
       const pos = held.get(symbol);
       const currentValue = pos ? pos.qty * t.priceUsd : 0;
-      if (!pos && openCount >= cfg.maxOpenPositions) continue;
-      const room = cfg.maxPositionUsd - currentValue;
-      const usd = Math.min(Number(p.usd) || cfg.clipUsd, cfg.clipUsd, room, cashLeft);
+      if (!pos && openCount >= risk.maxOpenPositions) continue;
+      const room = risk.maxPositionUsd - currentValue;
+      const usd = Math.min(Number(p.usd) || risk.clipUsd, risk.clipUsd, room, cashLeft);
       if (usd < 10) continue;
       cashLeft -= usd;
       if (!pos) openCount += 1;
@@ -151,8 +154,16 @@ export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
   const { agent, tokens, positions, cashUsd } = input;
   const cfg = agent.config;
 
+  // Adaptive risk: the agent's own track record sets today's budget —
+  // stops, trail, size, and position count all move with performance.
+  const risk = adaptiveRisk(agent.id, cfg);
+
   // Risk management is mechanical and runs on every 60s tick, LLM or not.
-  const exits = stopAndTrailExits(input, { trailPct: 0.12, maxHoldHours: 96 });
+  const exits = stopAndTrailExits(input, {
+    trailPct: risk.trailPct,
+    stopLossPct: risk.stopLossPct,
+    maxHoldHours: 96,
+  });
   if (exits.length > 0) return exits;
 
   const last = lastDecisionAt.get(agent.id) ?? 0;
@@ -188,7 +199,8 @@ export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
     lessonLines ? `LESSONS FROM THIS AGENT'S OWN PAST TRADES:\n${lessonLines}` : "",
     `MARKET (only these are tradeable):\n${marketTable(universe)}`,
     `OPEN POSITIONS:\n${positionLines}`,
-    `CASH: $${cashUsd.toFixed(0)} | max clip $${cfg.clipUsd} | max position $${cfg.maxPositionUsd} | open ${positions.length}/${cfg.maxOpenPositions}`,
+    `CASH: $${cashUsd.toFixed(0)} | max clip $${risk.clipUsd} | max position $${risk.maxPositionUsd} | open ${positions.length}/${risk.maxOpenPositions}`,
+    `CURRENT RISK BUDGET (earned by your own track record, recalculated every cycle): ${risk.rationale}`,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -239,7 +251,7 @@ export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
     /* orders parsing below has its own fallback */
   }
 
-  const orders = validateOrders(parseOrders(content), input, universe);
+  const orders = validateOrders(parseOrders(content), input, universe, risk);
 
   try {
     recordDecision({
@@ -253,7 +265,7 @@ export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
         reason: o.reason,
       })),
       debate: debate.length > 0 ? debate : undefined,
-      contextNote: `${universe.length} tokens screened, ${context ? "sources fetched" : "no sources"}, ${lessons.length} lessons`,
+      contextNote: `${universe.length} tokens screened, ${context ? "sources fetched" : "no sources"}, ${lessons.length} lessons | ${risk.rationale}`,
     });
   } catch {
     /* the trail must never block trading */

@@ -64,7 +64,13 @@ function mean(xs: number[]): number {
 
 export function stopAndTrailExits(
   input: StrategyInput,
-  opts: { trailPct?: number; takeProfitPct?: number; maxHoldHours?: number }
+  opts: {
+    trailPct?: number;
+    takeProfitPct?: number;
+    maxHoldHours?: number;
+    /** Override the config stop — used by the adaptive risk engine. */
+    stopLossPct?: number;
+  }
 ): Order[] {
   const { positions, tokens, agent } = input;
   const orders: Order[] = [];
@@ -77,7 +83,7 @@ export function stopAndTrailExits(
     const fromHigh = (price - pos.highWaterUsd) / pos.highWaterUsd;
     const heldHours = (Date.now() - new Date(pos.openedAt + "Z").getTime()) / 3_600_000;
 
-    if (fromAvg <= -agent.config.stopLossPct) {
+    if (fromAvg <= -(opts.stopLossPct ?? agent.config.stopLossPct)) {
       orders.push({
         side: "sell",
         token: pos.token,
