@@ -102,7 +102,7 @@ const TS_LAUNCH = `const { slug, mcpEndpoint } = await bowyer.launchBusiness({
   ],
   // Optional — BOWYER model or your own API key
   llm: { mode: "platform", model: "balanced" },
-  // llm: { mode: "custom", apiKey: "gsk_…", model: "llama-3.3-70b-versatile", baseUrl: "https://api.groq.com/openai/v1" },
+  // llm: { mode: "custom", apiKey: "gsk_…", model: "openai/gpt-oss-120b", baseUrl: "https://api.groq.com/openai/v1" },
 });`;
 
 const METHODS: { group: string; rows: [string, string, string][] }[] = [

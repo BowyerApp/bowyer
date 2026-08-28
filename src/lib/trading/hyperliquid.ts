@@ -64,8 +64,39 @@ export function hlSymbolFromAddress(address: string): string {
  * Hyperliquid perp universe shaped as ScreenerTokens so the strategies,
  * analyst prompt, and paper execution work unchanged. Top perps by 24h
  * notional volume; open interest stands in for pool liquidity.
+ *
+ * Cached for 45s (agents tick more often than prices meaningfully move) and
+ * served stale for up to 15 minutes when the info API rate-limits our IP —
+ * Railway sits behind a shared egress that CloudFront 429s under load.
  */
+const SCREENER_FRESH_MS = 45_000;
+const SCREENER_STALE_MS = 15 * 60_000;
+let screenerCache: { rows: ScreenerToken[]; at: number } | null = null;
+let screenerInflight: Promise<ScreenerToken[]> | null = null;
+
 export async function hlScreener(limit = 25): Promise<ScreenerToken[]> {
+  const now = Date.now();
+  if (screenerCache && now - screenerCache.at < SCREENER_FRESH_MS) {
+    return screenerCache.rows.slice(0, limit);
+  }
+  if (!screenerInflight) {
+    screenerInflight = fetchScreener().finally(() => {
+      screenerInflight = null;
+    });
+  }
+  try {
+    const rows = await screenerInflight;
+    screenerCache = { rows, at: Date.now() };
+    return rows.slice(0, limit);
+  } catch (err) {
+    if (screenerCache && now - screenerCache.at < SCREENER_STALE_MS) {
+      return screenerCache.rows.slice(0, limit);
+    }
+    throw err;
+  }
+}
+
+async function fetchScreener(): Promise<ScreenerToken[]> {
   const { info } = await sdk();
   const [meta, ctxs] = await info.metaAndAssetCtxs();
   const rows: ScreenerToken[] = [];
@@ -110,16 +141,30 @@ export async function hlScreener(limit = 25): Promise<ScreenerToken[]> {
       kind: "meme",
     });
   }
-  return rows
-    .sort((a, b) => (b.volume24h ?? 0) - (a.volume24h ?? 0))
-    .slice(0, limit);
+  return rows.sort((a, b) => (b.volume24h ?? 0) - (a.volume24h ?? 0));
 }
 
-/** Perp account equity (USDC margin) for an agent wallet on Hyperliquid. */
+/**
+ * Perp account equity (USDC margin) for an agent wallet on Hyperliquid.
+ * Cached for 60s per address to keep leaderboard/status reads off the
+ * rate-limited info API.
+ */
+const accountValueCache = new Map<string, { value: number; at: number }>();
+
 export async function hlAccountValueUsd(address: string): Promise<number> {
-  const { info } = await sdk();
-  const state = await info.clearinghouseState({ user: address as `0x${string}` });
-  return Number(state.marginSummary.accountValue) || 0;
+  const key = address.toLowerCase();
+  const cached = accountValueCache.get(key);
+  if (cached && Date.now() - cached.at < 60_000) return cached.value;
+  try {
+    const { info } = await sdk();
+    const state = await info.clearinghouseState({ user: address as `0x${string}` });
+    const value = Number(state.marginSummary.accountValue) || 0;
+    accountValueCache.set(key, { value, at: Date.now() });
+    return value;
+  } catch (err) {
+    if (cached) return cached.value;
+    throw err;
+  }
 }
 
 function roundSize(size: number, szDecimals: number): string {

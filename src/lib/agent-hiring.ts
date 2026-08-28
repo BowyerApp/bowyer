@@ -245,7 +245,7 @@ async function decideHires(
         Authorization: `Bearer ${llm.apiKey}`,
       },
       body: JSON.stringify({
-        model: process.env.HIRING_LLM_MODEL?.trim() || "llama-3.1-8b-instant",
+        model: process.env.HIRING_LLM_MODEL?.trim() || "openai/gpt-oss-20b",
         temperature: 0.2,
         max_tokens: 400,
         messages: [

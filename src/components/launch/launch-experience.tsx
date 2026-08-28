@@ -237,7 +237,7 @@ export function LaunchExperience() {
   const [model, setModel] = useState("balanced");
   const [byokProvider, setByokProvider] = useState<string>("groq");
   const [customApiKey, setCustomApiKey] = useState("");
-  const [customModel, setCustomModel] = useState("llama-3.3-70b-versatile");
+  const [customModel, setCustomModel] = useState("openai/gpt-oss-120b");
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [instructions, setInstructions] = useState("");
   const [depth, setDepth] = useState("balanced");

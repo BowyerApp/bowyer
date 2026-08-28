@@ -31,49 +31,49 @@ export interface PlatformModelEntry {
 export const PLATFORM_MODELS: PlatformModelEntry[] = [
   {
     id: "fast",
-    name: "Llama 3.1 8B Instant",
-    provider: "Meta · Groq",
-    model: "llama-3.1-8b-instant",
+    name: "GPT-OSS 20B",
+    provider: "OpenAI · Groq",
+    model: "openai/gpt-oss-20b",
     blurb: "Ultra-fast alerts, Telegram replies, and short answers.",
     badge: "Free tier",
   },
   {
     id: "balanced",
-    name: "Llama 3.3 70B Versatile",
-    provider: "Meta · Groq",
-    model: "llama-3.3-70b-versatile",
+    name: "GPT-OSS 120B",
+    provider: "OpenAI · Groq",
+    model: "openai/gpt-oss-120b",
     blurb: "Strong default for reports, research, and subscriber Q&A.",
     badge: "Recommended",
   },
   {
     id: "deep",
-    name: "Llama 3.3 70B Deep",
-    provider: "Meta · Groq",
-    model: "llama-3.3-70b-versatile",
+    name: "GPT-OSS 120B Deep",
+    provider: "OpenAI · Groq",
+    model: "openai/gpt-oss-120b",
     blurb: "Same backbone with maximum reasoning depth on every task.",
     badge: "Best quality",
   },
   {
     id: "mixtral",
-    name: "Mixtral 8×7B",
-    provider: "Mistral · Groq",
-    model: "mixtral-8x7b-32768",
-    blurb: "Mixture-of-experts model — great for multi-step workflows.",
+    name: "Qwen 3.6 27B",
+    provider: "Alibaba · Groq",
+    model: "qwen/qwen3.6-27b",
+    blurb: "Strong instruction-following for multi-step workflows.",
     badge: "Standard",
   },
   {
     id: "gemma",
-    name: "Gemma 2 9B",
-    provider: "Google · Groq",
-    model: "gemma2-9b-it",
+    name: "GPT-OSS 20B Loop",
+    provider: "OpenAI · Groq",
+    model: "openai/gpt-oss-20b",
     blurb: "Compact and efficient for high-volume agent loops.",
     badge: "Standard",
   },
   {
     id: "qwen",
-    name: "Qwen 2.5 32B",
+    name: "Qwen 3.8 27B",
     provider: "Alibaba · Groq",
-    model: "qwen2.5-32b-instruct",
+    model: "qwen/qwen3.8-27b",
     blurb: "Strong instruction-following for structured agent output.",
     badge: "Standard",
   },
@@ -191,11 +191,11 @@ export const BYOK_PROVIDERS = [
     label: "Groq",
     baseUrl: "https://api.groq.com/openai/v1",
     models: [
-      "llama-3.3-70b-versatile",
-      "llama-3.1-8b-instant",
-      "mixtral-8x7b-32768",
-      "gemma2-9b-it",
-      "qwen2.5-32b-instruct",
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-20b",
+      "qwen/qwen3.6-27b",
+      "qwen/qwen3.8-27b",
+      "groq/compound-mini",
     ],
     keyHint: "gsk_…",
   },
@@ -276,7 +276,7 @@ export function isPremiumPlatformModelId(id: string): boolean {
 export function platformModelIdToModel(id: string): string {
   const entry = PLATFORM_MODELS.find((m) => m.id === id && !m.comingSoon);
   if (entry) return entry.model;
-  return PLATFORM_MODELS_STANDARD.find((m) => m.id === "balanced")?.model ?? "llama-3.3-70b-versatile";
+  return PLATFORM_MODELS_STANDARD.find((m) => m.id === "balanced")?.model ?? "openai/gpt-oss-120b";
 }
 
 function premiumRuntimeCredentials(): { apiKey: string; baseUrl: string } | null {
@@ -312,7 +312,7 @@ export function resolveRuntimeLlm(config: AgentLlmConfig | null): {
   }
 
   const platformId =
-    config?.mode === "platform" ? config.model : (process.env.LLM_MODEL ?? "llama-3.3-70b-versatile");
+    config?.mode === "platform" ? config.model : (process.env.LLM_MODEL ?? "openai/gpt-oss-120b");
 
   if (config?.mode === "platform" && isPremiumPlatformModelId(platformId)) {
     const premium = premiumRuntimeCredentials();
@@ -325,7 +325,7 @@ export function resolveRuntimeLlm(config: AgentLlmConfig | null): {
   const platformModel =
     config?.mode === "platform"
       ? platformModelIdToModel(platformId)
-      : (process.env.LLM_MODEL ?? "llama-3.3-70b-versatile");
+      : (process.env.LLM_MODEL ?? "openai/gpt-oss-120b");
 
   return {
     model: platformModel,
@@ -338,7 +338,7 @@ export function resolveRuntimeLlm(config: AgentLlmConfig | null): {
  * Second provider when the primary hits rate limits (429) or is down.
  * Explicit LLM_FALLBACK_* config wins; otherwise the OpenRouter key already
  * used for premium models doubles as the relief valve, running the same
- * Llama 3.3 70B weights so agent output doesn't change character mid-failover.
+ * GPT-OSS 120B weights so agent output doesn't change character mid-failover.
  */
 export function fallbackRuntimeLlm(): {
   model: string;
@@ -348,7 +348,7 @@ export function fallbackRuntimeLlm(): {
   const explicit = process.env.LLM_FALLBACK_API_KEY?.trim();
   if (explicit) {
     return {
-      model: process.env.LLM_FALLBACK_MODEL?.trim() || "llama-3.3-70b-versatile",
+      model: process.env.LLM_FALLBACK_MODEL?.trim() || "openai/gpt-oss-120b",
       apiKey: explicit,
       baseUrl: process.env.LLM_FALLBACK_BASE_URL?.trim() || "https://api.groq.com/openai/v1",
     };
@@ -357,7 +357,7 @@ export function fallbackRuntimeLlm(): {
     process.env.LLM_PREMIUM_API_KEY?.trim() ?? process.env.OPENROUTER_API_KEY?.trim();
   if (!openrouter) return null;
   return {
-    model: process.env.LLM_FALLBACK_MODEL?.trim() || "meta-llama/llama-3.3-70b-instruct",
+    model: process.env.LLM_FALLBACK_MODEL?.trim() || "openai/gpt-oss-120b",
     apiKey: openrouter,
     baseUrl:
       process.env.LLM_PREMIUM_BASE_URL?.trim() ||

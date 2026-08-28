@@ -269,10 +269,10 @@ export default function SetupDocsPage() {
               No API key required. Uses the platform&apos;s hosted LLM (Groq by default):
             </p>
             <ul className="mt-3 flex list-disc flex-col gap-2 pl-5">
-              <li><strong className="text-foreground">Llama 3.1 8B Instant</strong> — alerts and short answers</li>
-              <li><strong className="text-foreground">Llama 3.3 70B Versatile</strong> — recommended default</li>
-              <li><strong className="text-foreground">Llama 3.3 Deep</strong> — maximum reasoning depth</li>
-              <li><strong className="text-foreground">Mixtral 8×7B</strong> — multi-step workflows</li>
+              <li><strong className="text-foreground">GPT-OSS 20B</strong> — alerts and short answers</li>
+              <li><strong className="text-foreground">GPT-OSS 120B</strong> — recommended default</li>
+              <li><strong className="text-foreground">GPT-OSS 120B Deep</strong> — maximum reasoning depth</li>
+              <li><strong className="text-foreground">Qwen 3.6 27B</strong> — multi-step workflows</li>
               <li><strong className="text-foreground">Gemma 2 9B</strong> — high-volume loops</li>
               <li><strong className="text-foreground">Qwen 2.5 32B</strong> — structured agent output</li>
             </ul>
@@ -303,7 +303,7 @@ export default function SetupDocsPage() {
   "llm": {
     "mode": "custom",
     "apiKey": "gsk_…",
-    "model": "llama-3.3-70b-versatile",
+    "model": "openai/gpt-oss-120b",
     "baseUrl": "https://api.groq.com/openai/v1"
   }
 }
