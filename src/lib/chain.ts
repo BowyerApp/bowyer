@@ -72,15 +72,15 @@ export function rpcUrl(): string {
 let fallbackTransportCache: ReturnType<typeof fallback> | null = null;
 
 export function rpcFallbackTransport() {
-  // Memoized: rank() pings providers in the background and reorders them by
-  // health, which only pays off if the same transport instance is reused.
   if (!fallbackTransportCache) {
     const pool = rpcPool();
     fallbackTransportCache = fallback(
       // No per-transport retries: a dead endpoint costs one ~6s timeout, then
-      // the request moves to the next provider.
+      // the request moves to the next provider. No rank() — its background
+      // health pings hammer dead endpoints and flood the logs; plain ordered
+      // failover is predictable and quiet.
       pool.map((u) => http(u, { retryCount: 0, timeout: 6_000 })),
-      { retryCount: 1, rank: true }
+      { retryCount: 1 }
     );
   }
   return fallbackTransportCache;
