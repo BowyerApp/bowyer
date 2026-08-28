@@ -15,7 +15,7 @@
  * move funds anywhere but the pair.
  */
 
-import { resolveRuntimeLlm } from "@/lib/llm-config";
+import { fallbackRuntimeLlm, resolveRuntimeLlm } from "@/lib/llm-config";
 import type { StrategyInput, Order } from "@/lib/trading/strategies";
 import { stopAndTrailExits, tradeable } from "@/lib/trading/strategies";
 import { memoriesFor, recordDecision } from "@/lib/trading/store";
@@ -136,20 +136,20 @@ function validateOrders(
   return orders;
 }
 
-async function llmChat(
+async function chatOnce(
+  llm: { model: string; apiKey: string | undefined; baseUrl: string },
   system: string,
   user: string,
-  opts: { json?: boolean; maxTokens?: number } = {}
+  opts: { json?: boolean; maxTokens?: number }
 ): Promise<string> {
-  const { model, apiKey, baseUrl } = resolveRuntimeLlm(null);
-  const res = await fetch(`${baseUrl}/chat/completions`, {
+  const res = await fetch(`${llm.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey ?? "ollama"}`,
+      Authorization: `Bearer ${llm.apiKey ?? "ollama"}`,
     },
     body: JSON.stringify({
-      model,
+      model: llm.model,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
@@ -163,6 +163,25 @@ async function llmChat(
   if (!res.ok) throw new Error(`analyst LLM ${res.status}`);
   const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
   return json.choices?.[0]?.message?.content ?? "";
+}
+
+/**
+ * Primary LLM first; on any failure (the shared Groq free tier is 8k
+ * tokens/min across the whole platform, so 429s are routine) the call
+ * reroutes to the OpenRouter fallback so trading decisions never starve.
+ */
+async function llmChat(
+  system: string,
+  user: string,
+  opts: { json?: boolean; maxTokens?: number } = {}
+): Promise<string> {
+  try {
+    return await chatOnce(resolveRuntimeLlm(null), system, user, opts);
+  } catch (err) {
+    const fb = fallbackRuntimeLlm();
+    if (!fb) throw err;
+    return await chatOnce(fb, system, user, opts);
+  }
 }
 
 export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
@@ -188,6 +207,24 @@ export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
   const last = lastDecisionAt.get(agent.id) ?? 0;
   if (Date.now() - last < LLM_INTERVAL_MS) return [];
   lastDecisionAt.set(agent.id, Date.now());
+
+  try {
+    return await runDecision(input, risk, guard);
+  } catch (err) {
+    // A failed LLM call must not burn the whole 15-minute window — allow a
+    // retry on a tick ~3 minutes out instead.
+    lastDecisionAt.set(agent.id, Date.now() - LLM_INTERVAL_MS + 3 * 60 * 1000);
+    throw err;
+  }
+}
+
+async function runDecision(
+  input: StrategyInput,
+  risk: RiskProfile,
+  guard: Protections
+): Promise<Order[]> {
+  const { agent, tokens, positions, cashUsd } = input;
+  const cfg = agent.config;
 
   const universe = tokens
     .filter((t) => tradeable(t, cfg))
