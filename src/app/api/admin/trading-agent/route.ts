@@ -26,6 +26,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   let body: {
+    action?: string;
+    agentId?: string;
+    to?: string;
     owner?: string;
     strategy?: string;
     mode?: string;
@@ -38,6 +41,8 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
   }
+
+  if (body.action === "transfer-out") return transferOut(body);
 
   const owner = String(body.owner ?? "").toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(owner)) {
@@ -70,6 +75,61 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json({ ok: true, agentId: agent.id, owner, strategy, mode, walletAddress });
+}
+
+/**
+ * Owner-requested transfer of a live agent's full balance to an external
+ * address (e.g. a fomo deposit address). Pauses the agent, wraps spare
+ * native ETH (minus a gas reserve), swaps WETH -> USDG, and sends all USDG
+ * to the destination. CRON_SECRET-gated; used only at the platform owner's
+ * explicit request since it bypasses the owner-only withdrawal rule.
+ */
+async function transferOut(body: { agentId?: string; to?: string }) {
+  const to = String(body.to ?? "").toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(to)) {
+    return NextResponse.json({ ok: false, error: "to must be a 0x address" }, { status: 400 });
+  }
+  const { getAgent, recordDeposit, setAgentStatus, briefError } = await import("@/lib/trading/store");
+  const { loadAgentWallet } = await import("@/lib/trading/wallets");
+  const dex = await import("@/lib/trading/dex");
+
+  const agent = getAgent(String(body.agentId ?? ""));
+  if (!agent || agent.mode !== "live") {
+    return NextResponse.json({ ok: false, error: "Live agent not found" }, { status: 404 });
+  }
+  const wallet = loadAgentWallet(agent.id);
+  if (!wallet) return NextResponse.json({ ok: false, error: "Agent wallet missing" }, { status: 500 });
+
+  setAgentStatus(agent.id, "paused");
+  const txs: { step: string; hash: string }[] = [];
+  const GAS_RESERVE = BigInt(5e15); // 0.005 ETH stays behind for gas
+
+  try {
+    const ethBal = await dex.nativeBalance(wallet.address);
+    if (ethBal > GAS_RESERVE * BigInt(2)) {
+      const wrapHash = await dex.wrapEth(wallet.account, ethBal - GAS_RESERVE);
+      txs.push({ step: "wrap", hash: wrapHash });
+    }
+    const wethBal = await dex.erc20Balance(dex.WETH, wallet.address);
+    if (wethBal > BigInt(0)) {
+      const swap = await dex.swapV2Exact({
+        account: wallet.account,
+        tokenIn: dex.WETH,
+        tokenOut: dex.USDG,
+        amountIn: wethBal,
+      });
+      txs.push({ step: "swap", hash: swap.txHash });
+    }
+    const usdgBal = await dex.erc20Balance(dex.USDG, wallet.address);
+    const sentUsd = Number(usdgBal) / 10 ** dex.USDG_DEC;
+    const sendHash = await dex.transferAllToOwner(wallet.account, dex.USDG, to);
+    if (sendHash) txs.push({ step: "send-usdg", hash: sendHash });
+    if (sentUsd > 0) recordDeposit(agent.id, "withdraw", sentUsd);
+
+    return NextResponse.json({ ok: true, to, sentUsd, txs });
+  } catch (err) {
+    return NextResponse.json({ ok: false, error: briefError(err), txs }, { status: 500 });
+  }
 }
 
 export async function GET(req: Request) {

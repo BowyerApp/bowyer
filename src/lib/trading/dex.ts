@@ -215,6 +215,21 @@ export async function swapV2Exact(input: {
   return { txHash: swapHash, amountIn, amountOut: balAfter - balBefore };
 }
 
+/** Wrap native ETH into WETH (canonical WETH9 deposit). */
+export async function wrapEth(account: PrivateKeyAccount, amount: bigint): Promise<string> {
+  const wallet = walletClient(account);
+  const hash = await wallet.sendTransaction({
+    to: WETH as `0x${string}`,
+    value: amount,
+    data: encodeFunctionData({
+      abi: [{ name: "deposit", type: "function", stateMutability: "payable", inputs: [], outputs: [] }],
+      functionName: "deposit",
+    }),
+  });
+  await publicClient().waitForTransactionReceipt({ hash, timeout: 60_000 });
+  return hash;
+}
+
 /** Send an ERC-20 balance to the owner. Used exclusively by withdrawals. */
 export async function transferAllToOwner(
   account: PrivateKeyAccount,
