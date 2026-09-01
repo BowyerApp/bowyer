@@ -19,9 +19,10 @@ import {
   cashFor,
   setAgentStatus,
   strategyStats,
+  thesesFor,
   type StrategyId,
 } from "@/lib/trading/store";
-import { ensureAgentWallet, liveTradingEnabled } from "@/lib/trading/wallets";
+import { ensureAgentSolanaWallet, ensureAgentWallet, liveTradingEnabled } from "@/lib/trading/wallets";
 
 export const runtime = "nodejs";
 
@@ -52,6 +53,7 @@ function agentPayload(id: string) {
     equitySeries: series,
     decisions: decisionsFor(agent.id, 10),
     memories: memoriesFor(agent.id, 8),
+    theses: thesesFor(agent.id, 15),
   };
 }
 
@@ -104,7 +106,7 @@ export async function POST(req: Request) {
 
   // signal-analyst carries a mandate + knowledge sources in its config.
   let config:
-    | { brief?: string; sources?: { type: string; url: string }[]; venue?: "rhc" | "hyperliquid" }
+    | { brief?: string; sources?: { type: string; url: string }[]; venue?: "rhc" | "hyperliquid" | "fomo" }
     | undefined;
   if (strategy === "signal-analyst") {
     const { isValidSourceUrl, isSafePublicHttpUrl, SUPPORTED_SOURCE_TYPES } = await import(
@@ -129,14 +131,19 @@ export async function POST(req: Request) {
     config = {
       brief: String(body.brief ?? "").slice(0, 600) || undefined,
       sources: sources.length > 0 ? sources : undefined,
-      venue: body.venue === "hyperliquid" ? "hyperliquid" : undefined,
+      venue: body.venue === "hyperliquid" ? "hyperliquid" : body.venue === "fomo" ? "fomo" : undefined,
     };
   }
 
   try {
     const agent = createAgentInstance({ owner: wallet, strategy, mode, config });
     if (mode === "live") {
-      const address = ensureAgentWallet(agent.id, wallet);
+      // fomo agents get a dedicated Solana wallet (deposit USDC, trades are
+      // gasless via Jupiter Ultra); other venues get an EVM EOA.
+      const address =
+        config?.venue === "fomo"
+          ? ensureAgentSolanaWallet(agent.id, wallet)
+          : ensureAgentWallet(agent.id, wallet);
       const { db } = await import("@/lib/db");
       db().prepare("UPDATE trading_agents SET wallet_address = ? WHERE id = ?").run(address, agent.id);
     }
@@ -152,7 +159,7 @@ export async function PATCH(req: Request) {
   const wallet = getSessionWallet(req);
   if (!wallet) return NextResponse.json({ ok: false, error: "Wallet session required" }, { status: 401 });
 
-  let body: { id?: string; action?: string };
+  let body: { id?: string; action?: string; to?: string };
   try {
     body = await req.json();
   } catch {
@@ -165,9 +172,70 @@ export async function PATCH(req: Request) {
   }
   if (body.action === "pause") setAgentStatus(agent.id, "paused");
   else if (body.action === "resume") setAgentStatus(agent.id, "active");
-  else return NextResponse.json({ ok: false, error: "Unknown action" }, { status: 400 });
+  else if (body.action === "withdraw" && agent.config?.venue === "fomo") {
+    return withdrawFomoAgent(agent.id, String(body.to ?? "").trim());
+  } else return NextResponse.json({ ok: false, error: "Unknown action" }, { status: 400 });
 
   return NextResponse.json({ ok: true, agent: agentPayload(agent.id) });
+}
+
+/**
+ * Owner exit for a fomo (Solana) agent: liquidate every open position to
+ * USDC at market, transfer the full USDC balance to the owner-chosen Solana
+ * address, and pause the agent. The session-wallet check upstream ensures
+ * only the owner can trigger this; the destination is theirs to choose since
+ * the recorded owner address is an EVM account and can't receive SPL tokens.
+ */
+async function withdrawFomoAgent(agentId: string, to: string) {
+  const { loadAgentSolanaWallet } = await import("@/lib/trading/wallets");
+  const solWallet = loadAgentSolanaWallet(agentId);
+  if (!solWallet) {
+    return NextResponse.json(
+      { ok: false, error: "This agent has no dedicated Solana wallet" },
+      { status: 400 }
+    );
+  }
+  const signer = { address: solWallet.address, secretKey: solWallet.secretKey };
+  const { canonicalMint, fomoSolanaSwap, splBalance, tokenDecimalsSolana, withdrawUsdcSolana, USDC_MINT } =
+    await import("@/lib/trading/fomo-solana");
+  const { recordFill, recordDeposit } = await import("@/lib/trading/store");
+
+  setAgentStatus(agentId, "paused");
+  const liquidated: { symbol: string; txid: string }[] = [];
+  try {
+    for (const pos of positionsFor(agentId)) {
+      if (pos.qty <= 0) continue;
+      const mint = canonicalMint(pos.token);
+      const [dec, onChain] = await Promise.all([
+        tokenDecimalsSolana(mint),
+        splBalance(solWallet.address, mint),
+      ]);
+      const qty = Math.min(onChain, pos.qty);
+      if (qty <= 0) continue;
+      const amountRaw = BigInt(Math.floor(qty * 10 ** dec)).toString();
+      const res = await fomoSolanaSwap({ inputMint: mint, outputMint: USDC_MINT, amountRaw, signer });
+      const outUsd = Number(res.outAmount) / 1e6;
+      recordFill({
+        agentId,
+        side: "sell",
+        token: pos.token,
+        symbol: pos.symbol,
+        qty,
+        priceUsd: qty > 0 ? outUsd / qty : pos.avgCostUsd,
+        txHash: res.txid,
+        reason: "owner withdrawal — position liquidated",
+      });
+      liquidated.push({ symbol: pos.symbol, txid: res.txid });
+    }
+    const { txid, amountUsd } = await withdrawUsdcSolana(signer, to);
+    if (amountUsd > 0) recordDeposit(agentId, "withdraw", amountUsd);
+    return NextResponse.json({ ok: true, txid, amountUsd, liquidated, agent: agentPayload(agentId) });
+  } catch (err) {
+    return NextResponse.json(
+      { ok: false, error: briefError(err), liquidated, agent: agentPayload(agentId) },
+      { status: 400 }
+    );
+  }
 }
 
 export async function DELETE(req: Request) {
@@ -188,17 +256,29 @@ export async function DELETE(req: Request) {
   }
   if (agent.mode === "live" && agent.walletAddress) {
     // Refuse to delete while real funds are still in the agent wallet.
-    const { erc20Balance, nativeBalance, USDG, WETH } = await import("@/lib/trading/dex");
-    const [usdg, weth, eth] = await Promise.all([
-      erc20Balance(USDG, agent.walletAddress),
-      erc20Balance(WETH, agent.walletAddress),
-      nativeBalance(agent.walletAddress),
-    ]);
-    if (usdg > BigInt(1e6) || weth > BigInt(1e15) || eth > BigInt(1e15)) {
-      return NextResponse.json(
-        { ok: false, error: "Withdraw funds before deleting a live agent" },
-        { status: 400 }
-      );
+    if (agent.config?.venue === "fomo") {
+      const { splBalance, USDC_MINT } = await import("@/lib/trading/fomo-solana");
+      const usdc = await splBalance(agent.walletAddress, USDC_MINT).catch(() => 0);
+      const hasPositions = positionsFor(agent.id).some((p) => p.qty > 0);
+      if (usdc > 1 || hasPositions) {
+        return NextResponse.json(
+          { ok: false, error: "Withdraw funds before deleting a live agent" },
+          { status: 400 }
+        );
+      }
+    } else {
+      const { erc20Balance, nativeBalance, USDG, WETH } = await import("@/lib/trading/dex");
+      const [usdg, weth, eth] = await Promise.all([
+        erc20Balance(USDG, agent.walletAddress),
+        erc20Balance(WETH, agent.walletAddress),
+        nativeBalance(agent.walletAddress),
+      ]);
+      if (usdg > BigInt(1e6) || weth > BigInt(1e15) || eth > BigInt(1e15)) {
+        return NextResponse.json(
+          { ok: false, error: "Withdraw funds before deleting a live agent" },
+          { status: 400 }
+        );
+      }
     }
   }
   deleteAgent(agent.id);

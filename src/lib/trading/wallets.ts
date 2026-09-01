@@ -14,6 +14,8 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import type { PrivateKeyAccount } from "viem";
+import bs58 from "bs58";
+import nacl from "tweetnacl";
 import { db } from "@/lib/db";
 
 function secret(): string | null {
@@ -77,4 +79,45 @@ export function loadAgentWallet(agentId: string): AgentWallet | null {
   if (!row) return null;
   const pk = decrypt(row.key_ciphertext) as `0x${string}`;
   return { account: privateKeyToAccount(pk), address: row.address, owner: row.owner };
+}
+
+/* ---------------- Solana (fomo venue) ---------------- */
+
+/**
+ * Create (or return existing) SOLANA trading wallet for an agent instance.
+ * Same custody model as the EVM wallets — ed25519 keypair, AES-256-GCM
+ * encrypted at rest, stored in the same table (base58 address vs 0x
+ * disambiguates the chain). Jupiter Ultra's relayer pays network fees, so
+ * these wallets never need SOL; users only deposit USDC.
+ */
+export function ensureAgentSolanaWallet(agentId: string, owner: string): string {
+  const existing = db()
+    .prepare("SELECT address FROM trading_wallets WHERE agent_id = ?")
+    .get(agentId) as { address: string } | undefined;
+  if (existing) return existing.address;
+
+  const kp = nacl.sign.keyPair();
+  const address = bs58.encode(Buffer.from(kp.publicKey));
+  db()
+    .prepare(
+      "INSERT INTO trading_wallets (agent_id, owner, address, key_ciphertext) VALUES (?, ?, ?, ?)"
+    )
+    .run(agentId, owner.toLowerCase(), address, encrypt(bs58.encode(Buffer.from(kp.secretKey))));
+  return address;
+}
+
+export interface AgentSolanaWallet {
+  address: string;
+  /** 64-byte ed25519 secret key. */
+  secretKey: Uint8Array;
+  /** Owner recorded at creation — the only withdrawal target, ever. */
+  owner: string;
+}
+
+export function loadAgentSolanaWallet(agentId: string): AgentSolanaWallet | null {
+  const row = db()
+    .prepare("SELECT owner, address, key_ciphertext FROM trading_wallets WHERE agent_id = ?")
+    .get(agentId) as { owner: string; address: string; key_ciphertext: string } | undefined;
+  if (!row || row.address.startsWith("0x")) return null;
+  return { address: row.address, secretKey: bs58.decode(decrypt(row.key_ciphertext)), owner: row.owner };
 }

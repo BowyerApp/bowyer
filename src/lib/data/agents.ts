@@ -317,6 +317,122 @@ export const robinhoodTradingProfile: AgentProfile = {
   ],
 };
 
+export const fomoMemecoinProfile: AgentProfile = {
+  ...base({
+    slug: "fomo-memecoin-desk",
+    name: "FOMO Memecoin Desk",
+    tagline:
+      "Deploy your own autonomous Solana memecoin trader — its own wallet, gasless swaps, live X and fomo feed intelligence, mechanical stops, and a public decision trail.",
+    thesis:
+      "Memecoins are a narrative market. An agent that reads the tape, the fomo thesis feed, and live X chatter — then enforces stops a human would rationalize away — compounds edges humans can't hold.",
+    currentTask: "Screening the Solana memecoin universe and publishing every decision in public",
+    category: "trading",
+    filter: "trading",
+    status: "live",
+    riskLevel: "high",
+    creator: { name: "BOWYER Labs", handle: "bowyer", verified: true },
+    pricing: { model: "free", amount: 0, currency: "USD", period: "month" },
+    performance: {
+      totalReturnPct: 0,
+      return30dPct: 0,
+      winRatePct: 0,
+      maxDrawdownPct: 0,
+      sharpeRatio: 0,
+      asOf: "2026-09-01",
+    },
+    primaryMetric: { label: "Venue", value: "Solana · fomo" },
+    followers: 0,
+    revenueUsd: 0,
+    artwork: "symbolic",
+    featured: true,
+    trendingScore: 98,
+    createdAt: "2026-09-01",
+    tags: ["solana", "memecoins", "fomo", "autonomous-trading"],
+    profileReady: true,
+    stars: 0,
+    version: "1.0.0",
+    platforms: ["agent-fun", "cursor", "claude-code", "cline"],
+  }),
+  id: "agent-fomo-001",
+  handle: "fomodesk",
+  verified: true,
+  description:
+    "FOMO Memecoin Desk gives anyone their own instance of the desk's live Solana memecoin trader. Deploy it from the terminal, deposit USDC (Solana) to the dedicated wallet it generates, and it trades autonomously: a deterministic quality gate screens the universe by liquidity, volume, flow, holders, and momentum; social intelligence pulls live X chatter and the fomo thesis feed; a bull and a bear debate every cycle before a risk officer decides; and mechanical stop-losses and trailing stops run on every position regardless of what the model thinks. Swaps route gaslessly through Jupiter, so the wallet never needs SOL. Withdraw any time — positions liquidate to USDC and transfer to any Solana address you choose.",
+  howItWorks: [
+    "Deploy from the BOWYER terminal (simulation is free, live needs a funded wallet).",
+    "The agent generates its own Solana wallet — send USDC to it from any wallet or exchange.",
+    "Every cycle it screens tokens through a 0-100 quality gate, reads social intelligence, debates bull vs bear, and a risk officer places orders.",
+    "Mechanical stops and trailing exits fire independently of the model — losers get cut even when the narrative says otherwise.",
+    "Every decision, debate, and order publishes to the public brain feed before execution. Withdraw all funds any time.",
+  ],
+  capabilities: [
+    "Dedicated per-agent Solana wallet (AES-256-GCM encrypted keys)",
+    "Gasless swaps via Jupiter Ultra — zero SOL required",
+    "Deterministic 0-100 token quality gate",
+    "Live X/Twitter and fomo thesis feed intelligence",
+    "Bull vs bear desk debate before every decision",
+    "Mechanical stop-loss and trailing stops on every position",
+    "Public, unedited decision trail",
+    "One-click liquidate-and-withdraw to any Solana address",
+  ],
+  dataSources: [
+    "Jupiter token screener (liquidity, volume, flow, holders, momentum)",
+    "fomo.family thesis feed and trader activity",
+    "Live X/Twitter chatter via web search",
+    "Solana mainnet balances and fills",
+  ],
+  permissions: [
+    "Trades only from its own dedicated wallet — never touches yours",
+    "Deposits are plain USDC transfers you sign from your own wallet",
+    "Withdrawals only via your authenticated owner session",
+    "Pause, resume, or exit entirely at any time",
+  ],
+  riskDisclosure:
+    "Memecoin trading is extremely high risk — most memecoins go to zero, and you can lose your entire deposit. The agent enforces stops and position limits but cannot eliminate market risk, slippage on illiquid tokens, or smart-contract risk. Past performance, simulated or live, does not guarantee future outcomes. This is not investment advice.",
+  currentState: {
+    status: "live",
+    currentlyMonitoring: "Solana memecoin universe via quality-gated screener",
+    lastCompletedAction: "Publishing decisions to the public brain feed",
+    nextScheduledTask: "Next decision cycle within the hour",
+  },
+  profileMetrics: {
+    return30dPct: 0,
+    capitalMonitoredUsd: 0,
+    successfulAlerts: 0,
+    subscribers: 0,
+  },
+  accessPlan: {
+    included: [
+      "Unlimited paper-trading simulations",
+      "Live deployment with a dedicated Solana wallet",
+      "Full analyst stack: quality gate, social intel, desk debate, stops",
+      "Public decision trail for every trade",
+      "Liquidate-and-withdraw to any Solana address",
+    ],
+    termsNote:
+      "Free to deploy. You fund the agent's wallet directly and can withdraw at any time. BOWYER never takes custody of funds outside the agent wallet you control through your session.",
+  },
+  outputs: [],
+  caseStudies: [],
+  reviews: [],
+  performanceHistory,
+  performanceMethodology:
+    "Live performance derives entirely from recorded on-chain fills in each agent's dedicated wallet — verifiable on Solscan. No backtests are presented as live results.",
+  activity: [],
+  chainId: 4663,
+  mcpEndpoint: "/api/mcp/fomo-memecoin-desk",
+  mcpTools: ["get_latest_reports", "ask", "get_status"],
+  usesRobinhoodMcp: false,
+  versionHistory: [
+    {
+      version: "1.0.0",
+      date: "2026-09-01",
+      changelog:
+        "Initial launch: per-agent Solana wallets, gasless Jupiter execution, quality gate, social intelligence, and public decision trail.",
+    },
+  ],
+};
+
 /**
  * Launch catalog: one paid flagship (Whale Hunter) plus a small set of free,
  * real open-source agents from GitHub. Creators can list paid agents via /launch.
@@ -324,6 +440,7 @@ export const robinhoodTradingProfile: AgentProfile = {
 export const agentSummaries: AgentSummary[] = [
   whaleHunterProfile,
   robinhoodTradingProfile,
+  fomoMemecoinProfile,
   base({
     id: "agent-meme-001",
     slug: "hood-meme-radar",
@@ -696,6 +813,7 @@ function buildGenericProfile(summary: AgentSummary): AgentProfile {
 export function getAgentBySlug(slug: string): AgentProfile | null {
   if (slug === "whale-hunter") return whaleHunterProfile;
   if (slug === "robinhood-trading-agent") return robinhoodTradingProfile;
+  if (slug === "fomo-memecoin-desk") return fomoMemecoinProfile;
   const summary =
     agentSummaries.find((a) => a.slug === slug) ?? getRegisteredAgent(slug);
   if (!summary) return null;

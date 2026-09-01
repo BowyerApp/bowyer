@@ -131,7 +131,7 @@ export function TradingView() {
   const [analystMode, setAnalystMode] = useState<"paper" | "live" | null>(null);
   const [analystBrief, setAnalystBrief] = useState("");
   const [analystSources, setAnalystSources] = useState("");
-  const [analystVenue, setAnalystVenue] = useState<"rhc" | "hyperliquid">("rhc");
+  const [analystVenue, setAnalystVenue] = useState<"rhc" | "hyperliquid" | "fomo">("rhc");
 
   const load = useCallback(
     async (auth = true) => {
@@ -202,7 +202,7 @@ export function TradingView() {
     await createAgent("signal-analyst", analystMode, {
       brief: analystBrief.trim() || undefined,
       sources: sources.length > 0 ? sources : undefined,
-      venue: analystVenue === "hyperliquid" ? "hyperliquid" : undefined,
+      venue: analystVenue === "rhc" ? undefined : analystVenue,
     });
     setAnalystMode(null);
     setAnalystBrief("");
@@ -232,8 +232,25 @@ export function TradingView() {
       `delete-${id}`
     );
 
-  const withdraw = (id: string) =>
-    act(
+  const withdraw = (id: string, venue?: string) => {
+    // fomo agents live on Solana — liquidate + send USDC to an address the
+    // owner chooses (their EVM owner address can't receive SPL tokens).
+    if (venue === "fomo") {
+      const to = window.prompt(
+        "Solana address to receive your USDC (it must have held USDC before):"
+      );
+      if (!to?.trim()) return;
+      return act(
+        () =>
+          fetch("/api/trading/agents", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id, action: "withdraw", to: to.trim() }),
+          }),
+        `withdraw-${id}`
+      );
+    }
+    return act(
       () =>
         fetch("/api/trading/withdraw", {
           method: "POST",
@@ -242,6 +259,7 @@ export function TradingView() {
         }),
       `withdraw-${id}`
     );
+  };
 
   const rescan = (id: string) =>
     act(
@@ -306,7 +324,7 @@ export function TradingView() {
                   onPause={() => patch(a.id, "pause")}
                   onResume={() => patch(a.id, "resume")}
                   onDelete={() => remove(a.id)}
-                  onWithdraw={() => withdraw(a.id)}
+                  onWithdraw={() => withdraw(a.id, a.config?.venue)}
                   onRescan={() => rescan(a.id)}
                   sendUsdg={sendUsdg}
                   sendPayment={sendPayment}
@@ -390,6 +408,7 @@ export function TradingView() {
                           [
                             ["rhc", "Robinhood Chain spot"],
                             ["hyperliquid", "Hyperliquid perps"],
+                            ["fomo", "Solana memecoins"],
                           ] as const
                         ).map(([v, label]) => (
                           <button
@@ -410,6 +429,16 @@ export function TradingView() {
                         <p className="text-[10.5px] leading-relaxed text-subtle">
                           Live Hyperliquid agents trade perps (long-only, no leverage stacking).
                           Fund the agent wallet with USDC on Hyperliquid after deploying.
+                        </p>
+                      )}
+                      {analystVenue === "fomo" && analystMode === "live" && (
+                        <p className="text-[10.5px] leading-relaxed text-subtle">
+                          The agent gets its own Solana wallet — deposit USDC (Solana) to its
+                          address after deploying. Swaps are gasless via Jupiter, so it never
+                          needs SOL. It screens the memecoin universe with a deterministic
+                          quality gate, reads live X chatter and the fomo thesis feed, and
+                          runs mechanical stops on every position. Withdraw any time from the
+                          agent card (liquidates to USDC, sent to any Solana address you choose).
                         </p>
                       )}
                       <label className="mt-1 text-[10.5px] font-semibold uppercase tracking-wide text-subtle">
@@ -551,6 +580,11 @@ function InstanceCard({
                 HYPERLIQUID
               </span>
             )}
+            {a.config?.venue === "fomo" && (
+              <span className="rounded border border-[#c084fc]/40 bg-[#c084fc]/10 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-[#c084fc]">
+                SOLANA · FOMO
+              </span>
+            )}
             <span
               className={`rounded border px-1.5 py-px text-[9px] font-bold uppercase tracking-wide ${
                 a.status === "active"
@@ -608,7 +642,9 @@ function InstanceCard({
                   href={
                     f.txHash.startsWith("hl:")
                       ? `https://app.hyperliquid.xyz/trade/${f.symbol}`
-                      : `${EXPLORER}/tx/${f.txHash}`
+                      : a.config?.venue === "fomo"
+                        ? `https://solscan.io/tx/${f.txHash}`
+                        : `${EXPLORER}/tx/${f.txHash}`
                   }
                   target="_blank"
                   rel="noreferrer"
@@ -644,22 +680,26 @@ function InstanceCard({
             {copied ? <Check size={11} className="text-up" /> : <Copy size={11} />}
           </button>
           <div className="ml-auto flex gap-2">
-            <button
-              type="button"
-              disabled={depositBusy !== null}
-              onClick={() => deposit("usdg")}
-              className="flex h-7 items-center rounded border border-border px-2.5 text-[11px] text-foreground transition-colors hover:border-accent/40 disabled:opacity-50"
-            >
-              {depositBusy === "usdg" ? "Confirm in wallet…" : "Deposit 50 USDG"}
-            </button>
-            <button
-              type="button"
-              disabled={depositBusy !== null}
-              onClick={() => deposit("gas")}
-              className="flex h-7 items-center rounded border border-border px-2.5 text-[11px] text-foreground transition-colors hover:border-accent/40 disabled:opacity-50"
-            >
-              {depositBusy === "gas" ? "Confirm in wallet…" : "Send gas (~$5 ETH)"}
-            </button>
+            {a.config?.venue !== "fomo" && (
+              <>
+                <button
+                  type="button"
+                  disabled={depositBusy !== null}
+                  onClick={() => deposit("usdg")}
+                  className="flex h-7 items-center rounded border border-border px-2.5 text-[11px] text-foreground transition-colors hover:border-accent/40 disabled:opacity-50"
+                >
+                  {depositBusy === "usdg" ? "Confirm in wallet…" : "Deposit 50 USDG"}
+                </button>
+                <button
+                  type="button"
+                  disabled={depositBusy !== null}
+                  onClick={() => deposit("gas")}
+                  className="flex h-7 items-center rounded border border-border px-2.5 text-[11px] text-foreground transition-colors hover:border-accent/40 disabled:opacity-50"
+                >
+                  {depositBusy === "gas" ? "Confirm in wallet…" : "Send gas (~$5 ETH)"}
+                </button>
+              </>
+            )}
             <button
               type="button"
               onClick={onRescan}
@@ -670,6 +710,12 @@ function InstanceCard({
               <RefreshCw size={11} />
             </button>
           </div>
+          {a.config?.venue === "fomo" && (
+            <p className="w-full text-[10.5px] leading-relaxed text-subtle">
+              Send USDC on Solana to this address from any wallet (Phantom, an exchange, or
+              fomo). No SOL needed — swaps are gasless. Hit the rescan button after depositing.
+            </p>
+          )}
         </div>
       )}
 
@@ -820,14 +866,14 @@ interface LeaderRow {
   winRate: number | null;
   createdAt: string;
   walletAddress: string | null;
-  venue: "hyperliquid" | "rhc";
+  venue: "hyperliquid" | "rhc" | "fomo";
 }
 
 function walletExplorerUrl(r: LeaderRow): string | null {
   if (!r.walletAddress) return null;
-  return r.venue === "hyperliquid"
-    ? `https://app.hyperliquid.xyz/explorer/address/${r.walletAddress}`
-    : `${EXPLORER}/address/${r.walletAddress}`;
+  if (r.venue === "hyperliquid") return `https://app.hyperliquid.xyz/explorer/address/${r.walletAddress}`;
+  if (r.venue === "fomo") return `https://solscan.io/account/${r.walletAddress}`;
+  return `${EXPLORER}/address/${r.walletAddress}`;
 }
 
 /** Public verified-PnL leaderboard — every row derives from recorded fills. */
