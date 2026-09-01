@@ -509,6 +509,48 @@ export function fillsToday(agentId: string): number {
   return r.n;
 }
 
+/** Buys only — the daily cap limits risk-TAKING, so exits never consume it. */
+export function buysToday(agentId: string): number {
+  const r = db()
+    .prepare(
+      "SELECT COUNT(*) AS n FROM trading_fills WHERE agent_id = ? AND side = 'buy' AND at >= date('now')"
+    )
+    .get(agentId) as { n: number };
+  return r.n;
+}
+
+/**
+ * Reconcile a stored position against the on-chain balance. Dust rows left
+ * by decimal flooring (or tokens moved outside the engine) otherwise trigger
+ * doomed sell orders forever.
+ */
+export function reconcilePositionQty(agentId: string, token: string, onChainQty: number): void {
+  ensureTables();
+  const d = db();
+  if (onChainQty <= 1e-9) {
+    d.prepare("DELETE FROM trading_positions WHERE agent_id = ? AND token = ?").run(
+      agentId,
+      token.toLowerCase()
+    );
+  } else {
+    d.prepare("UPDATE trading_positions SET qty = ? WHERE agent_id = ? AND token = ?").run(
+      onChainQty,
+      agentId,
+      token.toLowerCase()
+    );
+  }
+}
+
+/** True if a thesis has already been recorded for this fill's tx. */
+export function hasThesisForTx(agentId: string, txHash: string): boolean {
+  ensureTables();
+  if (!txHash || txHash === "paper") return false;
+  const r = db()
+    .prepare("SELECT COUNT(*) AS n FROM trading_theses WHERE agent_id = ? AND tx_hash = ?")
+    .get(agentId, txHash) as { n: number };
+  return r.n > 0;
+}
+
 export function recordFill(input: {
   agentId: string;
   side: "buy" | "sell";

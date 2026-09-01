@@ -42,6 +42,22 @@ export async function GET(req: Request) {
     const { trackedTraders } = await import("@/lib/trading/store");
     return NextResponse.json({ ok: true, tracked: trackedTraders(50) });
   }
+  if (social === "dedupe") {
+    // One-shot cleanup: keep the earliest thesis per (agent, tx) — later
+    // duplicates came from a bug where skipped orders re-processed old fills.
+    const { db } = await import("@/lib/db");
+    const r = db()
+      .prepare(
+        `DELETE FROM trading_theses WHERE id NOT IN (
+           SELECT id FROM (
+             SELECT id, ROW_NUMBER() OVER (PARTITION BY agent_id, tx_hash ORDER BY at ASC) AS rn
+             FROM trading_theses WHERE tx_hash IS NOT NULL AND tx_hash != ''
+           ) WHERE rn = 1
+         ) AND tx_hash IS NOT NULL AND tx_hash != ''`
+      )
+      .run();
+    return NextResponse.json({ ok: true, deleted: r.changes });
+  }
   if (social === "backfill") {
     const { backfillFomoTheses } = await import("@/lib/trading/fomo-social");
     const { flushFomoTheses } = await import("@/lib/trading/fomo-thesis");

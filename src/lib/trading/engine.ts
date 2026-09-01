@@ -13,12 +13,14 @@ import { getMemeScreener, type ScreenerToken } from "@/lib/market-data";
 import { ACTIVE_CHAIN } from "@/lib/chain";
 import {
   briefError,
+  buysToday,
   cashFor,
   fillsFor,
   fillsToday,
   listActiveAgents,
   noteTick,
   positionsFor,
+  reconcilePositionQty,
   recordFill,
   setCash,
   setPositionMeta,
@@ -169,6 +171,7 @@ async function executeLiveHl(agent: TradingAgentRow, order: Order) {
     });
   }
   if (order.meta) setPositionMeta(agent.id, order.token, order.meta);
+  return true;
 }
 
 /**
@@ -193,7 +196,7 @@ function fomoWalletFor(agent: TradingAgentRow): {
  * base currency; the agent's wallet signs its own taker slot, and Jupiter's
  * relayer pays the network fee, so the wallet never needs SOL.
  */
-async function executeLiveFomo(agent: TradingAgentRow, order: Order) {
+async function executeLiveFomo(agent: TradingAgentRow, order: Order): Promise<boolean> {
   const w = fomoWalletFor(agent);
   if (!w) throw new Error("no Solana wallet for this agent — fomo trading disabled");
   const address = w.address;
@@ -205,7 +208,7 @@ async function executeLiveFomo(agent: TradingAgentRow, order: Order) {
 
   if (order.side === "buy") {
     const usd = order.usd ?? 0;
-    if (usd < 5) return;
+    if (usd < 5) return false;
     const amountRaw = BigInt(Math.round(usd * 10 ** USDC_DECIMALS)).toString();
     const res = await fomoSolanaSwap({ inputMint: USDC_MINT, outputMint: mint, amountRaw, signer: w.signer });
     const dec = await tokenDecimalsSolana(mint);
@@ -225,17 +228,21 @@ async function executeLiveFomo(agent: TradingAgentRow, order: Order) {
     const pos = positionsFor(agent.id).find((p) => p.token === order.token);
     if (!pos) {
       console.warn(`[trading] fomo sell ${order.symbol}: no stored position for ${order.token}`);
-      return;
+      return false;
     }
     const dec = await tokenDecimalsSolana(mint);
     const onChain = await splBalance(address, mint);
     const fraction = Math.min(1, Math.max(0, order.fraction ?? 1));
     const sellQty = Math.min(onChain, pos.qty * fraction);
-    if (sellQty <= 0) {
+    if (sellQty <= 0 || sellQty * order.priceUsd < 1) {
+      // Dust or already gone (decimal flooring residue, or tokens moved in
+      // the fomo app directly). Reconcile the store to the chain so this
+      // order stops re-firing every cycle.
+      reconcilePositionQty(agent.id, order.token, onChain);
       console.warn(
-        `[trading] fomo sell ${order.symbol}: zero sellable qty (on-chain ${onChain}, stored ${pos.qty}, mint ${mint})`
+        `[trading] fomo sell ${order.symbol}: reconciled to on-chain ${onChain} (stored ${pos.qty}, ~$${(sellQty * order.priceUsd).toFixed(2)}) — no order sent`
       );
-      return;
+      return false;
     }
     const amountRaw = BigInt(Math.floor(sellQty * 10 ** dec)).toString();
     const res = await fomoSolanaSwap({ inputMint: mint, outputMint: USDC_MINT, amountRaw, signer: w.signer });
@@ -252,9 +259,11 @@ async function executeLiveFomo(agent: TradingAgentRow, order: Order) {
     });
   }
   if (order.meta) setPositionMeta(agent.id, order.token, order.meta);
+  return true;
 }
 
-async function executeLive(agent: TradingAgentRow, order: Order) {
+/** Returns false when the order was skipped without touching the chain. */
+async function executeLive(agent: TradingAgentRow, order: Order): Promise<boolean | void> {
   if (agent.config.venue === "fomo") return executeLiveFomo(agent, order);
   if (isHlToken(order.token)) return executeLiveHl(agent, order);
 
@@ -516,7 +525,9 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
   }
 
   const done = fillsToday(agent.id);
-  const remaining = agent.config.dailyTradeCap - done;
+  // The cap limits risk-TAKING: only buys consume it. Counting sells here
+  // let a day of healthy exits silently choke off all new entries.
+  const remaining = agent.config.dailyTradeCap - buysToday(agent.id);
   const input = {
     agent,
     tokens,
@@ -544,10 +555,13 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
     try {
       if (agent.mode === "paper") {
         await executePaper(agent, order, tokens.find((t) => addrKey(t.address) === order.token));
+        executed += 1;
       } else {
-        await executeLive(agent, order);
+        // false = skipped without a fill (dust reconcile, zero qty) — must
+        // not count, or the thesis/alert block re-processes stale fills.
+        const did = await executeLive(agent, order);
+        if (did !== false) executed += 1;
       }
-      executed += 1;
     } catch (err) {
       lastError = briefError(err);
       console.error(`[trading] ${agent.strategy}/${agent.id.slice(0, 8)} order failed:`, lastError);
@@ -558,9 +572,11 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
   if (executed > 0) {
     try {
       const { notifyTradeFill } = await import("@/lib/telegram");
-      const { STRATEGY_META, recordThesis } = await import("@/lib/trading/store");
+      const { STRATEGY_META, recordThesis, hasThesisForTx } = await import("@/lib/trading/store");
       const venue = agent.config.venue ?? "rhc";
       for (const fill of fillsFor(agent.id, executed)) {
+        // Never write (or post) a second thesis for the same on-chain fill.
+        if (hasThesisForTx(agent.id, fill.txHash)) continue;
         let thesis = thesisByToken.get(fill.token);
         // fomo fills MUST carry a thesis (that's the whole point of the feed).
         // The analyst's inline thesis is best-effort, so guarantee one here.
