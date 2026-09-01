@@ -366,6 +366,20 @@ export function fallbackRuntimeLlm(): {
   };
 }
 
+/**
+ * Dedicated reasoning model for autonomous TRADING decisions. Trading is the
+ * highest-stakes call the platform makes, so it runs on the best reasoning model
+ * available (default Claude Opus 5 via OpenRouter) rather than the fast default.
+ * Configure with TRADING_LLM_MODEL; routes through the premium/OpenRouter creds.
+ * Returns null when no premium key is set, so callers fall back to the default.
+ */
+export function tradingRuntimeLlm(): { model: string; apiKey: string; baseUrl: string } | null {
+  const creds = premiumRuntimeCredentials();
+  if (!creds) return null;
+  const model = process.env.TRADING_LLM_MODEL?.trim() || "anthropic/claude-opus-5";
+  return { model, apiKey: creds.apiKey, baseUrl: creds.baseUrl };
+}
+
 export function isLocalBaseUrl(baseUrl: string): boolean {
   return /localhost|127\.0\.0\.1|0\.0\.0\.0|host\.docker\.internal/.test(baseUrl);
 }

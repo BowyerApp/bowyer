@@ -53,7 +53,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Unknown strategy" }, { status: 400 });
   }
   const mode = body.mode === "live" ? "live" : "paper";
-  if (mode === "live" && !liveTradingEnabled()) {
+  const venue =
+    body.venue === "hyperliquid"
+      ? ("hyperliquid" as const)
+      : body.venue === "fomo"
+        ? ("fomo" as const)
+        : undefined;
+
+  const { fomoSolanaEnabled, fomoSolanaAddress, splBalance, USDC_MINT } = await import(
+    "@/lib/trading/fomo-solana"
+  );
+
+  if (mode === "live" && venue === "fomo" && !fomoSolanaEnabled()) {
+    return NextResponse.json({ ok: false, error: "FOMO_SOLANA_KEY not set" }, { status: 400 });
+  }
+  if (mode === "live" && venue !== "fomo" && !liveTradingEnabled()) {
     return NextResponse.json({ ok: false, error: "Live trading not enabled" }, { status: 400 });
   }
 
@@ -62,19 +76,31 @@ export async function POST(req: Request) {
       ? {
           brief: String(body.brief ?? "").slice(0, 600) || undefined,
           sources: Array.isArray(body.sources) && body.sources.length > 0 ? body.sources : undefined,
-          venue: body.venue === "hyperliquid" ? ("hyperliquid" as const) : undefined,
+          venue,
         }
       : undefined;
 
   const agent = createAgentInstance({ owner, strategy, mode, config });
   let walletAddress: string | null = null;
-  if (mode === "live") {
+  if (mode === "live" && venue === "fomo") {
+    // fomo agents share the env-configured Solana wallet; no per-agent EOA.
+    walletAddress = fomoSolanaAddress();
+    const { db } = await import("@/lib/db");
+    db().prepare("UPDATE trading_agents SET wallet_address = ? WHERE id = ?").run(walletAddress, agent.id);
+    // Seed the PnL baseline with the wallet's current USDC so the leaderboard
+    // reports real performance from the moment the bot takes over.
+    if (walletAddress) {
+      const { recordDeposit } = await import("@/lib/trading/store");
+      const usdc = await splBalance(walletAddress, USDC_MINT).catch(() => 0);
+      if (usdc > 0) recordDeposit(agent.id, "deposit", usdc);
+    }
+  } else if (mode === "live") {
     walletAddress = ensureAgentWallet(agent.id, owner);
     const { db } = await import("@/lib/db");
     db().prepare("UPDATE trading_agents SET wallet_address = ? WHERE id = ?").run(walletAddress, agent.id);
   }
 
-  return NextResponse.json({ ok: true, agentId: agent.id, owner, strategy, mode, walletAddress });
+  return NextResponse.json({ ok: true, agentId: agent.id, owner, strategy, mode, venue: venue ?? "rhc", walletAddress });
 }
 
 /**
@@ -137,6 +163,25 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   const url = new URL(req.url);
+
+  // Ops observability: recent decision trail for one agent (reasoning + context).
+  const decisionsAgent = url.searchParams.get("decisions");
+  if (decisionsAgent) {
+    const { decisionsFor } = await import("@/lib/trading/store");
+    return NextResponse.json({ ok: true, decisions: decisionsFor(decisionsAgent, 5) });
+  }
+
+  // Ops observability: raw position rows (qty, avg cost, high-water) for one agent.
+  const positionsAgent = url.searchParams.get("positions");
+  if (positionsAgent) {
+    const { positionsFor, fillsFor } = await import("@/lib/trading/store");
+    return NextResponse.json({
+      ok: true,
+      positions: positionsFor(positionsAgent),
+      recentFills: fillsFor(positionsAgent, 15),
+    });
+  }
+
   const owner = url.searchParams.get("owner")?.toLowerCase() ?? "";
   if (!/^0x[0-9a-f]{40}$/.test(owner)) {
     return NextResponse.json({ ok: false, error: "owner must be a 0x address" }, { status: 400 });

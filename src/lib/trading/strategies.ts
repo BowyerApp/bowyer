@@ -32,9 +32,25 @@ export interface Order {
   reason: string;
   /** Optional grid bookkeeping persisted on the position. */
   meta?: Record<string, unknown>;
+  /**
+   * Full human-readable trade thesis (setup, edge, risk, invalidation,
+   * target) written by the Signal Analyst — posted to Telegram and, when a
+   * write path is configured, into the fomo feed. Absent for mechanical
+   * strategies.
+   */
+  thesis?: string;
 }
 
 const STABLE_SYMBOLS = new Set(["USDG", "USDC", "USDT", "USDE", "DAI", "WETH", "ETH"]);
+
+/**
+ * Address key for position/price matching. EVM (0x…) and Hyperliquid (hl:…)
+ * addresses are lowercased; Solana mints are base58 and case-sensitive and
+ * must be preserved verbatim so fomo positions match their screener rows.
+ */
+function tokenKey(address: string): string {
+  return address.startsWith("0x") || address.startsWith("hl:") ? address.toLowerCase() : address;
+}
 
 export function tradeable(t: ScreenerToken, cfg: StrategyConfig): boolean {
   return (
@@ -76,9 +92,9 @@ export function stopAndTrailExits(
 ): Order[] {
   const { positions, tokens, agent } = input;
   const orders: Order[] = [];
-  const bySymbol = new Map(tokens.map((t) => [t.address.toLowerCase(), t]));
+  const byAddress = new Map(tokens.map((t) => [tokenKey(t.address), t]));
   for (const pos of positions) {
-    const t = bySymbol.get(pos.token);
+    const t = byAddress.get(pos.token);
     const price = t?.priceUsd ?? null;
     if (!price) continue;
     const fromAvg = (price - pos.avgCostUsd) / pos.avgCostUsd;

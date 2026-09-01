@@ -15,18 +15,42 @@
  * move funds anywhere but the pair.
  */
 
-import { fallbackRuntimeLlm, resolveRuntimeLlm } from "@/lib/llm-config";
+import { fallbackRuntimeLlm, resolveRuntimeLlm, tradingRuntimeLlm } from "@/lib/llm-config";
 import type { StrategyInput, Order } from "@/lib/trading/strategies";
 import { stopAndTrailExits, tradeable } from "@/lib/trading/strategies";
 import { memoriesFor, recordDecision } from "@/lib/trading/store";
+import { getThesisStyleExemplars } from "@/lib/trading/fomo-style";
 import { adaptiveRisk, buySizeCap, protections, type Protections, type RiskProfile } from "@/lib/trading/risk";
 import type { ScreenerToken } from "@/lib/market-data";
 
-const LLM_INTERVAL_MS = 15 * 60 * 1000;
+const LLM_INTERVAL_MS = Number(process.env.ANALYST_INTERVAL_MS) || 15 * 60 * 1000;
 const MAX_ORDERS_PER_DECISION = 2;
 const UNIVERSE_SIZE = 15;
 
 const lastDecisionAt = new Map<string, number>();
+
+/** For fomo agents, feed the model real community theses so ours match the culture. */
+function fomoStyleBlock(agent: StrategyInput["agent"]): string {
+  if (agent.config.venue !== "fomo") return "";
+  const examples = getThesisStyleExemplars(6);
+  if (examples.length === 0) return "";
+  const block = examples.map((e, i) => `${i + 1}. (@${e.handle}) ${e.text}`).join("\n");
+  return (
+    " Your thesis will be posted to the fomo.family feed, where real traders write theirs. " +
+    "Match that voice — direct, specific, a little bold, no corporate hedging. Do NOT copy these; learn the register:\n" +
+    block
+  );
+}
+
+/** For fomo agents, lean toward taking real (small, disciplined) positions to build presence. */
+function fomoActivityNudge(agent: StrategyInput["agent"]): string {
+  if (agent.config.venue !== "fomo") return "";
+  return (
+    " This desk is building a public track record on fomo, so bias toward action when a genuine setup exists: " +
+    "prefer taking a small, well-managed starter position over sitting flat, as long as risk rules and protections allow it. " +
+    "Never force a trade without an edge, but don't sit idle when the data supports a reasonable entry."
+  );
+}
 
 interface LlmOrder {
   side?: string;
@@ -34,15 +58,80 @@ interface LlmOrder {
   usd?: number;
   fraction?: number;
   reason?: string;
+  /** Full trade thesis the desk would publish alongside the trade. */
+  thesis?: string;
+}
+
+const MIN_QUALITY_SCORE = Number(process.env.TRADING_MIN_SCORE) || 45;
+
+function clamp01(x: number): number {
+  return Math.max(0, Math.min(1, x));
+}
+
+/**
+ * Deterministic 0–100 tradeability/quality score, computed OUTSIDE the LLM.
+ * Inspired by the biggest lesson from profitable open-source memecoin agents
+ * (e.g. circuit-agent): strict pre-filtering on liquidity, real two-sided flow,
+ * turnover, holder base, and age lifts win rate far more than any prompt. The
+ * model only reasons over names that clear this bar. Direction is the model's
+ * call; this gate is about "is this even worth risking capital on".
+ */
+function qualityScore(t: ScreenerToken): number {
+  const liq = t.liquidityUsd ?? 0;
+  if (liq < 15_000) return 0; // illiquid / rug-prone — never trade
+  const vol = t.volume24h ?? 0;
+  const buys = t.buys24h ?? 0;
+  const sells = t.sells24h ?? 0;
+  const holders = t.holders ?? 0;
+  const age = t.ageMinutes ?? 0;
+  const c1 = t.change1h ?? 0;
+  const c5 = t.change5m ?? 0;
+
+  const liqScore = clamp01((liq - 15_000) / 185_000); // 15k → 200k
+  const turnover = clamp01(vol / Math.max(liq, 1) / 3); // up to 3× liquidity
+  const flow = buys + sells > 0 ? clamp01((buys / (buys + sells) - 0.4) / 0.4) : 0.3;
+  const holderScore = clamp01(holders / 2_000);
+  const ageScore = age <= 0 ? 0.4 : age < 30 ? 0.5 : age < 4_320 ? 1 : 0.75; // sweet spot 30m–3d
+  // Mild momentum tilt so lively names rank above flat ones (not a direction call).
+  const momentum = clamp01((c1 + 60) / 120) * 0.6 + clamp01((c5 + 30) / 60) * 0.4;
+
+  const score =
+    liqScore * 0.25 +
+    turnover * 0.2 +
+    flow * 0.18 +
+    holderScore * 0.12 +
+    ageScore * 0.1 +
+    momentum * 0.15;
+  return Math.round(score * 100);
+}
+
+function ageLabel(min: number | null | undefined): string {
+  if (!min || min <= 0) return "?";
+  if (min < 90) return `${min}m`;
+  if (min < 2_880) return `${Math.round(min / 60)}h`;
+  return `${Math.round(min / 1_440)}d`;
 }
 
 function marketTable(tokens: ScreenerToken[]): string {
   const rows = tokens.map((t) => {
     const liq = Math.round((t.liquidityUsd ?? 0) / 1000);
     const vol = Math.round((t.volume24h ?? 0) / 1000);
-    return `${t.symbol} | $${t.priceUsd?.toPrecision(4)} | 1h ${t.change1h?.toFixed(1) ?? "?"}% | 24h ${t.change24h?.toFixed(1) ?? "?"}% | liq $${liq}k | vol $${vol}k | ${t.buys24h ?? 0}/${t.sells24h ?? 0} buys/sells`;
+    const buys = t.buys24h ?? 0;
+    const sells = t.sells24h ?? 0;
+    const flow = buys + sells > 0 ? (buys / (buys + sells)).toFixed(2) : "?";
+    const turn = liq > 0 ? (vol / liq).toFixed(1) : "?";
+    return (
+      `${t.symbol} | Q${qualityScore(t)} | $${t.priceUsd?.toPrecision(4)} | ` +
+      `5m ${t.change5m?.toFixed(1) ?? "?"}% 1h ${t.change1h?.toFixed(1) ?? "?"}% 24h ${t.change24h?.toFixed(1) ?? "?"}% | ` +
+      `liq $${liq}k | vol $${vol}k | turn ${turn}x | flow ${flow} (${buys}/${sells}) | ` +
+      `${t.holders ?? "?"} hldrs | age ${ageLabel(t.ageMinutes)}`
+    );
   });
-  return ["SYMBOL | PRICE | 1H | 24H | LIQUIDITY | 24H VOLUME | FLOW", ...rows].join("\n");
+  return [
+    "SYMBOL | QUALITY(0-100) | PRICE | MOMENTUM | LIQUIDITY | 24H VOL | TURNOVER | BUY-FLOW | HOLDERS | AGE",
+    `(QUALITY is a deterministic pre-trade gate; buys below Q${MIN_QUALITY_SCORE} are rejected by the risk system.)`,
+    ...rows,
+  ].join("\n");
 }
 
 async function fetchContext(input: StrategyInput): Promise<string> {
@@ -56,12 +145,97 @@ async function fetchContext(input: StrategyInput): Promise<string> {
   }
 }
 
+/**
+ * Salvage the JSON object from an LLM completion: strip markdown fences and
+ * any prose around the outermost braces. Models occasionally wrap or preface
+ * their JSON even when asked not to; that must not void a trading decision.
+ */
+function extractJson(raw: string): string {
+  const cleaned = raw.replace(/```(?:json)?/gi, "").trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  return start >= 0 && end > start ? cleaned.slice(start, end + 1) : cleaned;
+}
+
 function parseOrders(raw: string): LlmOrder[] {
   try {
-    const json = JSON.parse(raw) as { orders?: LlmOrder[] };
+    const json = JSON.parse(extractJson(raw)) as { orders?: LlmOrder[] };
     return Array.isArray(json.orders) ? json.orders : [];
   } catch {
     return [];
+  }
+}
+
+/**
+ * Address key for matching positions to the universe. EVM (0x…) and
+ * Hyperliquid (hl:…) addresses are lowercased; Solana mints are base58 and
+ * case-sensitive, so they must be preserved verbatim — the same rule the
+ * engine uses so an order's token is executable as-is.
+ */
+function tokenKey(address: string): string {
+  return address.startsWith("0x") || address.startsWith("hl:") ? address.toLowerCase() : address;
+}
+
+/** Compact market-data line for a token, used in thesis generation. */
+function tokenDataLine(t?: ScreenerToken): string {
+  if (!t) return "";
+  const liq = Math.round((t.liquidityUsd ?? 0) / 1000);
+  const vol = Math.round((t.volume24h ?? 0) / 1000);
+  return `price $${t.priceUsd?.toPrecision(4)}, 1h ${t.change1h?.toFixed(1) ?? "?"}%, 24h ${t.change24h?.toFixed(1) ?? "?"}%, liq $${liq}k, 24h vol $${vol}k, ${t.buys24h ?? 0}/${t.sells24h ?? 0} buys/sells`;
+}
+
+/** Never-empty deterministic thesis, used if the LLM call is unavailable. */
+function fallbackThesis(side: "buy" | "sell", symbol: string, reason?: string, t?: ScreenerToken): string {
+  const clean = (reason ?? "").replace(/^analyst:\s*/i, "").trim();
+  const data = tokenDataLine(t);
+  if (side === "buy") {
+    return (
+      `Entered $${symbol} on a systematic momentum + liquidity trigger${clean ? ` — ${clean}` : ""}. ` +
+      (data ? `Read on entry: ${data}. ` : "") +
+      `Small starter clip, stop armed; I add on confirmation and cut if the setup breaks. Fully automated by @BOWYERBOT.`
+    ).slice(0, 500);
+  }
+  return (
+    `Trimmed $${symbol}${clean ? ` — ${clean}` : ""}. ` +
+    (data ? `Tape now: ${data}. ` : "") +
+    `Taking risk off into strength / protecting the book per plan. Fully automated by @BOWYERBOT.`
+  ).slice(0, 500);
+}
+
+/**
+ * Guaranteed trade thesis for the fomo feed. Tries a focused LLM call that
+ * matches the community's voice (learned exemplars), and always falls back to a
+ * deterministic, data-cited line so a fill is NEVER posted without a thesis.
+ */
+export async function writeThesis(input: {
+  side: "buy" | "sell";
+  symbol: string;
+  reason?: string;
+  token?: ScreenerToken;
+}): Promise<string> {
+  const { side, symbol, reason, token } = input;
+  const fb = fallbackThesis(side, symbol, reason, token);
+  try {
+    const exs = getThesisStyleExemplars(5);
+    const style = exs.length
+      ? "\nThis posts to the fomo.family feed where real traders write theirs. Match that voice (do NOT copy):\n" +
+        exs.map((e, i) => `${i + 1}. ${e.text}`).join("\n")
+      : "";
+    const system =
+      "You are a sharp on-chain trader writing a short public thesis for a trade you JUST executed. " +
+      "First person, confident, specific. No markdown, no hashtags, under 400 characters. " +
+      "Cover the setup, the concrete edge (cite the numbers), the risk/invalidation, and the plan or target." +
+      style;
+    const user =
+      `You just ${side === "buy" ? "BOUGHT" : "SOLD"} $${symbol}. ` +
+      `${(reason ?? "").replace(/^analyst:\s*/i, "")}\n` +
+      (token ? `Live data: ${tokenDataLine(token)}\n` : "") +
+      `Write the thesis now.`;
+    const out = (await llmChat(system, user, { maxTokens: 200 })).trim();
+    const cleaned = out.replace(/^["']|["']$/g, "").trim();
+    return cleaned.length >= 40 ? cleaned.slice(0, 500) : fb;
+  } catch {
+    return fb;
   }
 }
 
@@ -82,7 +256,7 @@ function validateOrders(
   const equityUsd =
     cashUsd +
     positions.reduce((sum, p) => {
-      const t = universe.find((x) => x.address.toLowerCase() === p.token);
+      const t = universe.find((x) => tokenKey(x.address) === p.token);
       return sum + p.qty * (t?.priceUsd ?? p.avgCostUsd);
     }, 0);
 
@@ -95,6 +269,10 @@ function validateOrders(
       const t = bySymbol.get(symbol);
       if (!t || !t.priceUsd) continue;
       if (guard.cooldownTokens.has(t.address.toLowerCase())) continue;
+      // Deterministic quality gate: never open a NEW position in a name that
+      // fails the safety/quality bar, regardless of what the model argued.
+      const pos0 = held.get(symbol);
+      if (!pos0 && qualityScore(t) < MIN_QUALITY_SCORE) continue;
       const pos = held.get(symbol);
       const currentValue = pos ? pos.qty * t.priceUsd : 0;
       if (!pos && openCount >= risk.maxOpenPositions) continue;
@@ -109,13 +287,15 @@ function validateOrders(
       if (usd < 10) continue;
       cashLeft -= usd;
       if (!pos) openCount += 1;
+      const thesis = String(p.thesis ?? "").trim().slice(0, 600) || undefined;
       orders.push({
         side: "buy",
-        token: t.address.toLowerCase(),
+        token: tokenKey(t.address),
         symbol: t.symbol,
         usd,
         priceUsd: t.priceUsd,
         reason,
+        thesis,
       });
     } else if (p.side === "sell") {
       const pos = held.get(symbol);
@@ -123,6 +303,7 @@ function validateOrders(
       const t = bySymbol.get(symbol);
       const price = t?.priceUsd ?? pos.avgCostUsd;
       const fraction = Math.min(1, Math.max(0.1, Number(p.fraction) || 1));
+      const thesis = String(p.thesis ?? "").trim().slice(0, 600) || undefined;
       orders.push({
         side: "sell",
         token: pos.token,
@@ -130,6 +311,7 @@ function validateOrders(
         fraction,
         priceUsd: price,
         reason,
+        thesis,
       });
     }
   }
@@ -162,7 +344,12 @@ async function chatOnce(
   });
   if (!res.ok) throw new Error(`analyst LLM ${res.status}`);
   const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-  return json.choices?.[0]?.message?.content ?? "";
+  const content = json.choices?.[0]?.message?.content ?? "";
+  // Reasoning models can burn the whole budget on hidden thinking and return an
+  // empty completion. Treat that as a failure so the fallback chain engages
+  // instead of silently handing an empty string to the decision parser.
+  if (!content.trim()) throw new Error("analyst LLM empty completion");
+  return content;
 }
 
 /**
@@ -173,12 +360,17 @@ async function chatOnce(
 async function llmChat(
   system: string,
   user: string,
-  opts: { json?: boolean; maxTokens?: number } = {}
+  opts: { json?: boolean; maxTokens?: number; tier?: "reasoning" | "fast" } = {}
 ): Promise<string> {
+  // The final trade decision runs on the best reasoning model (Claude Opus 5 by
+  // default, via OpenRouter). Supporting calls (debate, thesis) stay on the fast
+  // default to control cost. Any failure falls back down the chain.
+  const primary =
+    opts.tier === "reasoning" ? (tradingRuntimeLlm() ?? resolveRuntimeLlm(null)) : resolveRuntimeLlm(null);
   try {
-    return await chatOnce(resolveRuntimeLlm(null), system, user, opts);
+    return await chatOnce(primary, system, user, opts);
   } catch (err) {
-    const fb = fallbackRuntimeLlm();
+    const fb = fallbackRuntimeLlm() ?? (opts.tier === "reasoning" ? resolveRuntimeLlm(null) : null);
     if (!fb) throw err;
     return await chatOnce(fb, system, user, opts);
   }
@@ -199,7 +391,12 @@ export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
     breakevenAfterPct: 0.08,
     maxHoldHours: 96,
   });
-  if (exits.length > 0) return exits;
+  if (exits.length > 0) {
+    console.log(
+      `[analyst] mechanical exits for ${agent.id.slice(0, 8)}: ${exits.map((e) => `${e.symbol} (${e.reason})`).join("; ")}`
+    );
+    return exits;
+  }
 
   // Freqtrade-style protections: cooldowns and entry halts.
   const guard = protections(agent.id);
@@ -226,13 +423,33 @@ async function runDecision(
   const { agent, tokens, positions, cashUsd } = input;
   const cfg = agent.config;
 
+  // Rank by the deterministic quality score, not raw volume, so the model spends
+  // its reasoning on the highest-quality names that clear the safety bar.
   const universe = tokens
     .filter((t) => tradeable(t, cfg))
-    .sort((a, b) => (b.volume24h ?? 0) - (a.volume24h ?? 0))
+    .sort((a, b) => qualityScore(b) - qualityScore(a))
     .slice(0, UNIVERSE_SIZE);
   if (universe.length === 0) return [];
 
   const context = await fetchContext(input);
+
+  // Memecoins trade on attention, so the numbers alone aren't the whole tape.
+  // Pull what traders are actually saying about each candidate — live X/web
+  // chatter for the ticker, the fomo thesis feed for that exact token, and
+  // whether smart-money traders we track are the ones talking — so the model
+  // weighs narrative and crowd positioning alongside price/liquidity.
+  let socialBlock = "";
+  if (cfg.venue === "fomo") {
+    try {
+      const { socialIntelBatch } = await import("@/lib/trading/social-intel");
+      socialBlock = await socialIntelBatch(
+        universe.map((t) => ({ symbol: t.symbol, address: t.address })),
+        6
+      );
+    } catch {
+      /* social intel is an enhancement — decide on the tape alone if it fails */
+    }
+  }
   const positionLines =
     positions.length === 0
       ? "none"
@@ -254,6 +471,9 @@ async function runDecision(
     context ? `LIVE INTELLIGENCE:\n${context}` : "",
     lessonLines ? `LESSONS FROM THIS AGENT'S OWN PAST TRADES:\n${lessonLines}` : "",
     `MARKET (only these are tradeable):\n${marketTable(universe)}`,
+    socialBlock
+      ? `SOCIAL / NARRATIVE INTELLIGENCE (live X + web chatter and the fomo thesis feed per ticker — this is what the crowd is saying right now):\n${socialBlock}`
+      : "",
     `OPEN POSITIONS:\n${positionLines}`,
     `CASH: $${cashUsd.toFixed(0)} | max clip $${risk.clipUsd} | max position $${risk.maxPositionUsd} | open ${positions.length}/${risk.maxOpenPositions}`,
     `CURRENT RISK BUDGET (earned by your own track record, recalculated every cycle): ${risk.rationale}`,
@@ -291,21 +511,35 @@ async function runDecision(
     "You are the RISK OFFICER — the final word on a trading desk managing a small on-chain portfolio. " +
     (debateBlock ? "Weigh the bull and bear cases from your desk, then decide. " : "") +
     "You only trade tokens from the provided market table. You respond with strict JSON: " +
-    '{"reasoning":"one paragraph explaining your decision","orders":[{"side":"buy"|"sell","symbol":"...","usd":number,"fraction":number,"reason":"..."}]} ' +
+    '{"reasoning":"one tight paragraph (under 100 words) explaining your decision","orders":[{"side":"buy"|"sell","symbol":"...","usd":number,"fraction":number,"reason":"...","thesis":"..."}]} ' +
     `with at most ${MAX_ORDERS_PER_DECISION} orders. An empty orders array is a valid and often correct answer. ` +
     "For buys set usd (position size). For sells set fraction (0.1-1.0 of the position). " +
-    "Every reason must cite the concrete data that motivated it. Do not trade without an edge.";
+    `Each token shows a QUALITY score (0-100), a deterministic safety/liquidity/flow gate. You may ONLY open new positions in names with QUALITY >= ${MIN_QUALITY_SCORE}; lower-quality buys are auto-rejected, so don't waste an order on them. Prefer the highest-quality setups. ` +
+    "Every reason must cite the concrete data that motivated it (quality, momentum, flow, turnover). Do not trade without an edge. " +
+    "If SOCIAL / NARRATIVE INTELLIGENCE is provided, weigh it heavily — memecoins run on attention. Rising chatter, fresh catalysts, or smart-money traders writing about a name strengthen a long; silence, fading mentions, or warnings (rug talk, dumping, exploit) are a reason to pass or exit even when the tape looks fine. Cite social signals in your reason/thesis when they influenced the call. " +
+    "For EVERY order also write a 'thesis': 3-5 punchy sentences a trader would post publicly to justify the trade — " +
+    "the setup, the concrete edge/catalyst (cite the numbers: volume, flow, price action), the risk and what invalidates it, " +
+    "and the target or plan. First person, confident, no markdown, no hashtags, under 500 characters." +
+    fomoStyleBlock(agent) +
+    fomoActivityNudge(agent);
 
   const content = await llmChat(system, `${briefing}${debateBlock}\n\nDecide now. JSON only.`, {
+    // Headroom for adaptive-reasoning models: hidden thinking + the JSON answer
+    // (reasoning, orders, and a thesis per order) must ALL fit or the JSON
+    // truncates mid-string and the entire decision — including exits — is lost.
     json: true,
-    maxTokens: 600,
+    maxTokens: 4000,
+    tier: "reasoning",
   });
 
   let reasoning = "";
   try {
-    reasoning = String((JSON.parse(content) as { reasoning?: string }).reasoning ?? "");
+    reasoning = String((JSON.parse(extractJson(content)) as { reasoning?: string }).reasoning ?? "");
   } catch {
     /* orders parsing below has its own fallback */
+  }
+  if (!reasoning) {
+    console.warn(`[analyst] decision parse produced no reasoning; head: ${content.slice(0, 200)}`);
   }
 
   const orders = validateOrders(parseOrders(content), input, universe, risk, guard);
@@ -322,7 +556,7 @@ async function runDecision(
         reason: o.reason,
       })),
       debate: debate.length > 0 ? debate : undefined,
-      contextNote: `${universe.length} tokens screened, ${context ? "sources fetched" : "no sources"}, ${lessons.length} lessons | ${risk.rationale} | protections: ${guard.summary}`,
+      contextNote: `${universe.length} tokens screened, ${context ? "sources fetched" : "no sources"}, ${socialBlock ? `social intel on ${socialBlock.split("\n\n").length} names` : "no social intel"}, ${lessons.length} lessons | ${risk.rationale} | protections: ${guard.summary}`,
     });
   } catch {
     /* the trail must never block trading */

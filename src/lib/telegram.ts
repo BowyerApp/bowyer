@@ -646,6 +646,10 @@ export async function notifyTradeFill(input: {
   priceUsd: number;
   reason: string;
   txHash: string;
+  /** Full trade thesis (Signal Analyst) — appended below the fill line. */
+  thesis?: string;
+  /** Execution venue, for the correct explorer link. */
+  venue?: "rhc" | "hyperliquid" | "fomo";
 }): Promise<boolean> {
   if (!telegramConfigured()) return false;
   const link = db()
@@ -655,14 +659,26 @@ export async function notifyTradeFill(input: {
 
   const emoji = input.side === "buy" ? "🟢" : "🔴";
   const mode = input.mode === "live" ? "LIVE" : "SIM";
+  const isSolana =
+    input.venue === "fomo" ||
+    (input.txHash &&
+      input.txHash !== "paper" &&
+      !input.txHash.startsWith("0x") &&
+      !input.txHash.startsWith("hl:"));
+  const explorer =
+    input.txHash && input.txHash !== "paper"
+      ? input.txHash.startsWith("hl:")
+        ? `\nhttps://app.hyperliquid.xyz/trade/${input.symbol}`
+        : isSolana
+          ? `\nhttps://solscan.io/tx/${input.txHash}`
+          : `\nhttps://robinhoodchain.blockscout.com/tx/${input.txHash}`
+      : "";
   const lines = [
     `${emoji} ${input.strategyName} [${mode}] — ${input.side.toUpperCase()} ${input.symbol}`,
     `$${input.valueUsd.toFixed(2)} @ $${input.priceUsd.toPrecision(4)}`,
     input.reason ? `\n${input.reason}` : "",
-    input.txHash && input.txHash !== "paper" && !input.txHash.startsWith("hl:")
-      ? `\nhttps://robinhoodchain.blockscout.com/tx/${input.txHash}`
-      : "",
-    input.txHash.startsWith("hl:") ? `\nhttps://app.hyperliquid.xyz/trade/${input.symbol}` : "",
+    input.thesis ? `\n📝 Thesis: ${input.thesis}` : "",
+    explorer,
   ].filter(Boolean);
 
   const queued = enqueueTelegramDelivery({

@@ -57,6 +57,11 @@ __pycache__/
 promo-video/node_modules/
 promo-video/out/
 
+# fomo automation (source only — deps, session profile, screenshots stay local)
+fomo-automation/node_modules/
+fomo-automation/.fomo-profile/
+fomo-automation/shots/
+
 # local screenshots (never ship)
 public/images/Screenshot*
 public/images/IMAGE_2026*

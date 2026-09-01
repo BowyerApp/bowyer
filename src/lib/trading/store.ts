@@ -43,8 +43,8 @@ export interface StrategyConfig {
   sources?: { type: string; url: string }[];
   /** signal-analyst only: bull/bear/risk-officer debate before each decision (default on). */
   debate?: boolean;
-  /** Execution venue: Robinhood Chain spot (default) or Hyperliquid perps. */
-  venue?: "rhc" | "hyperliquid";
+  /** Execution venue: Robinhood Chain spot (default), Hyperliquid perps, or fomo (Solana spot). */
+  venue?: "rhc" | "hyperliquid" | "fomo";
 }
 
 export interface TradingAgentRow {
@@ -241,7 +241,135 @@ function ensureTables() {
       at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_trading_decisions_agent ON trading_decisions (agent_id, at DESC);
+    CREATE TABLE IF NOT EXISTS trading_theses (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      token TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      side TEXT NOT NULL,
+      venue TEXT NOT NULL DEFAULT 'rhc',
+      thesis TEXT NOT NULL,
+      tx_hash TEXT,
+      value_usd REAL NOT NULL DEFAULT 0,
+      price_usd REAL NOT NULL DEFAULT 0,
+      fomo_posted INTEGER NOT NULL DEFAULT 0,
+      at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_trading_theses_agent ON trading_theses (agent_id, at DESC);
+    CREATE INDEX IF NOT EXISTS idx_trading_theses_pending ON trading_theses (fomo_posted, at);
+    CREATE TABLE IF NOT EXISTS trading_kv (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS fomo_tracked_traders (
+      uuid TEXT PRIMARY KEY,
+      handle TEXT,
+      display_name TEXT,
+      score REAL NOT NULL DEFAULT 0,
+      num_trades INTEGER NOT NULL DEFAULT 0,
+      total_volume REAL NOT NULL DEFAULT 0,
+      avg_hold_s INTEGER NOT NULL DEFAULT 0,
+      followers INTEGER NOT NULL DEFAULT 0,
+      followed INTEGER NOT NULL DEFAULT 0,
+      note TEXT,
+      first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_fomo_tracked_score ON fomo_tracked_traders (score DESC);
   `);
+}
+
+export interface TrackedTrader {
+  uuid: string;
+  handle: string | null;
+  displayName: string | null;
+  score: number;
+  numTrades: number;
+  totalVolume: number;
+  avgHoldS: number;
+  followers: number;
+  followed: boolean;
+  note: string | null;
+}
+
+export function upsertTrackedTrader(t: TrackedTrader): void {
+  ensureTables();
+  db()
+    .prepare(
+      `INSERT INTO fomo_tracked_traders
+         (uuid, handle, display_name, score, num_trades, total_volume, avg_hold_s, followers, followed, note, updated_at)
+       VALUES (@uuid, @handle, @displayName, @score, @numTrades, @totalVolume, @avgHoldS, @followers, @followed, @note, datetime('now'))
+       ON CONFLICT(uuid) DO UPDATE SET
+         handle = excluded.handle,
+         display_name = excluded.display_name,
+         score = excluded.score,
+         num_trades = excluded.num_trades,
+         total_volume = excluded.total_volume,
+         avg_hold_s = excluded.avg_hold_s,
+         followers = excluded.followers,
+         followed = MAX(fomo_tracked_traders.followed, excluded.followed),
+         note = excluded.note,
+         updated_at = datetime('now')`
+    )
+    .run({
+      uuid: t.uuid,
+      handle: t.handle,
+      displayName: t.displayName,
+      score: t.score,
+      numTrades: t.numTrades,
+      totalVolume: t.totalVolume,
+      avgHoldS: t.avgHoldS,
+      followers: t.followers,
+      followed: t.followed ? 1 : 0,
+      note: t.note,
+    });
+}
+
+export function trackedTraders(limit = 100): TrackedTrader[] {
+  ensureTables();
+  const rows = db()
+    .prepare("SELECT * FROM fomo_tracked_traders ORDER BY score DESC LIMIT ?")
+    .all(limit) as Record<string, unknown>[];
+  return rows.map((r) => ({
+    uuid: String(r.uuid),
+    handle: (r.handle as string) ?? null,
+    displayName: (r.display_name as string) ?? null,
+    score: Number(r.score),
+    numTrades: Number(r.num_trades),
+    totalVolume: Number(r.total_volume),
+    avgHoldS: Number(r.avg_hold_s),
+    followers: Number(r.followers),
+    followed: Number(r.followed) === 1,
+    note: (r.note as string) ?? null,
+  }));
+}
+
+export function isTrackedFollowed(uuid: string): boolean {
+  ensureTables();
+  const r = db()
+    .prepare("SELECT followed FROM fomo_tracked_traders WHERE uuid = ?")
+    .get(uuid) as { followed: number } | undefined;
+  return r ? r.followed === 1 : false;
+}
+
+/** Tiny key-value store for runtime state that must survive restarts (e.g. rotated session tokens). */
+export function kvGet(key: string): string | null {
+  ensureTables();
+  const row = db().prepare("SELECT value FROM trading_kv WHERE key = ?").get(key) as
+    | { value: string }
+    | undefined;
+  return row?.value ?? null;
+}
+
+export function kvSet(key: string, value: string): void {
+  ensureTables();
+  db()
+    .prepare(
+      `INSERT INTO trading_kv (key, value, updated_at) VALUES (?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+    )
+    .run(key, value);
 }
 
 function rowToAgent(r: {
@@ -672,6 +800,121 @@ export function decisionsFor(agentId: string, limit = 20): DecisionRow[] {
   }));
 }
 
+/* ---------------- trade theses (per-trade writeups) ---------------- */
+
+export interface ThesisRow {
+  id: string;
+  agentId: string;
+  token: string;
+  symbol: string;
+  side: "buy" | "sell";
+  venue: string;
+  thesis: string;
+  txHash: string | null;
+  valueUsd: number;
+  priceUsd: number;
+  fomoPosted: boolean;
+  at: string;
+}
+
+/** Persist a per-trade thesis. Returns the new thesis id. */
+export function recordThesis(input: {
+  agentId: string;
+  token: string;
+  symbol: string;
+  side: "buy" | "sell";
+  venue?: string;
+  thesis: string;
+  txHash?: string | null;
+  valueUsd?: number;
+  priceUsd?: number;
+}): string {
+  ensureTables();
+  const id = randomUUID();
+  db()
+    .prepare(
+      `INSERT INTO trading_theses
+         (id, agent_id, token, symbol, side, venue, thesis, tx_hash, value_usd, price_usd)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      id,
+      input.agentId,
+      input.token,
+      input.symbol,
+      input.side,
+      input.venue ?? "rhc",
+      input.thesis.slice(0, 800),
+      input.txHash ?? null,
+      input.valueUsd ?? 0,
+      input.priceUsd ?? 0
+    );
+  db()
+    .prepare(
+      `DELETE FROM trading_theses WHERE agent_id = ? AND id NOT IN (
+         SELECT id FROM trading_theses WHERE agent_id = ? ORDER BY at DESC LIMIT 200
+       )`
+    )
+    .run(input.agentId, input.agentId);
+  return id;
+}
+
+function rowToThesis(r: {
+  id: string;
+  agent_id: string;
+  token: string;
+  symbol: string;
+  side: string;
+  venue: string;
+  thesis: string;
+  tx_hash: string | null;
+  value_usd: number;
+  price_usd: number;
+  fomo_posted: number;
+  at: string;
+}): ThesisRow {
+  return {
+    id: r.id,
+    agentId: r.agent_id,
+    token: r.token,
+    symbol: r.symbol,
+    side: r.side as "buy" | "sell",
+    venue: r.venue,
+    thesis: r.thesis,
+    txHash: r.tx_hash,
+    valueUsd: r.value_usd,
+    priceUsd: r.price_usd,
+    fomoPosted: r.fomo_posted === 1,
+    at: r.at,
+  };
+}
+
+export function thesesFor(agentId: string, limit = 20): ThesisRow[] {
+  ensureTables();
+  return (
+    db()
+      .prepare("SELECT * FROM trading_theses WHERE agent_id = ? ORDER BY at DESC LIMIT ?")
+      .all(agentId, limit) as Parameters<typeof rowToThesis>[0][]
+  ).map(rowToThesis);
+}
+
+/** fomo-venue theses not yet posted to the fomo feed (oldest first). */
+export function pendingFomoTheses(limit = 20): ThesisRow[] {
+  ensureTables();
+  return (
+    db()
+      .prepare(
+        "SELECT * FROM trading_theses WHERE fomo_posted = 0 AND venue = 'fomo' ORDER BY at ASC LIMIT ?"
+      )
+      .all(limit) as Parameters<typeof rowToThesis>[0][]
+  ).map(rowToThesis);
+}
+
+export function markThesisFomoPosted(id: string): void {
+  ensureTables();
+  db().prepare("UPDATE trading_theses SET fomo_posted = 1 WHERE id = ?").run(id);
+}
+
 /* ---------------- public leaderboard (verified PnL, no self-reporting) ---------------- */
 
 export interface LeaderboardRow {
@@ -688,7 +931,7 @@ export interface LeaderboardRow {
   createdAt: string;
   /** Public wallet for live agents — every fill is verifiable on-chain. */
   walletAddress: string | null;
-  venue: "hyperliquid" | "rhc";
+  venue: "hyperliquid" | "rhc" | "fomo";
 }
 
 export function leaderboard(limit = 50): LeaderboardRow[] {
@@ -728,7 +971,12 @@ export function leaderboard(limit = 50): LeaderboardRow[] {
       winRate: sells.length > 0 ? (wins / sells.length) * 100 : null,
       createdAt: a.createdAt,
       walletAddress: a.mode === "live" ? a.walletAddress ?? null : null,
-      venue: a.config?.venue === "hyperliquid" ? "hyperliquid" : "rhc",
+      venue:
+        a.config?.venue === "hyperliquid"
+          ? "hyperliquid"
+          : a.config?.venue === "fomo"
+            ? "fomo"
+            : "rhc",
     });
   }
   return out.sort((x, y) => y.pnlPct - x.pnlPct).slice(0, limit);

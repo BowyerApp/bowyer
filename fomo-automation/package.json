@@ -1,0 +1,16 @@
+{
+  "name": "fomo-automation",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Persistent Playwright worker that posts Signal Analyst trade theses into the fomo.family feed.",
+  "scripts": {
+    "login": "node post-theses.mjs login",
+    "run": "node post-theses.mjs run",
+    "watch": "node post-theses.mjs watch",
+    "inspect": "node post-theses.mjs inspect"
+  },
+  "dependencies": {
+    "playwright": "^1.48.0"
+  }
+}

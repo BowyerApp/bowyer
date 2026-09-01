@@ -20,6 +20,10 @@ RUN npm run build
 
 FROM node:20-bookworm-slim AS runner
 WORKDIR /app
+# cycletls' Go binary verifies TLS against the system CA store, which is empty on
+# the slim image — install root certs so auth.privy.io / fomo API handshakes pass.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3005
@@ -38,6 +42,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/bindings ./node_modules/bindings
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
+# cycletls spawns a Go binary (dist/index) at runtime; Next's file tracing sees
+# the JS (already in standalone) but not the spawned binary — copy it in (linux/amd64).
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/cycletls/dist/index ./node_modules/cycletls/dist/index
 
 # Note: no USER drop — platform volumes (e.g. Railway) mount root-owned, and
 # the container is already isolated. Mount persistent storage at /data.
