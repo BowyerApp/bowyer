@@ -527,7 +527,12 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
   const done = fillsToday(agent.id);
   // The cap limits risk-TAKING: only buys consume it. Counting sells here
   // let a day of healthy exits silently choke off all new entries.
-  const remaining = agent.config.dailyTradeCap - buysToday(agent.id);
+  // fomo is a velocity game — no daily cap there. Risk stays bounded by clip
+  // size, max open positions, the quality gate, and mechanical stops.
+  const remaining =
+    agent.config.venue === "fomo"
+      ? Number.MAX_SAFE_INTEGER
+      : agent.config.dailyTradeCap - buysToday(agent.id);
   const input = {
     agent,
     tokens,
