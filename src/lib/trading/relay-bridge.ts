@@ -200,6 +200,9 @@ export async function relayBuyRhcToken(input: {
     destinationCurrency: input.token,
     amount: String(Math.round(input.usd * 1e6)),
     tradeType: "EXACT_INPUT",
+    // Memecoin pools move fast; Relay's auto slippage quotes too tight and
+    // the fill reverts with "Return amount is not enough".
+    slippageTolerance: "300", // 3% in bps
   });
   const swapImpact = Number(quote.details?.swapImpact?.percent ?? 0);
   if (Number.isFinite(swapImpact) && swapImpact < -MAX_BUY_SWAP_IMPACT_PCT) {
@@ -242,6 +245,10 @@ export async function relaySellRhcToken(input: {
     destinationCurrency: USDC_MINT,
     amount: input.amountRaw.toString(),
     tradeType: "EXACT_INPUT",
+    // Exits fire exactly when the price is sliding — a tight auto-slippage
+    // quote reverts every tick ("Return amount is not enough") and the stop
+    // never fills. Getting OUT matters more than the last percent.
+    slippageTolerance: "500", // 5% in bps
   });
 
   const { sendPreparedTx } = await import("@/lib/trading/dex");
