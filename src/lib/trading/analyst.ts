@@ -27,7 +27,7 @@ const LLM_INTERVAL_MS = Number(process.env.ANALYST_INTERVAL_MS) || 15 * 60 * 100
 const MAX_ORDERS_PER_DECISION = 2;
 /** fomo is a presence game — allow more simultaneous actions per cycle. */
 const MAX_ORDERS_FOMO = 4;
-const UNIVERSE_SIZE = 15;
+const UNIVERSE_SIZE = 18;
 
 function maxOrdersFor(agent: StrategyInput["agent"]): number {
   return agent.config.venue === "fomo" ? MAX_ORDERS_FOMO : MAX_ORDERS_PER_DECISION;
@@ -57,6 +57,9 @@ function fomoActivityNudge(agent: StrategyInput["agent"]): string {
     "(1) a starter in the best fresh setup you don't hold; (2) an add to a winner that's confirming; " +
     "(3) a trim into strength on anything up big; (4) a rotation out of your weakest/stalest holding into a stronger setup. " +
     "Small clips, quick trims, fast rotation — many small well-reasoned trades beat a few big ones here. " +
+    "The board spans ALL of Solana: fresh launches, animal coins, AI coins, stock-parody memes, whatever is trending. " +
+    "Do NOT concentrate the book in a single narrative just because it dominates today's volume — if every position " +
+    "you hold is the same meta, rotate at least one clip into the strongest setup from a different one. " +
     "Sitting completely flat should be RARE and only when the entire board is genuinely bad; an empty orders array " +
     "on a board with multiple QUALITY 80+ names means you are not doing your job. " +
     "Never invent an edge that isn't in the data — every order still needs concrete numbers behind it."
@@ -448,10 +451,23 @@ async function runDecision(
 
   // Rank by the deterministic quality score, not raw volume, so the model spends
   // its reasoning on the highest-quality names that clear the safety bar.
-  const universe = tokens
-    .filter((t) => tradeable(t, cfg))
-    .sort((a, b) => qualityScore(b) - qualityScore(a))
-    .slice(0, UNIVERSE_SIZE);
+  const eligible = tokens.filter((t) => tradeable(t, cfg));
+  const byQuality = [...eligible].sort((a, b) => qualityScore(b) - qualityScore(a));
+  let universe = byQuality.slice(0, UNIVERSE_SIZE);
+  // On fomo, reserve slots for the hottest movers that still clear the buy
+  // gate. Quality rank alone favors older high-holder names, which quietly
+  // narrows the book to whatever meta dominates volume — the model must also
+  // see what is breaking out right now.
+  if (cfg.venue === "fomo") {
+    const core = byQuality.slice(0, UNIVERSE_SIZE - 5);
+    const chosen = new Set(core.map((t) => t.address));
+    const heat = (t: ScreenerToken) => (t.change1h ?? 0) + (t.change5m ?? 0) * 2;
+    const movers = eligible
+      .filter((t) => !chosen.has(t.address) && qualityScore(t) >= MIN_QUALITY_SCORE)
+      .sort((a, b) => heat(b) - heat(a))
+      .slice(0, 5);
+    universe = [...core, ...movers];
+  }
   if (universe.length === 0) return [];
 
   const context = await fetchContext(input);

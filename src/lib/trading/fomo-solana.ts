@@ -634,20 +634,43 @@ export async function solScreener(limit = 40): Promise<ScreenerToken[]> {
   }
   if (!solScreenerInflight) {
     solScreenerInflight = (async () => {
-      const [traded, organic] = await Promise.all([
+      // Trending lists are the whole point of fomo: they surface fresh metas
+      // hours before they top the volume boards. Without them the universe
+      // collapses into whatever single narrative dominates 24h volume.
+      const [traded, organic, trending1h, trending5m] = await Promise.all([
         fetchJupList("toptraded/24h?limit=60").catch(() => [] as JupToken[]),
         fetchJupList("toporganicscore/24h?limit=60").catch(() => [] as JupToken[]),
+        fetchJupList("toptrending/1h?limit=50").catch(() => [] as JupToken[]),
+        fetchJupList("toptrending/5m?limit=30").catch(() => [] as JupToken[]),
       ]);
       const seen = new Set<string>();
       const rows: ScreenerToken[] = [];
-      for (const t of [...organic, ...traded]) {
-        if (seen.has(t.id)) continue;
+      const trendingIds: string[] = [];
+      for (const t of [...trending1h, ...trending5m]) {
+        if (t.id && !trendingIds.includes(t.id)) trendingIds.push(t.id);
+      }
+      for (const t of [...trending1h, ...trending5m, ...organic, ...traded]) {
+        if (!t.id || seen.has(t.id)) continue;
         seen.add(t.id);
         const row = toScreenerToken(t);
         if (row && (row.liquidityUsd ?? 0) >= 25_000) rows.push(row);
       }
       persistMintCase();
-      return rows.sort((a, b) => (b.volume24h ?? 0) - (a.volume24h ?? 0));
+
+      // Reserve the front of the list for trending names (in trending order)
+      // so they survive every downstream `slice(0, n)`; the rest ranks by
+      // volume as before. Callers always cut from the top.
+      const byId = new Map(rows.map((r) => [r.address, r]));
+      const reserved: ScreenerToken[] = [];
+      for (const id of trendingIds) {
+        const r = byId.get(id);
+        if (r && reserved.length < 15) {
+          reserved.push(r);
+          byId.delete(id);
+        }
+      }
+      const rest = [...byId.values()].sort((a, b) => (b.volume24h ?? 0) - (a.volume24h ?? 0));
+      return [...reserved, ...rest];
     })().finally(() => {
       solScreenerInflight = null;
     });
