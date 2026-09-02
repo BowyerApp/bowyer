@@ -43,6 +43,7 @@ export async function POST(req: Request) {
   }
 
   if (body.action === "transfer-out") return transferOut(body);
+  if (body.action === "bridge") return bridgeToRhc(body);
 
   const owner = String(body.owner ?? "").toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(owner)) {
@@ -155,6 +156,44 @@ async function transferOut(body: { agentId?: string; to?: string }) {
     return NextResponse.json({ ok: true, to, sentUsd, txs });
   } catch (err) {
     return NextResponse.json({ ok: false, error: briefError(err), txs }, { status: 500 });
+  }
+}
+
+/**
+ * Fund the Robinhood Chain side of a fomo agent's dual book: bridges USDC
+ * from its Solana wallet to USDG (or gas ETH) in its own EVM wallet via
+ * Relay. An internal rebalance between the agent's two wallets — never an
+ * external transfer — so the deposit ledger is untouched.
+ */
+async function bridgeToRhc(body: { agentId?: string; usd?: unknown; receive?: unknown }) {
+  const { getAgent, briefError } = await import("@/lib/trading/store");
+  const agent = getAgent(String(body.agentId ?? ""));
+  if (!agent || agent.mode !== "live" || agent.config?.venue !== "fomo") {
+    return NextResponse.json({ ok: false, error: "Live fomo agent not found" }, { status: 404 });
+  }
+  const usd = Number(body.usd);
+  if (!Number.isFinite(usd) || usd < 2 || usd > 2_000) {
+    return NextResponse.json({ ok: false, error: "usd must be 2-2000" }, { status: 400 });
+  }
+  const receive = body.receive === "eth" ? ("eth" as const) : ("usdg" as const);
+
+  const { loadAgentSolanaWallet } = await import("@/lib/trading/wallets");
+  const { loadFomoSolanaWallet } = await import("@/lib/trading/fomo-solana");
+  const sol = loadAgentSolanaWallet(agent.id) ?? loadFomoSolanaWallet();
+  if (!sol) return NextResponse.json({ ok: false, error: "No Solana wallet for agent" }, { status: 500 });
+
+  const recipient = ensureAgentWallet(agent.id, agent.owner);
+  try {
+    const { bridgeSolanaUsdcToRhc } = await import("@/lib/trading/relay-bridge");
+    const r = await bridgeSolanaUsdcToRhc({
+      signer: { secretKey: sol.secretKey, address: sol.address },
+      recipient,
+      usd,
+      receive,
+    });
+    return NextResponse.json({ ok: true, recipient, receive, ...r });
+  } catch (err) {
+    return NextResponse.json({ ok: false, error: briefError(err), recipient }, { status: 500 });
   }
 }
 

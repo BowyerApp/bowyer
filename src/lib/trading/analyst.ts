@@ -57,7 +57,7 @@ function fomoActivityNudge(agent: StrategyInput["agent"]): string {
     "(1) a starter in the best fresh setup you don't hold; (2) an add to a winner that's confirming; " +
     "(3) a trim into strength on anything up big; (4) a rotation out of your weakest/stalest holding into a stronger setup. " +
     "Small clips, quick trims, fast rotation — many small well-reasoned trades beat a few big ones here. " +
-    "The board spans ALL of Solana: fresh launches, animal coins, AI coins, stock-parody memes, whatever is trending. " +
+    "The board spans ALL of Solana plus Robinhood Chain (rows tagged RHC): fresh launches, animal coins, AI coins, stock-parody memes, whatever is trending. " +
     "Do NOT concentrate the book in a single narrative just because it dominates today's volume — if every position " +
     "you hold is the same meta, rotate at least one clip into the strongest setup from a different one. " +
     "Sitting completely flat should be RARE and only when the entire board is genuinely bad; an empty orders array " +
@@ -97,6 +97,9 @@ function qualityScore(t: ScreenerToken): number {
   const buys = t.buys24h ?? 0;
   const sells = t.sells24h ?? 0;
   const holders = t.holders ?? 0;
+  // Unknown holder count (RHC screener doesn't report it) scores neutral —
+  // zero would silently dock every Robinhood Chain name 12 points.
+  const holdersUnknown = t.holders == null;
   const age = t.ageMinutes ?? 0;
   const c1 = t.change1h ?? 0;
   const c5 = t.change5m ?? 0;
@@ -104,7 +107,7 @@ function qualityScore(t: ScreenerToken): number {
   const liqScore = clamp01((liq - 15_000) / 185_000); // 15k → 200k
   const turnover = clamp01(vol / Math.max(liq, 1) / 3); // up to 3× liquidity
   const flow = buys + sells > 0 ? clamp01((buys / (buys + sells) - 0.4) / 0.4) : 0.3;
-  const holderScore = clamp01(holders / 2_000);
+  const holderScore = holdersUnknown ? 0.5 : clamp01(holders / 2_000);
   const ageScore = age <= 0 ? 0.4 : age < 30 ? 0.5 : age < 4_320 ? 1 : 0.75; // sweet spot 30m–3d
   // Mild momentum tilt so lively names rank above flat ones (not a direction call).
   const momentum = clamp01((c1 + 60) / 120) * 0.6 + clamp01((c5 + 30) / 60) * 0.4;
@@ -127,6 +130,10 @@ function ageLabel(min: number | null | undefined): string {
 }
 
 function marketTable(tokens: ScreenerToken[]): string {
+  // Dual-book universes (fomo) mix Solana mints and Robinhood Chain 0x
+  // tokens — tag each row so the model can respect per-chain cash.
+  const mixedChains =
+    tokens.some((t) => t.address.startsWith("0x")) && tokens.some((t) => !t.address.startsWith("0x"));
   const rows = tokens.map((t) => {
     const liq = Math.round((t.liquidityUsd ?? 0) / 1000);
     const vol = Math.round((t.volume24h ?? 0) / 1000);
@@ -134,15 +141,16 @@ function marketTable(tokens: ScreenerToken[]): string {
     const sells = t.sells24h ?? 0;
     const flow = buys + sells > 0 ? (buys / (buys + sells)).toFixed(2) : "?";
     const turn = liq > 0 ? (vol / liq).toFixed(1) : "?";
+    const chain = mixedChains ? `${t.address.startsWith("0x") ? "RHC" : "SOL"} | ` : "";
     return (
-      `${t.symbol} | Q${qualityScore(t)} | $${t.priceUsd?.toPrecision(4)} | ` +
+      `${t.symbol} | ${chain}Q${qualityScore(t)} | $${t.priceUsd?.toPrecision(4)} | ` +
       `5m ${t.change5m?.toFixed(1) ?? "?"}% 1h ${t.change1h?.toFixed(1) ?? "?"}% 24h ${t.change24h?.toFixed(1) ?? "?"}% | ` +
       `liq $${liq}k | vol $${vol}k | turn ${turn}x | flow ${flow} (${buys}/${sells}) | ` +
       `${t.holders ?? "?"} hldrs | age ${ageLabel(t.ageMinutes)}`
     );
   });
   return [
-    "SYMBOL | QUALITY(0-100) | PRICE | MOMENTUM | LIQUIDITY | 24H VOL | TURNOVER | BUY-FLOW | HOLDERS | AGE",
+    `SYMBOL | ${mixedChains ? "CHAIN | " : ""}QUALITY(0-100) | PRICE | MOMENTUM | LIQUIDITY | 24H VOL | TURNOVER | BUY-FLOW | HOLDERS | AGE`,
     `(QUALITY is a deterministic pre-trade gate; buys below Q${MIN_QUALITY_SCORE} are rejected by the risk system.)`,
     ...rows,
   ].join("\n");
@@ -514,7 +522,7 @@ async function runDecision(
       ? `SOCIAL / NARRATIVE INTELLIGENCE (live X + web chatter and the fomo thesis feed per ticker — this is what the crowd is saying right now):\n${socialBlock}`
       : "",
     `OPEN POSITIONS:\n${positionLines}`,
-    `CASH: $${cashUsd.toFixed(0)} | max clip $${risk.clipUsd} | max position $${risk.maxPositionUsd} | open ${positions.length}/${risk.maxOpenPositions}`,
+    `CASH: $${cashUsd.toFixed(0)}${input.cashNote ? ` (${input.cashNote} — a buy can only spend the cash on that token's own chain, so size accordingly)` : ""} | max clip $${risk.clipUsd} | max position $${risk.maxPositionUsd} | open ${positions.length}/${risk.maxOpenPositions}`,
     `CURRENT RISK BUDGET (earned by your own track record, recalculated every cycle): ${risk.rationale}`,
     `ACTIVE PROTECTIONS: ${guard.summary}`,
   ]

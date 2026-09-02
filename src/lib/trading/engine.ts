@@ -264,7 +264,12 @@ async function executeLiveFomo(agent: TradingAgentRow, order: Order): Promise<bo
 
 /** Returns false when the order was skipped without touching the chain. */
 async function executeLive(agent: TradingAgentRow, order: Order): Promise<boolean | void> {
-  if (agent.config.venue === "fomo") return executeLiveFomo(agent, order);
+  // fomo agents run a dual book: Solana mints execute gaslessly via Jupiter,
+  // 0x tokens are Robinhood Chain names (fomo lists both) and fall through to
+  // the native Uniswap path below using the agent's EVM wallet.
+  if (agent.config.venue === "fomo" && !order.token.startsWith("0x")) {
+    return executeLiveFomo(agent, order);
+  }
   if (isHlToken(order.token)) return executeLiveHl(agent, order);
 
   const wallet = loadAgentWallet(agent.id);
@@ -368,7 +373,7 @@ export async function closeAllPositions(agent: TradingAgentRow, reason: string):
     agent.config.venue === "hyperliquid"
       ? await hlScreener()
       : agent.config.venue === "fomo"
-        ? await solScreener()
+        ? [...(await solScreener()), ...(await getMemeScreener()).tokens]
         : (await getMemeScreener()).tokens;
   const priceOf = new Map(tokens.map((t) => [addrKey(t.address), t.priceUsd ?? null]));
   let closed = 0;
@@ -418,13 +423,21 @@ export async function closeAllPositions(agent: TradingAgentRow, reason: string):
   return closed;
 }
 
-/** fomo (Solana) live equity: on-chain USDC cash + open positions at screener price. */
+/** fomo live equity: Solana USDC + RHC USDG cash + open positions at screener price. */
 export async function fomoEquityUsd(agentId: string, tokens: ScreenerToken[]): Promise<number> {
   const address = loadAgentSolanaWallet(agentId)?.address ?? fomoSolanaAddress();
   if (!address) return 0;
   const usdc = await splBalance(address, USDC_MINT);
   let equity = usdc;
-  const priceOf = new Map(tokens.map((t) => [t.address, t.priceUsd ?? 0]));
+  const evm = loadAgentWallet(agentId);
+  if (evm) {
+    try {
+      equity += Number(await erc20Balance(USDG, evm.address)) / 10 ** USDG_DEC;
+    } catch {
+      /* RHC side unpriced this snapshot */
+    }
+  }
+  const priceOf = new Map(tokens.map((t) => [addrKey(t.address), t.priceUsd ?? 0]));
   for (const pos of positionsFor(agentId)) {
     equity += pos.qty * (priceOf.get(pos.token) ?? pos.avgCostUsd);
   }
@@ -457,7 +470,7 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
   // invisible to stop-losses and shows as break-even to the analyst. Fetch
   // them individually so exits always work.
   if (agent.config.venue === "fomo") {
-    const missing = positions.filter((p) => !priceOf.get(p.token));
+    const missing = positions.filter((p) => !priceOf.get(p.token) && !p.token.startsWith("0x"));
     if (missing.length > 0) {
       try {
         const extra = await solTokensByMint(missing.map((p) => ({ mint: p.token, symbol: p.symbol })));
@@ -481,6 +494,7 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
   }
 
   let cashUsd: number;
+  let cashNote: string | undefined;
   if (agent.mode === "paper") {
     cashUsd = cashFor(agent.id);
   } else if (agent.config.venue === "fomo") {
@@ -490,6 +504,23 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
       return;
     }
     cashUsd = await splBalance(w.address, USDC_MINT);
+    // Dual book: the RHC side trades from the agent's EVM wallet in USDG.
+    // Each chain's buys can only spend that chain's cash, so the model must
+    // see the split — a merged number would size orders the wallet can't fill.
+    let rhcCash = 0;
+    const evm = loadAgentWallet(agent.id);
+    if (evm) {
+      try {
+        const usdg = await erc20Balance(USDG, evm.address);
+        rhcCash = Number(usdg) / 10 ** USDG_DEC;
+      } catch {
+        /* RHC side unpriced this tick — Solana book still trades */
+      }
+    }
+    cashNote =
+      `$${cashUsd.toFixed(0)} USDC on Solana (spendable ONLY on SOL-chain tokens) · ` +
+      `$${rhcCash.toFixed(0)} USDG on Robinhood Chain (spendable ONLY on RHC-chain tokens)`;
+    cashUsd += rhcCash;
     if (cashUsd < 5 && positions.length === 0) {
       noteTick(agent.id, "fund the fomo wallet: deposit USDC to the account, then the bot trades gaslessly");
       return;
@@ -538,6 +569,7 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
     tokens,
     positions: positionsFor(agent.id),
     cashUsd,
+    cashNote,
     fillsToday: done,
   };
   // The daily cap limits risk-TAKING, not risk-REDUCTION: a stop-loss that
@@ -582,6 +614,10 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
       for (const fill of fillsFor(agent.id, executed)) {
         // Never write (or post) a second thesis for the same on-chain fill.
         if (hasThesisForTx(agent.id, fill.txHash)) continue;
+        // A fomo agent's RHC-side fills settle on Robinhood Chain via our own
+        // DEX path — they can't be matched to fomo swap records, so record
+        // them as rhc (keeps the fomo posting queue clean, fixes tx links).
+        const fillVenue = venue === "fomo" && fill.token.startsWith("0x") ? "rhc" : venue;
         let thesis = thesisByToken.get(fill.token);
         // fomo fills MUST carry a thesis (that's the whole point of the feed).
         // The analyst's inline thesis is best-effort, so guarantee one here.
@@ -606,7 +642,7 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
               token: fill.token,
               symbol: fill.symbol,
               side: fill.side,
-              venue,
+              venue: fillVenue,
               thesis,
               txHash: fill.txHash,
               valueUsd: fill.valueUsd,
@@ -627,7 +663,7 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
           reason: fill.reason,
           txHash: fill.txHash,
           thesis,
-          venue,
+          venue: fillVenue,
         }).catch(() => {});
       }
     } catch {
@@ -721,7 +757,10 @@ export async function tradingTick(): Promise<{ agents: number; errors: number }>
         continue;
       }
       try {
-        await tickAgent(agent, onHl ? hlTokens! : onFomo ? solTokens! : tokens);
+        // fomo sees everything it can execute: the Solana tape plus Robinhood
+        // Chain names (fomo lists both chains; execution routes per token).
+        const fomoUniverse = onFomo ? [...solTokens!, ...tokens] : null;
+        await tickAgent(agent, onHl ? hlTokens! : fomoUniverse ?? tokens);
       } catch (err) {
         errors += 1;
         console.error(`[trading] tick failed for ${agent.id.slice(0, 8)}:`, err);

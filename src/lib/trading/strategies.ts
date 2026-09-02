@@ -17,6 +17,8 @@ export interface StrategyInput {
   tokens: ScreenerToken[];
   positions: PositionRow[];
   cashUsd: number;
+  /** Per-chain cash breakdown for dual-book agents (fomo: Solana + RHC). */
+  cashNote?: string;
   fillsToday: number;
 }
 
