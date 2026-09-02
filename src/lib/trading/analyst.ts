@@ -296,7 +296,11 @@ function validateOrders(
   const held = new Map(positions.map((p) => [p.symbol.toUpperCase(), p]));
   const orders: Order[] = [];
   let cashLeft = cashUsd;
-  let openCount = positions.length;
+  // Dust stubs left over from scale-outs must not eat buy slots.
+  let openCount = positions.filter((p) => {
+    const t = universe.find((x) => tokenKey(x.address) === p.token);
+    return p.qty * (t?.priceUsd ?? p.avgCostUsd) >= 5;
+  }).length;
   const equityUsd =
     cashUsd +
     positions.reduce((sum, p) => {
