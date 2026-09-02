@@ -25,7 +25,13 @@ import type { ScreenerToken } from "@/lib/market-data";
 
 const LLM_INTERVAL_MS = Number(process.env.ANALYST_INTERVAL_MS) || 15 * 60 * 1000;
 const MAX_ORDERS_PER_DECISION = 2;
+/** fomo is a presence game — allow more simultaneous actions per cycle. */
+const MAX_ORDERS_FOMO = 4;
 const UNIVERSE_SIZE = 15;
+
+function maxOrdersFor(agent: StrategyInput["agent"]): number {
+  return agent.config.venue === "fomo" ? MAX_ORDERS_FOMO : MAX_ORDERS_PER_DECISION;
+}
 
 const lastDecisionAt = new Map<string, number>();
 
@@ -42,13 +48,18 @@ function fomoStyleBlock(agent: StrategyInput["agent"]): string {
   );
 }
 
-/** For fomo agents, lean toward taking real (small, disciplined) positions to build presence. */
+/** For fomo agents: a high-velocity presence desk — act every cycle when the data allows. */
 function fomoActivityNudge(agent: StrategyInput["agent"]): string {
   if (agent.config.venue !== "fomo") return "";
   return (
-    " This desk is building a public track record on fomo, so bias toward action when a genuine setup exists: " +
-    "prefer taking a small, well-managed starter position over sitting flat, as long as risk rules and protections allow it. " +
-    "Never force a trade without an edge, but don't sit idle when the data supports a reasonable entry."
+    " THIS IS A HIGH-VELOCITY DESK building a public presence on fomo — activity IS the strategy, " +
+    "as long as every action has a cited edge. Each cycle, actively look for ALL of these: " +
+    "(1) a starter in the best fresh setup you don't hold; (2) an add to a winner that's confirming; " +
+    "(3) a trim into strength on anything up big; (4) a rotation out of your weakest/stalest holding into a stronger setup. " +
+    "Small clips, quick trims, fast rotation — many small well-reasoned trades beat a few big ones here. " +
+    "Sitting completely flat should be RARE and only when the entire board is genuinely bad; an empty orders array " +
+    "on a board with multiple QUALITY 80+ names means you are not doing your job. " +
+    "Never invent an edge that isn't in the data — every order still needs concrete numbers behind it."
   );
 }
 
@@ -260,7 +271,7 @@ function validateOrders(
       return sum + p.qty * (t?.priceUsd ?? p.avgCostUsd);
     }, 0);
 
-  for (const p of proposals.slice(0, MAX_ORDERS_PER_DECISION)) {
+  for (const p of proposals.slice(0, maxOrdersFor(input.agent))) {
     const symbol = String(p.symbol ?? "").toUpperCase();
     const reason = `analyst: ${String(p.reason ?? "no reason given").slice(0, 180)}`;
 
@@ -382,14 +393,26 @@ export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
 
   // Adaptive risk: the agent's own track record sets today's budget —
   // stops, trail, size, and position count all move with performance.
-  const risk = adaptiveRisk(agent.id, cfg);
+  let risk = adaptiveRisk(agent.id, cfg);
+
+  // fomo: high-velocity presence desk — more, smaller shots. Wider position
+  // count, tighter clips, faster stale-position rotation. Per-trade risk goes
+  // DOWN even as trade count goes up.
+  const onFomo = cfg.venue === "fomo";
+  if (onFomo) {
+    risk = {
+      ...risk,
+      maxOpenPositions: Math.max(risk.maxOpenPositions, 5),
+      clipUsd: Math.min(risk.clipUsd, 60),
+    };
+  }
 
   // Risk management is mechanical and runs on every 60s tick, LLM or not.
   const exits = stopAndTrailExits(input, {
     trailPct: risk.trailPct,
     stopLossPct: risk.stopLossPct,
     breakevenAfterPct: 0.08,
-    maxHoldHours: 96,
+    maxHoldHours: onFomo ? 48 : 96,
   });
   if (exits.length > 0) {
     console.log(
@@ -512,7 +535,7 @@ async function runDecision(
     (debateBlock ? "Weigh the bull and bear cases from your desk, then decide. " : "") +
     "You only trade tokens from the provided market table. You respond with strict JSON: " +
     '{"reasoning":"one tight paragraph (under 100 words) explaining your decision","orders":[{"side":"buy"|"sell","symbol":"...","usd":number,"fraction":number,"reason":"...","thesis":"..."}]} ' +
-    `with at most ${MAX_ORDERS_PER_DECISION} orders. An empty orders array is a valid and often correct answer. ` +
+    `with at most ${maxOrdersFor(agent)} orders. An empty orders array is a valid answer when nothing clears the bar. ` +
     "For buys set usd (position size). For sells set fraction (0.1-1.0 of the position). " +
     `Each token shows a QUALITY score (0-100), a deterministic safety/liquidity/flow gate. You may ONLY open new positions in names with QUALITY >= ${MIN_QUALITY_SCORE}; lower-quality buys are auto-rejected, so don't waste an order on them. Prefer the highest-quality setups. ` +
     "Every reason must cite the concrete data that motivated it (quality, momentum, flow, turnover). Do not trade without an edge. " +
