@@ -23,8 +23,15 @@ const RHC_CHAIN_ID = 4663;
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const NATIVE_ETH = "0x0000000000000000000000000000000000000000";
 
-/** Reject buys routed through a pool too thin to absorb the clip. */
-const MAX_BUY_IMPACT_PCT = 8;
+/**
+ * Reject buys routed through a pool too thin to absorb the clip. Guarded on
+ * Relay's swapImpact (pure pool impact) — NOT totalImpact, which folds in
+ * ~fixed cross-chain fees (gas + relayer) that read as a huge percentage on
+ * small clips and were rejecting $25 buys into multi-million-dollar pools.
+ */
+const MAX_BUY_SWAP_IMPACT_PCT = 8;
+/** Catastrophic sanity cap on total value lost (fees + impact combined). */
+const MAX_BUY_TOTAL_IMPACT_PCT = 25;
 
 interface RelayInstructionKey {
   pubkey: string;
@@ -65,6 +72,7 @@ interface RelayQuote {
       currency?: { decimals?: number; symbol?: string };
     };
     totalImpact?: { percent?: string };
+    swapImpact?: { percent?: string };
   };
 }
 
@@ -193,9 +201,17 @@ export async function relayBuyRhcToken(input: {
     amount: String(Math.round(input.usd * 1e6)),
     tradeType: "EXACT_INPUT",
   });
-  const impact = Number(quote.details?.totalImpact?.percent ?? 0);
-  if (Number.isFinite(impact) && impact < -MAX_BUY_IMPACT_PCT) {
-    throw new Error(`relay impact ${impact}% exceeds ${MAX_BUY_IMPACT_PCT}% buy cap — pool too thin for this clip`);
+  const swapImpact = Number(quote.details?.swapImpact?.percent ?? 0);
+  if (Number.isFinite(swapImpact) && swapImpact < -MAX_BUY_SWAP_IMPACT_PCT) {
+    throw new Error(
+      `relay swap impact ${swapImpact}% exceeds ${MAX_BUY_SWAP_IMPACT_PCT}% buy cap — pool too thin for this clip`
+    );
+  }
+  const totalImpact = Number(quote.details?.totalImpact?.percent ?? 0);
+  if (Number.isFinite(totalImpact) && totalImpact < -MAX_BUY_TOTAL_IMPACT_PCT) {
+    throw new Error(
+      `relay total impact ${totalImpact}% (fees + impact) exceeds ${MAX_BUY_TOTAL_IMPACT_PCT}% sanity cap`
+    );
   }
   const txid = await executeSolanaStep(input.signer, quote);
   const result = quoteResult(quote, txid);

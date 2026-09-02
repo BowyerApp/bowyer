@@ -299,7 +299,9 @@ async function executeLiveFomoRhc(
       r = await relayBuyRhcToken({ signer: solSigner, recipient, usd, token: order.token });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes("impact") || usd / 2 < 10) throw err;
+      // Only retry on pool-thinness (swap impact); halving can't fix the
+      // fixed-fee component, and sub-$30 RHC clips bleed on fees anyway.
+      if (!msg.includes("swap impact") || usd / 2 < 30) throw err;
       usd = Math.floor(usd / 2);
       console.log(`[trading] fomo/rhc buy ${order.symbol}: impact too high, retrying at $${usd}`);
       r = await relayBuyRhcToken({ signer: solSigner, recipient, usd, token: order.token });

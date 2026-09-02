@@ -63,7 +63,7 @@ function fomoActivityNudge(agent: StrategyInput["agent"]): string {
     "ROBINHOOD CHAIN (RHC rows) IS A DESK PRIORITY: it's a young chain with a handful of names, so its stats run structurally lower — " +
     "judge an RHC setup against other RHC names and its own history, NOT against Solana's 20x-turnover monsters. " +
     "A clean RHC setup (positive momentum, real two-sided flow, deepening liquidity) deserves a starter clip even when Solana rows show bigger raw numbers. " +
-    "Keep RHC clips small ($15-30) — the pools are thinner and oversized clips get rejected for impact. " +
+    "Size RHC clips $50-100: cross-chain routing carries a roughly fixed ~$4 fee, so small RHC clips bleed on fees — take FEWER, LARGER RHC positions and only when the setup is genuinely strong. " +
     "Sitting completely flat should be RARE and only when the entire board is genuinely bad; an empty orders array " +
     "on a board with multiple QUALITY 80+ names means you are not doing your job. " +
     "Never invent an edge that isn't in the data — every order still needs concrete numbers behind it."
@@ -321,14 +321,17 @@ function validateOrders(
       const currentValue = pos ? pos.qty * t.priceUsd : 0;
       if (!pos && openCount >= risk.maxOpenPositions) continue;
       const room = risk.maxPositionUsd - currentValue;
-      let usd = Math.min(Number(p.usd) || risk.clipUsd, risk.clipUsd, room, cashLeft);
+      // RHC buys route cross-chain with a ~$4 fixed fee, so allow up to 2x the
+      // normal clip and refuse fee-bleeding dust clips on that chain.
+      const clipCap = isRhc(t) ? risk.clipUsd * 2 : risk.clipUsd;
+      let usd = Math.min(Number(p.usd) || risk.clipUsd, clipCap, room, cashLeft);
       usd = buySizeCap(usd, {
         equityUsd,
         stopLossPct: risk.stopLossPct,
         change24hPct: t.change24h ?? null,
         liquidityUsd: t.liquidityUsd ?? null,
       });
-      if (usd < 10) continue;
+      if (usd < (isRhc(t) ? 30 : 10)) continue;
       cashLeft -= usd;
       if (!pos) openCount += 1;
       const thesis = String(p.thesis ?? "").trim().slice(0, 600) || undefined;
