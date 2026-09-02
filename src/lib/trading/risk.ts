@@ -134,7 +134,14 @@ export interface Protections {
   summary: string;
 }
 
-const COOLDOWN_HOURS = 4;
+/** Full cooldown only after a stop-loss — that's the revenge-buy pattern. */
+const STOP_COOLDOWN_HOURS = 4;
+/**
+ * Ordinary exits (trims into strength, rotations) get a short anti-churn
+ * lock only: re-entering a name that keeps trending is a legitimate momentum
+ * pattern, and a long lock just makes a scalper sit out its best tape.
+ */
+const EXIT_COOLDOWN_MINUTES = 30;
 const STOPLOSS_GUARD_LIMIT = 3; // stop-losses in the lookback window …
 const STOPLOSS_GUARD_LOOKBACK_HOURS = 24; // … halts entries
 const DRAWDOWN_HALT = 0.2;
@@ -150,15 +157,31 @@ const DRAWDOWN_HALT = 0.2;
  */
 export function protections(agentId: string): Protections {
   const cooldownTokens = new Set<string>();
+  const cooldownSymbols: string[] = [];
   const recentSells = db()
     .prepare(
-      `SELECT token, MAX(at) AS last_sell FROM trading_fills
-       WHERE agent_id = ? AND side = 'sell'
-       GROUP BY token
-       HAVING last_sell >= datetime('now', ?)`
+      `SELECT token, symbol, MAX(at) AS last_sell,
+              MAX(CASE WHEN reason LIKE 'stop-loss%' THEN 1 ELSE 0 END) AS was_stop
+       FROM trading_fills
+       WHERE agent_id = ? AND side = 'sell' AND at >= datetime('now', ?)
+       GROUP BY token`
     )
-    .all(agentId, `-${COOLDOWN_HOURS} hours`) as { token: string }[];
-  for (const r of recentSells) cooldownTokens.add(r.token.toLowerCase());
+    .all(agentId, `-${STOP_COOLDOWN_HOURS} hours`) as {
+    token: string;
+    symbol: string;
+    last_sell: string;
+    was_stop: number;
+  }[];
+  for (const r of recentSells) {
+    const lockMs = r.was_stop
+      ? STOP_COOLDOWN_HOURS * 3_600_000
+      : EXIT_COOLDOWN_MINUTES * 60_000;
+    const soldAt = new Date(`${r.last_sell.replace(" ", "T")}Z`).getTime();
+    if (Number.isFinite(soldAt) && Date.now() - soldAt < lockMs) {
+      cooldownTokens.add(r.token.toLowerCase());
+      cooldownSymbols.push(`${r.symbol}${r.was_stop ? " (stopped)" : ""}`);
+    }
+  }
 
   let entriesHalted: string | null = null;
 
@@ -187,7 +210,9 @@ export function protections(agentId: string): Protections {
 
   const bits = [
     entriesHalted ? `ENTRIES HALTED (${entriesHalted})` : "",
-    cooldownTokens.size > 0 ? `${cooldownTokens.size} token(s) on post-exit cooldown` : "",
+    cooldownTokens.size > 0
+      ? `on post-exit cooldown, do NOT propose buying: ${cooldownSymbols.join(", ")}`
+      : "",
   ].filter(Boolean);
 
   return {
