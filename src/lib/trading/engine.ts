@@ -288,11 +288,22 @@ async function executeLiveFomoRhc(
   const { relayBuyRhcToken, relaySellRhcToken } = await import("@/lib/trading/relay-bridge");
 
   if (order.side === "buy") {
-    const usd = order.usd ?? 0;
+    let usd = order.usd ?? 0;
     if (usd < 10) return false;
     const { ensureAgentWallet } = await import("@/lib/trading/wallets");
     const recipient = ensureAgentWallet(agent.id, agent.owner);
-    const r = await relayBuyRhcToken({ signer: solSigner, recipient, usd, token: order.token });
+    // RHC pools are thin; rather than dropping a good signal because the clip
+    // is one size too big for the pool, halve it once and retry.
+    let r;
+    try {
+      r = await relayBuyRhcToken({ signer: solSigner, recipient, usd, token: order.token });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("impact") || usd / 2 < 10) throw err;
+      usd = Math.floor(usd / 2);
+      console.log(`[trading] fomo/rhc buy ${order.symbol}: impact too high, retrying at $${usd}`);
+      r = await relayBuyRhcToken({ signer: solSigner, recipient, usd, token: order.token });
+    }
     const dec = r.outDecimals ?? (await tokenDecimals(order.token));
     const qty = Number(r.outRaw) / 10 ** dec;
     if (qty <= 0) throw new Error("zero output");

@@ -60,6 +60,10 @@ function fomoActivityNudge(agent: StrategyInput["agent"]): string {
     "The board spans ALL of Solana plus Robinhood Chain (rows tagged RHC): fresh launches, animal coins, AI coins, stock-parody memes, whatever is trending. " +
     "Do NOT concentrate the book in a single narrative just because it dominates today's volume — if every position " +
     "you hold is the same meta, rotate at least one clip into the strongest setup from a different one. " +
+    "ROBINHOOD CHAIN (RHC rows) IS A DESK PRIORITY: it's a young chain with a handful of names, so its stats run structurally lower — " +
+    "judge an RHC setup against other RHC names and its own history, NOT against Solana's 20x-turnover monsters. " +
+    "A clean RHC setup (positive momentum, real two-sided flow, deepening liquidity) deserves a starter clip even when Solana rows show bigger raw numbers. " +
+    "Keep RHC clips small ($15-30) — the pools are thinner and oversized clips get rejected for impact. " +
     "Sitting completely flat should be RARE and only when the entire board is genuinely bad; an empty orders array " +
     "on a board with multiple QUALITY 80+ names means you are not doing your job. " +
     "Never invent an edge that isn't in the data — every order still needs concrete numbers behind it."
@@ -77,6 +81,24 @@ interface LlmOrder {
 }
 
 const MIN_QUALITY_SCORE = Number(process.env.TRADING_MIN_SCORE) || 45;
+/**
+ * Robinhood Chain is a young venue: holder counts aren't reported, absolute
+ * volume runs far below Solana, and there are only a handful of names — so
+ * RHC rows structurally score lower than they trade. A separate (lower) buy
+ * bar keeps the gate honest per chain instead of letting Solana's monsters
+ * price RHC out of the book entirely.
+ */
+const RHC_MIN_QUALITY_SCORE = Number(process.env.TRADING_MIN_SCORE_RHC) || 32;
+/** RHC pools are thin — always show the best few RHC rows so the model can judge them. */
+const RHC_UNIVERSE_SLOTS = 3;
+
+function isRhc(t: ScreenerToken): boolean {
+  return t.address.startsWith("0x");
+}
+
+function minQualityFor(t: ScreenerToken): number {
+  return isRhc(t) ? RHC_MIN_QUALITY_SCORE : MIN_QUALITY_SCORE;
+}
 
 function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
@@ -151,7 +173,7 @@ function marketTable(tokens: ScreenerToken[]): string {
   });
   return [
     `SYMBOL | ${mixedChains ? "CHAIN | " : ""}QUALITY(0-100) | PRICE | MOMENTUM | LIQUIDITY | 24H VOL | TURNOVER | BUY-FLOW | HOLDERS | AGE`,
-    `(QUALITY is a deterministic pre-trade gate; buys below Q${MIN_QUALITY_SCORE} are rejected by the risk system.)`,
+    `(QUALITY is a deterministic pre-trade gate; buys below Q${MIN_QUALITY_SCORE} are rejected by the risk system${mixedChains ? `, except RHC rows where the bar is Q${RHC_MIN_QUALITY_SCORE} — a young chain's stats run structurally lower` : ""}.)`,
     ...rows,
   ].join("\n");
 }
@@ -294,7 +316,7 @@ function validateOrders(
       // Deterministic quality gate: never open a NEW position in a name that
       // fails the safety/quality bar, regardless of what the model argued.
       const pos0 = held.get(symbol);
-      if (!pos0 && qualityScore(t) < MIN_QUALITY_SCORE) continue;
+      if (!pos0 && qualityScore(t) < minQualityFor(t)) continue;
       const pos = held.get(symbol);
       const currentValue = pos ? pos.qty * t.priceUsd : 0;
       if (!pos && openCount >= risk.maxOpenPositions) continue;
@@ -525,6 +547,17 @@ async function runDecision(
       .sort((a, b) => heat(b) - heat(a))
       .slice(0, 5);
     universe = [...core, ...movers];
+    // Guarantee Robinhood Chain representation: the desk is building a
+    // presence there, and RHC rows would otherwise lose every slot fight
+    // against Solana's volume monsters before the model even sees them.
+    const have = new Set(universe.map((t) => t.address));
+    const rhcRows = eligible
+      .filter((t) => isRhc(t) && !have.has(t.address) && qualityScore(t) >= RHC_MIN_QUALITY_SCORE)
+      .sort((a, b) => qualityScore(b) - qualityScore(a))
+      .slice(0, RHC_UNIVERSE_SLOTS);
+    if (rhcRows.length > 0) {
+      universe = [...universe.slice(0, UNIVERSE_SIZE - rhcRows.length), ...rhcRows];
+    }
   }
   if (universe.length === 0) return [];
 
@@ -613,7 +646,7 @@ async function runDecision(
     '{"reasoning":"one tight paragraph (under 100 words) explaining your decision","orders":[{"side":"buy"|"sell","symbol":"...","usd":number,"fraction":number,"reason":"...","thesis":"..."}]} ' +
     `with at most ${maxOrdersFor(agent)} orders. An empty orders array is a valid answer when nothing clears the bar. ` +
     "For buys set usd (position size). For sells set fraction (0.1-1.0 of the position). " +
-    `Each token shows a QUALITY score (0-100), a deterministic safety/liquidity/flow gate. You may ONLY open new positions in names with QUALITY >= ${MIN_QUALITY_SCORE}; lower-quality buys are auto-rejected, so don't waste an order on them. Prefer the highest-quality setups. ` +
+    `Each token shows a QUALITY score (0-100), a deterministic safety/liquidity/flow gate. You may ONLY open new positions in names with QUALITY >= ${MIN_QUALITY_SCORE} (RHC rows: >= ${RHC_MIN_QUALITY_SCORE}, their young-chain stats run lower); buys under the bar are auto-rejected, so don't waste an order on them. Prefer the highest-quality setups per chain. ` +
     "Every reason must cite the concrete data that motivated it (quality, momentum, flow, turnover). Do not trade without an edge. " +
     "If SOCIAL / NARRATIVE INTELLIGENCE is provided, weigh it heavily — memecoins run on attention. Rising chatter, fresh catalysts, or smart-money traders writing about a name strengthen a long; silence, fading mentions, or warnings (rug talk, dumping, exploit) are a reason to pass or exit even when the tape looks fine. Cite social signals in your reason/thesis when they influenced the call. " +
     "For EVERY order also write a 'thesis': 3-5 punchy sentences a trader would post publicly to justify the trade — " +
