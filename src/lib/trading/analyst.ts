@@ -340,6 +340,15 @@ function validateOrders(
   return orders;
 }
 
+class LlmHttpError extends Error {
+  constructor(
+    public status: number,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
 async function chatOnce(
   llm: { model: string; apiKey: string | undefined; baseUrl: string },
   system: string,
@@ -364,7 +373,7 @@ async function chatOnce(
     }),
     signal: AbortSignal.timeout(45_000),
   });
-  if (!res.ok) throw new Error(`analyst LLM ${res.status}`);
+  if (!res.ok) throw new LlmHttpError(res.status, `analyst LLM ${res.status}`);
   const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
   const content = json.choices?.[0]?.message?.content ?? "";
   // Reasoning models can burn the whole budget on hidden thinking and return an
@@ -375,9 +384,26 @@ async function chatOnce(
 }
 
 /**
+ * Rail cooldowns, keyed by provider host. A 402 means that account is out of
+ * credits — it will not heal within a cycle, so retrying it every call just
+ * adds latency and burns the surviving rail's budget on failed attempts.
+ * Park the broke host for a while and run degraded (skip the debate, keep
+ * deciding on whatever rail still answers).
+ */
+const railDownUntil = new Map<string, number>();
+function railParked(baseUrl: string): boolean {
+  return Date.now() < (railDownUntil.get(new URL(baseUrl).hostname) ?? 0);
+}
+export function llmDegraded(): boolean {
+  const premium = tradingRuntimeLlm();
+  return premium ? railParked(premium.baseUrl) : false;
+}
+
+/**
  * Primary LLM first; on any failure (the shared Groq free tier is 8k
- * tokens/min across the whole platform, so 429s are routine) the call
- * reroutes to the OpenRouter fallback so trading decisions never starve.
+ * tokens/min across the whole platform, so 429s are routine) the call walks
+ * the whole chain — premium (OpenRouter), explicit fallback (Groq), platform
+ * default — so trading decisions only starve when every rail is down.
  */
 async function llmChat(
   system: string,
@@ -387,15 +413,39 @@ async function llmChat(
   // The final trade decision runs on the best reasoning model (Claude Opus 5 by
   // default, via OpenRouter). Supporting calls (debate, thesis) stay on the fast
   // default to control cost. Any failure falls back down the chain.
-  const primary =
-    opts.tier === "reasoning" ? (tradingRuntimeLlm() ?? resolveRuntimeLlm(null)) : resolveRuntimeLlm(null);
-  try {
-    return await chatOnce(primary, system, user, opts);
-  } catch (err) {
-    const fb = fallbackRuntimeLlm() ?? (opts.tier === "reasoning" ? resolveRuntimeLlm(null) : null);
-    if (!fb) throw err;
-    return await chatOnce(fb, system, user, opts);
+  const chain: { model: string; apiKey: string | undefined; baseUrl: string }[] = [];
+  if (opts.tier === "reasoning") {
+    const premium = tradingRuntimeLlm();
+    if (premium) chain.push(premium);
   }
+  chain.push(resolveRuntimeLlm(null));
+  const fb = fallbackRuntimeLlm();
+  if (fb) chain.push(fb);
+
+  // Skip parked (out-of-credit) hosts unless nothing else remains.
+  const live = chain.filter((c) => !railParked(c.baseUrl));
+  const candidates = live.length > 0 ? live : chain.slice(-1);
+
+  const seen = new Set<string>();
+  let lastErr: unknown = new Error("no LLM configured");
+  for (const llm of candidates) {
+    const key = `${llm.baseUrl}|${llm.model}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const host = new URL(llm.baseUrl).hostname;
+    try {
+      return await chatOnce(llm, system, user, opts);
+    } catch (err) {
+      lastErr = err;
+      if (err instanceof LlmHttpError && err.status === 402) {
+        railDownUntil.set(host, Date.now() + 15 * 60_000);
+        console.warn(`[analyst] ${llm.model} @ ${host} out of credits (402) — host parked 15m, running degraded`);
+      } else {
+        console.warn(`[analyst] ${llm.model} @ ${host} failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+  }
+  throw lastErr;
 }
 
 export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
@@ -533,7 +583,9 @@ async function runDecision(
   // risk officer reads both cases and makes the final call.
   const debate: { role: string; view: string }[] = [];
   let debateBlock = "";
-  if (cfg.debate !== false) {
+  // Degraded mode (premium rail out of credits): every call rides the shared
+  // Groq budget, so spend it on the decision itself, not the two-sided debate.
+  if (cfg.debate !== false && !llmDegraded()) {
     try {
       const [bull, bear] = await Promise.all([
         llmChat(
@@ -574,8 +626,10 @@ async function runDecision(
     // Headroom for adaptive-reasoning models: hidden thinking + the JSON answer
     // (reasoning, orders, and a thesis per order) must ALL fit or the JSON
     // truncates mid-string and the entire decision — including exits — is lost.
+    // Degraded (non-reasoning) rails don't burn hidden thinking, and Groq
+    // admission-controls on max_tokens — ask for less to actually get served.
     json: true,
-    maxTokens: 4000,
+    maxTokens: llmDegraded() ? 1600 : 4000,
     tier: "reasoning",
   });
 
