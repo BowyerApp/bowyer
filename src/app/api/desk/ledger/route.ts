@@ -27,6 +27,9 @@ export const dynamic = "force-dynamic";
 function txUrl(venue: string, txHash: string, symbol: string): string | null {
   if (!txHash || txHash === "paper") return null;
   if (txHash.startsWith("hl:")) return `https://app.hyperliquid.xyz/trade/${symbol}`;
+  // fomo agents trade cross-chain: Solana fills carry base58 signatures,
+  // Relay/RHC fills carry 0x hashes — route by hash format, not venue.
+  if (txHash.startsWith("0x")) return `https://robinhoodchain.blockscout.com/tx/${txHash}`;
   if (venue === "fomo") return `https://solscan.io/tx/${txHash}`;
   return `https://robinhoodchain.blockscout.com/tx/${txHash}`;
 }
