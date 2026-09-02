@@ -44,6 +44,7 @@ export async function POST(req: Request) {
 
   if (body.action === "transfer-out") return transferOut(body);
   if (body.action === "bridge") return bridgeToRhc(body);
+  if (body.action === "sweep-usdg") return sweepUsdgHome(body);
 
   const owner = String(body.owner ?? "").toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(owner)) {
@@ -194,6 +195,47 @@ async function bridgeToRhc(body: { agentId?: string; usd?: unknown; receive?: un
     return NextResponse.json({ ok: true, recipient, receive, ...r });
   } catch (err) {
     return NextResponse.json({ ok: false, error: briefError(err), recipient }, { status: 500 });
+  }
+}
+
+/**
+ * Sweep any USDG sitting in a fomo agent's EVM wallet back to USDC on its
+ * Solana balance via Relay — trading cash lives in ONE place (the fomo
+ * balance); the EVM wallet keeps only custody of RHC positions and gas.
+ */
+async function sweepUsdgHome(body: { agentId?: string }) {
+  const { getAgent, briefError } = await import("@/lib/trading/store");
+  const agent = getAgent(String(body.agentId ?? ""));
+  if (!agent || agent.mode !== "live" || agent.config?.venue !== "fomo") {
+    return NextResponse.json({ ok: false, error: "Live fomo agent not found" }, { status: 404 });
+  }
+  const { loadAgentWallet, loadAgentSolanaWallet } = await import("@/lib/trading/wallets");
+  const { fomoSolanaAddress } = await import("@/lib/trading/fomo-solana");
+  const evm = loadAgentWallet(agent.id);
+  if (!evm) return NextResponse.json({ ok: false, error: "No EVM wallet" }, { status: 404 });
+  const solAddress = loadAgentSolanaWallet(agent.id)?.address ?? fomoSolanaAddress();
+  if (!solAddress) return NextResponse.json({ ok: false, error: "No Solana wallet" }, { status: 404 });
+
+  try {
+    const dex = await import("@/lib/trading/dex");
+    const bal = await dex.erc20Balance(dex.USDG, evm.address);
+    if (bal <= BigInt(0)) return NextResponse.json({ ok: false, error: "No USDG to sweep" }, { status: 400 });
+    const { relaySellRhcToken } = await import("@/lib/trading/relay-bridge");
+    const r = await relaySellRhcToken({
+      account: evm.account,
+      token: dex.USDG,
+      amountRaw: bal,
+      solRecipient: solAddress,
+    });
+    return NextResponse.json({
+      ok: true,
+      sweptUsd: Number(bal) / 10 ** dex.USDG_DEC,
+      receivedUsd: r.outUsd,
+      txid: r.txid,
+      to: solAddress,
+    });
+  } catch (err) {
+    return NextResponse.json({ ok: false, error: briefError(err) }, { status: 500 });
   }
 }
 

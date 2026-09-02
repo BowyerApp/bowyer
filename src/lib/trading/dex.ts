@@ -215,6 +215,17 @@ export async function swapV2Exact(input: {
   return { txHash: swapHash, amountIn, amountOut: balAfter - balBefore };
 }
 
+/** Send an externally-prepared transaction (e.g. a Relay step) and wait for the receipt. */
+export async function sendPreparedTx(
+  account: PrivateKeyAccount,
+  tx: { to: `0x${string}`; data: `0x${string}`; value?: bigint }
+): Promise<string> {
+  const wallet = walletClient(account);
+  const hash = await wallet.sendTransaction({ to: tx.to, data: tx.data, value: tx.value ?? BigInt(0) });
+  await publicClient().waitForTransactionReceipt({ hash, timeout: 60_000 });
+  return hash;
+}
+
 /** Wrap native ETH into WETH (canonical WETH9 deposit). */
 export async function wrapEth(account: PrivateKeyAccount, amount: bigint): Promise<string> {
   const wallet = walletClient(account);

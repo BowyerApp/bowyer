@@ -56,6 +56,7 @@ import {
   fomoSolanaAddress,
   fomoSolanaEnabled,
   fomoSolanaSwap,
+  loadFomoSolanaWallet,
   solScreener,
   solTokensByMint,
   splBalance,
@@ -201,6 +202,10 @@ async function executeLiveFomo(agent: TradingAgentRow, order: Order): Promise<bo
   if (!w) throw new Error("no Solana wallet for this agent — fomo trading disabled");
   const address = w.address;
 
+  // Robinhood Chain names route cross-chain via Relay — same single USDC
+  // balance, fomo-style. Solana mints stay on the gasless Jupiter path below.
+  if (order.token.startsWith("0x")) return executeLiveFomoRhc(agent, w, order);
+
   // The store lowercases token keys, but Solana mints are case-sensitive
   // base58 — recover the true case or the RPC/Jupiter reject the mint and
   // exits (stops, trails) can never fill.
@@ -262,14 +267,91 @@ async function executeLiveFomo(agent: TradingAgentRow, order: Order): Promise<bo
   return true;
 }
 
+/**
+ * fomo cross-chain leg: Robinhood Chain tokens bought and sold through Relay
+ * against the agent's single Solana USDC balance — exactly how the fomo app
+ * itself trades other chains. Tokens custody in the agent's EVM wallet (which
+ * holds a dust of ETH for the sell leg); cash never sits idle per chain.
+ */
+async function executeLiveFomoRhc(
+  agent: TradingAgentRow,
+  w: { address: string; signer?: { address: string; secretKey: Uint8Array } },
+  order: Order
+): Promise<boolean> {
+  const solSigner =
+    w.signer ??
+    (() => {
+      const env = loadFomoSolanaWallet();
+      return env ? { address: env.address, secretKey: env.secretKey } : null;
+    })();
+  if (!solSigner) throw new Error("no Solana signer for cross-chain execution");
+  const { relayBuyRhcToken, relaySellRhcToken } = await import("@/lib/trading/relay-bridge");
+
+  if (order.side === "buy") {
+    const usd = order.usd ?? 0;
+    if (usd < 10) return false;
+    const { ensureAgentWallet } = await import("@/lib/trading/wallets");
+    const recipient = ensureAgentWallet(agent.id, agent.owner);
+    const r = await relayBuyRhcToken({ signer: solSigner, recipient, usd, token: order.token });
+    const dec = r.outDecimals ?? (await tokenDecimals(order.token));
+    const qty = Number(r.outRaw) / 10 ** dec;
+    if (qty <= 0) throw new Error("zero output");
+    recordFill({
+      agentId: agent.id,
+      side: "buy",
+      token: order.token,
+      symbol: order.symbol,
+      qty,
+      priceUsd: usd / qty,
+      txHash: r.txid,
+      reason: order.reason,
+    });
+  } else {
+    const pos = positionsFor(agent.id).find((p) => p.token === order.token);
+    if (!pos) {
+      console.warn(`[trading] fomo/rhc sell ${order.symbol}: no stored position for ${order.token}`);
+      return false;
+    }
+    const evm = loadAgentWallet(agent.id);
+    if (!evm) throw new Error("no EVM wallet holds this RHC position");
+    const balance = await erc20Balance(order.token, evm.address);
+    const dec = await tokenDecimals(order.token);
+    const onChain = Number(balance) / 10 ** dec;
+    const fraction = Math.min(1, Math.max(0, order.fraction ?? 1));
+    const sellQty = Math.min(onChain, pos.qty * fraction);
+    if (sellQty <= 0 || sellQty * order.priceUsd < 1) {
+      reconcilePositionQty(agent.id, order.token, onChain);
+      console.warn(
+        `[trading] fomo/rhc sell ${order.symbol}: reconciled to on-chain ${onChain} (stored ${pos.qty}) — no order sent`
+      );
+      return false;
+    }
+    const amountRaw =
+      fraction >= 0.999 ? balance : (balance * BigInt(Math.round(fraction * 1e6))) / BigInt(1e6);
+    const r = await relaySellRhcToken({
+      account: evm.account,
+      token: order.token,
+      amountRaw,
+      solRecipient: w.address,
+    });
+    recordFill({
+      agentId: agent.id,
+      side: "sell",
+      token: order.token,
+      symbol: order.symbol,
+      qty: sellQty,
+      priceUsd: sellQty > 0 ? r.outUsd / sellQty : order.priceUsd,
+      txHash: r.txid,
+      reason: order.reason,
+    });
+  }
+  if (order.meta) setPositionMeta(agent.id, order.token, order.meta);
+  return true;
+}
+
 /** Returns false when the order was skipped without touching the chain. */
 async function executeLive(agent: TradingAgentRow, order: Order): Promise<boolean | void> {
-  // fomo agents run a dual book: Solana mints execute gaslessly via Jupiter,
-  // 0x tokens are Robinhood Chain names (fomo lists both) and fall through to
-  // the native Uniswap path below using the agent's EVM wallet.
-  if (agent.config.venue === "fomo" && !order.token.startsWith("0x")) {
-    return executeLiveFomo(agent, order);
-  }
+  if (agent.config.venue === "fomo") return executeLiveFomo(agent, order);
   if (isHlToken(order.token)) return executeLiveHl(agent, order);
 
   const wallet = loadAgentWallet(agent.id);
@@ -504,23 +586,9 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
       return;
     }
     cashUsd = await splBalance(w.address, USDC_MINT);
-    // Dual book: the RHC side trades from the agent's EVM wallet in USDG.
-    // Each chain's buys can only spend that chain's cash, so the model must
-    // see the split — a merged number would size orders the wallet can't fill.
-    let rhcCash = 0;
-    const evm = loadAgentWallet(agent.id);
-    if (evm) {
-      try {
-        const usdg = await erc20Balance(USDG, evm.address);
-        rhcCash = Number(usdg) / 10 ** USDG_DEC;
-      } catch {
-        /* RHC side unpriced this tick — Solana book still trades */
-      }
-    }
-    cashNote =
-      `$${cashUsd.toFixed(0)} USDC on Solana (spendable ONLY on SOL-chain tokens) · ` +
-      `$${rhcCash.toFixed(0)} USDG on Robinhood Chain (spendable ONLY on RHC-chain tokens)`;
-    cashUsd += rhcCash;
+    // One balance, every chain — RHC buys route cross-chain via Relay from
+    // the same USDC, exactly like trading in the fomo app.
+    cashNote = "single USDC balance funds ALL chains — RHC rows are bought with the same cash, routed cross-chain automatically";
     if (cashUsd < 5 && positions.length === 0) {
       noteTick(agent.id, "fund the fomo wallet: deposit USDC to the account, then the bot trades gaslessly");
       return;
