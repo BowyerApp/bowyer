@@ -308,30 +308,60 @@ function validateOrders(
     const symbol = String(p.symbol ?? "").toUpperCase();
     const reason = `analyst: ${String(p.reason ?? "no reason given").slice(0, 180)}`;
 
+    // Every dropped buy gets a log line: silent drops have repeatedly cost
+    // hours of debugging (daily cap, dust loop, and now this).
+    const drop = (why: string) => console.log(`[analyst] buy ${symbol} dropped: ${why}`);
+
     if (p.side === "buy") {
-      if (guard.entriesHalted) continue;
+      if (guard.entriesHalted) {
+        drop(`entries halted — ${guard.entriesHalted}`);
+        continue;
+      }
       const t = bySymbol.get(symbol);
-      if (!t || !t.priceUsd) continue;
-      if (guard.cooldownTokens.has(t.address.toLowerCase())) continue;
+      if (!t || !t.priceUsd) {
+        drop("not in screened universe (or no price)");
+        continue;
+      }
+      if (guard.cooldownTokens.has(t.address.toLowerCase())) {
+        drop("post-exit cooldown");
+        continue;
+      }
       // Deterministic quality gate: never open a NEW position in a name that
       // fails the safety/quality bar, regardless of what the model argued.
       const pos0 = held.get(symbol);
-      if (!pos0 && qualityScore(t) < minQualityFor(t)) continue;
+      if (!pos0 && qualityScore(t) < minQualityFor(t)) {
+        drop(`quality ${qualityScore(t)} below ${minQualityFor(t)} bar`);
+        continue;
+      }
       const pos = held.get(symbol);
       const currentValue = pos ? pos.qty * t.priceUsd : 0;
-      if (!pos && openCount >= risk.maxOpenPositions) continue;
+      if (!pos && openCount >= risk.maxOpenPositions) {
+        drop(`max open positions (${risk.maxOpenPositions}) reached`);
+        continue;
+      }
       const room = risk.maxPositionUsd - currentValue;
       // RHC buys route cross-chain with a ~$4 fixed fee, so allow up to 2x the
       // normal clip and refuse fee-bleeding dust clips on that chain.
-      const clipCap = isRhc(t) ? risk.clipUsd * 2 : risk.clipUsd;
+      const rhc = isRhc(t);
+      const clipCap = rhc ? risk.clipUsd * 2 : risk.clipUsd;
       let usd = Math.min(Number(p.usd) || risk.clipUsd, clipCap, room, cashLeft);
-      usd = buySizeCap(usd, {
-        equityUsd,
-        stopLossPct: risk.stopLossPct,
-        change24hPct: t.change24h ?? null,
-        liquidityUsd: t.liquidityUsd ?? null,
-      });
-      if (usd < (isRhc(t) ? 30 : 10)) continue;
+      usd = buySizeCap(
+        usd,
+        {
+          equityUsd,
+          stopLossPct: risk.stopLossPct,
+          change24hPct: t.change24h ?? null,
+          liquidityUsd: t.liquidityUsd ?? null,
+        },
+        // The volatility cap halves clips on hot movers, which on RHC would
+        // shrink them below fee viability — hold the $30 floor when the hard
+        // risk caps themselves allow it.
+        rhc ? 30 : 0
+      );
+      if (usd < (rhc ? 30 : 10)) {
+        drop(`sized to $${usd.toFixed(2)}, below the $${rhc ? 30 : 10} minimum (room $${room.toFixed(0)}, cash $${cashLeft.toFixed(0)})`);
+        continue;
+      }
       cashLeft -= usd;
       if (!pos) openCount += 1;
       const thesis = String(p.thesis ?? "").trim().slice(0, 600) || undefined;

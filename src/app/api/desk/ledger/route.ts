@@ -92,6 +92,7 @@ export async function GET(req: Request) {
         at: d.at,
         reasoning: d.reasoning,
         orders: d.orders,
+        contextNote: d.contextNote,
       })),
       staleness:
         lastTickAge === null

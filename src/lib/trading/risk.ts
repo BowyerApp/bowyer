@@ -210,7 +210,14 @@ export function protections(agentId: string): Protections {
  */
 export function buySizeCap(
   proposedUsd: number,
-  args: { equityUsd: number; stopLossPct: number; change24hPct: number | null; liquidityUsd: number | null }
+  args: { equityUsd: number; stopLossPct: number; change24hPct: number | null; liquidityUsd: number | null },
+  /**
+   * Soft floor: the volatility multiplier never shrinks the clip below this,
+   * though the hard caps (risk-per-trade, liquidity, proposal) still apply.
+   * Used for cross-chain clips whose ~fixed routing fee makes dust sizes
+   * uneconomical.
+   */
+  floorUsd = 0
 ): number {
   const riskPerTrade = 0.015 * args.equityUsd;
   const byStop = args.stopLossPct > 0 ? riskPerTrade / args.stopLossPct : proposedUsd;
@@ -220,5 +227,7 @@ export function buySizeCap(
 
   const byLiquidity = args.liquidityUsd ? args.liquidityUsd * 0.005 : Infinity;
 
-  return Math.min(proposedUsd * volMult, byStop, byLiquidity);
+  const capped = Math.min(proposedUsd * volMult, byStop, byLiquidity);
+  const floor = Math.min(floorUsd, proposedUsd, byStop, byLiquidity);
+  return Math.max(capped, floor);
 }
