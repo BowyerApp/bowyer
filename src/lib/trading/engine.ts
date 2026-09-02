@@ -327,6 +327,19 @@ async function executeLiveFomoRhc(
     }
     const evm = loadAgentWallet(agent.id);
     if (!evm) throw new Error("no EVM wallet holds this RHC position");
+    // An exit must NEVER fail for gas: the sell leg (approve + deposit) burns
+    // ETH on RHC, so refuel from the agent's own USDC balance when low.
+    const { nativeBalance } = await import("@/lib/trading/dex");
+    const gasWei = await nativeBalance(evm.address);
+    if (gasWei < BigInt(2e14) /* 0.0002 ETH */) {
+      console.log(`[trading] fomo/rhc ${order.symbol}: EVM gas low (${Number(gasWei) / 1e18} ETH), bridging $4 of ETH`);
+      const { bridgeSolanaUsdcToRhc } = await import("@/lib/trading/relay-bridge");
+      await bridgeSolanaUsdcToRhc({ signer: solSigner, recipient: evm.address, usd: 4, receive: "eth" });
+      const deadline = Date.now() + 90_000;
+      while (Date.now() < deadline && (await nativeBalance(evm.address)) < BigInt(2e14)) {
+        await new Promise((r) => setTimeout(r, 5_000));
+      }
+    }
     const balance = await erc20Balance(order.token, evm.address);
     const dec = await tokenDecimals(order.token);
     const onChain = Number(balance) / 10 ** dec;
