@@ -65,6 +65,9 @@ import {
 
 const MIN_GAS_WEI = BigInt(3e14); // 0.0003 ETH keeps ~15 swaps of headroom
 
+/** token+side keys parked after consecutive on-chain failures (gas protection). */
+const orderFailurePark = new Map<string, { fails: number; until: number }>();
+
 /**
  * Address key for position/price matching. EVM (0x…) and Hyperliquid (hl:…)
  * addresses are lowercased (screener already emits them lowercase); Solana
@@ -683,6 +686,12 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
   let executed = 0;
   let lastError: string | null = null;
   for (const order of orders) {
+    // An order that reverts on-chain will usually revert identically next
+    // tick too (broken pool, restricted token) — retrying every cycle just
+    // burns gas. After repeated failures, park that token+side for a while.
+    const parkKey = `${agent.id}:${order.token}:${order.side}`;
+    const parked = orderFailurePark.get(parkKey);
+    if (parked && parked.until > Date.now()) continue;
     try {
       if (agent.mode === "paper") {
         await executePaper(agent, order, tokens.find((t) => addrKey(t.address) === order.token));
@@ -693,9 +702,18 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
         const did = await executeLive(agent, order);
         if (did !== false) executed += 1;
       }
+      orderFailurePark.delete(parkKey);
     } catch (err) {
       lastError = briefError(err);
       console.error(`[trading] ${agent.strategy}/${agent.id.slice(0, 8)} order failed:`, lastError);
+      const fails = (parked?.fails ?? 0) + 1;
+      const until = fails >= 3 ? Date.now() + 30 * 60_000 : 0;
+      orderFailurePark.set(parkKey, { fails, until });
+      if (until > 0) {
+        console.warn(
+          `[trading] ${order.side} ${order.symbol} parked 30min after ${fails} consecutive failures (${lastError})`
+        );
+      }
     }
   }
 

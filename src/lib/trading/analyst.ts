@@ -323,7 +323,24 @@ function validateOrders(
   let hourlyBudget = Math.max(0, equityUsd * HOURLY_DEPLOY_FRAC - activity.totalUsd);
   const maxPositionUsd = Math.min(risk.maxPositionUsd, equityUsd * MAX_POSITION_EQUITY_FRAC);
 
-  for (const p of proposals.slice(0, maxOrdersFor(input.agent))) {
+  const capped = proposals.slice(0, maxOrdersFor(input.agent));
+
+  // Full exits in this same decision free their slots for this decision's
+  // buys — otherwise "rotate CATE into BEAVER" validates the buy against a
+  // book that still counts CATE and drops it, and the launch window is gone
+  // by the next cycle.
+  for (const p of capped) {
+    if (p.side !== "sell") continue;
+    const pos = held.get(String(p.symbol ?? "").toUpperCase());
+    if (!pos) continue;
+    const t = bySymbol.get(String(p.symbol ?? "").toUpperCase());
+    const price = t?.priceUsd ?? pos.avgCostUsd;
+    const fraction = Math.min(1, Math.max(0.1, Number(p.fraction) || 1));
+    const fullExit = fraction >= 0.999 || pos.qty * price * (1 - fraction) < 15;
+    if (fullExit && pos.qty * price >= 5) openCount = Math.max(0, openCount - 1);
+  }
+
+  for (const p of capped) {
     const symbol = String(p.symbol ?? "").toUpperCase();
     const reason = `analyst: ${String(p.reason ?? "no reason given").slice(0, 180)}`;
 
