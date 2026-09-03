@@ -236,7 +236,7 @@ export async function relaySellRhcToken(input: {
   solRecipient: string;
 }): Promise<RelayTradeResult> {
   if (input.amountRaw <= BigInt(0)) throw new Error("nothing to sell");
-  const quote = await relayQuote({
+  const quoteBody = {
     user: input.account.address,
     recipient: input.solRecipient,
     originChainId: RHC_CHAIN_ID,
@@ -249,12 +249,38 @@ export async function relaySellRhcToken(input: {
     // quote reverts every tick ("Return amount is not enough") and the stop
     // never fills. Getting OUT matters more than the last percent.
     slippageTolerance: "500", // 5% in bps
-  });
+  };
+  let quote = await relayQuote(quoteBody);
 
   const { sendPreparedTx } = await import("@/lib/trading/dex");
+
+  // The deposit calldata embeds a short-lived solver intent. If this quote
+  // needs an approve first, the intent is stale by the time the approve is
+  // mined and the deposit reverts (observed as "TF"/"Call failed"). Execute
+  // the approves, then RE-QUOTE for a fresh intent (the new quote will have
+  // no approve step since the allowance is now in place).
+  const isApprove = (id: string) => /approv|authoriz/i.test(id);
+  const hadApprove = (quote.steps ?? []).some((s) => isApprove(s.id));
+  if (hadApprove) {
+    for (const step of quote.steps ?? []) {
+      if (!isApprove(step.id)) continue;
+      for (const item of step.items ?? []) {
+        const d = item.data;
+        if (!d?.to || typeof d.data !== "string") continue;
+        await sendPreparedTx(input.account, {
+          to: d.to as `0x${string}`,
+          data: d.data as `0x${string}`,
+          value: d.value ? BigInt(d.value) : BigInt(0),
+        });
+      }
+    }
+    quote = await relayQuote(quoteBody);
+  }
+
   let lastHash = "";
   let checkEndpoint: string | null = null;
   for (const step of quote.steps ?? []) {
+    if (isApprove(step.id)) continue; // already handled (or newly redundant)
     for (const item of step.items ?? []) {
       const d = item.data;
       if (!d?.to || typeof d.data !== "string") continue;
