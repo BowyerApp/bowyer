@@ -520,6 +520,33 @@ export function buysToday(agentId: string): number {
 }
 
 /**
+ * Recent buy pressure, used to throttle deployment: total USD bought in the
+ * window plus the age of the most recent buy per token.
+ */
+export function recentBuyActivity(
+  agentId: string,
+  minutes: number
+): { totalUsd: number; lastBuyMsAgoByToken: Map<string, number> } {
+  ensureTables();
+  const rows = db()
+    .prepare(
+      `SELECT token, SUM(value_usd) AS usd,
+              (julianday('now') - julianday(MAX(at))) * 86400000 AS ms_ago
+       FROM trading_fills
+       WHERE agent_id = ? AND side = 'buy' AND at >= datetime('now', ?)
+       GROUP BY token`
+    )
+    .all(agentId, `-${minutes} minutes`) as { token: string; usd: number; ms_ago: number }[];
+  const lastBuyMsAgoByToken = new Map<string, number>();
+  let totalUsd = 0;
+  for (const r of rows) {
+    totalUsd += r.usd;
+    lastBuyMsAgoByToken.set(r.token.toLowerCase(), r.ms_ago);
+  }
+  return { totalUsd, lastBuyMsAgoByToken };
+}
+
+/**
  * Reconcile a stored position against the on-chain balance. Dust rows left
  * by decimal flooring (or tokens moved outside the engine) otherwise trigger
  * doomed sell orders forever.

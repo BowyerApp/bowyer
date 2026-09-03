@@ -18,7 +18,7 @@
 import { fallbackRuntimeLlm, resolveRuntimeLlm, tradingRuntimeLlm } from "@/lib/llm-config";
 import type { StrategyInput, Order } from "@/lib/trading/strategies";
 import { stopAndTrailExits, tradeable } from "@/lib/trading/strategies";
-import { memoriesFor, recordDecision } from "@/lib/trading/store";
+import { memoriesFor, recentBuyActivity, recordDecision } from "@/lib/trading/store";
 import { getThesisStyleExemplars } from "@/lib/trading/fomo-style";
 import { adaptiveRisk, buySizeCap, protections, type Protections, type RiskProfile } from "@/lib/trading/risk";
 import type { ScreenerToken } from "@/lib/market-data";
@@ -52,21 +52,20 @@ function fomoStyleBlock(agent: StrategyInput["agent"]): string {
 function fomoActivityNudge(agent: StrategyInput["agent"]): string {
   if (agent.config.venue !== "fomo") return "";
   return (
-    " THIS IS A HIGH-VELOCITY DESK building a public presence on fomo — activity IS the strategy, " +
-    "as long as every action has a cited edge. Each cycle, actively look for ALL of these: " +
-    "(1) a starter in the best fresh setup you don't hold; (2) an add to a winner that's confirming; " +
-    "(3) a trim into strength on anything up big; (4) a rotation out of your weakest/stalest holding into a stronger setup. " +
-    "Small clips, quick trims, fast rotation — many small well-reasoned trades beat a few big ones here. " +
-    "The board spans ALL of Solana plus Robinhood Chain (rows tagged RHC): fresh launches, animal coins, AI coins, stock-parody memes, whatever is trending. " +
-    "Do NOT concentrate the book in a single narrative just because it dominates today's volume — if every position " +
-    "you hold is the same meta, rotate at least one clip into the strongest setup from a different one. " +
-    "ROBINHOOD CHAIN (RHC rows) IS A DESK PRIORITY: it's a young chain with a handful of names, so its stats run structurally lower — " +
-    "judge an RHC setup against other RHC names and its own history, NOT against Solana's 20x-turnover monsters. " +
-    "A clean RHC setup (positive momentum, real two-sided flow, deepening liquidity) deserves a starter clip even when Solana rows show bigger raw numbers. " +
-    "Size RHC clips $50-100: cross-chain routing carries a roughly fixed ~$4 fee, so small RHC clips bleed on fees — take FEWER, LARGER RHC positions and only when the setup is genuinely strong. " +
-    "Sitting completely flat should be RARE and only when the entire board is genuinely bad; an empty orders array " +
-    "on a board with multiple QUALITY 80+ names means you are not doing your job. " +
-    "Never invent an edge that isn't in the data — every order still needs concrete numbers behind it."
+    " This desk builds a public presence on fomo through GOOD trades, not many trades — your realized flips " +
+    "are profitable, but chasing midnight pumps and re-clipping the same trending name every cycle is where the book bleeds. " +
+    "HARD RULES the risk system enforces (orders violating them are auto-rejected, so don't waste slots): " +
+    "you may NOT add to a position at or below your average cost — adds are pyramid-only into winners; " +
+    "one buy per token per 45 minutes; new-buy deployment is capped per hour, so pick the ONE best setup, not three; " +
+    "no entries into a name dumping on the hour, and no chasing something already up 150%+ once its momentum has flipped. " +
+    "A starter goes into a setup that is CONFIRMING (positive short-tape, real two-sided flow, fresh catalyst or social pull) — " +
+    "being high on today's trending list is where exit liquidity comes from, not an edge. " +
+    "Trims into strength and rotations out of stale holdings are always encouraged. " +
+    "The board spans ALL of Solana plus Robinhood Chain (rows tagged RHC), and diversity across narratives beats concentration. " +
+    "RHC remains a desk priority: judge RHC rows against their own chain's norms, and size RHC clips $50-100 — " +
+    "cross-chain routing carries a roughly fixed ~$4 fee, so take FEWER, LARGER RHC positions when the setup is genuinely strong. " +
+    "Passing on a mediocre board is a professional decision; an empty orders array with reasoning is a perfectly good answer. " +
+    "Never invent an edge that isn't in the data — every order needs concrete numbers behind it."
   );
 }
 
@@ -91,6 +90,12 @@ const MIN_QUALITY_SCORE = Number(process.env.TRADING_MIN_SCORE) || 45;
 const RHC_MIN_QUALITY_SCORE = Number(process.env.TRADING_MIN_SCORE_RHC) || 32;
 /** RHC pools are thin — always show the best few RHC rows so the model can judge them. */
 const RHC_UNIVERSE_SLOTS = 3;
+/** Max fraction of equity deployed into NEW buys per rolling hour. */
+const HOURLY_DEPLOY_FRAC = 0.15;
+/** Minimum minutes between buys of the same token. */
+const ADD_COOLDOWN_MIN = 45;
+/** No single position may exceed this fraction of equity, whatever the base config says. */
+const MAX_POSITION_EQUITY_FRAC = 0.15;
 
 function isRhc(t: ScreenerToken): boolean {
   return t.address.startsWith("0x");
@@ -308,6 +313,13 @@ function validateOrders(
       return sum + p.qty * (t?.priceUsd ?? p.avgCostUsd);
     }, 0);
 
+  // Deployment throttle: on 2026-09-03 the agent machine-gunned $570 into
+  // three midnight pump names in 34 minutes — a fresh "starter clip" on the
+  // same token every cycle. These are hard gates, not prompt suggestions.
+  const activity = recentBuyActivity(input.agent.id, 60);
+  let hourlyBudget = Math.max(0, equityUsd * HOURLY_DEPLOY_FRAC - activity.totalUsd);
+  const maxPositionUsd = Math.min(risk.maxPositionUsd, equityUsd * MAX_POSITION_EQUITY_FRAC);
+
   for (const p of proposals.slice(0, maxOrdersFor(input.agent))) {
     const symbol = String(p.symbol ?? "").toUpperCase();
     const reason = `analyst: ${String(p.reason ?? "no reason given").slice(0, 180)}`;
@@ -343,12 +355,37 @@ function validateOrders(
         drop(`max open positions (${risk.maxOpenPositions}) reached`);
         continue;
       }
-      const room = risk.maxPositionUsd - currentValue;
+      // NEVER average down: adds are pyramid-only, into positions that are
+      // already working. Doubling into a falling pump is how the book bled.
+      if (pos && t.priceUsd <= pos.avgCostUsd * 1.01) {
+        drop(`no adds at/below cost (price ${t.priceUsd} vs avg ${pos.avgCostUsd}) — pyramid winners only`);
+        continue;
+      }
+      // One buy per token per window — no re-clipping the same name every cycle.
+      const msAgo = activity.lastBuyMsAgoByToken.get(tokenKey(t.address));
+      if (msAgo !== undefined && msAgo < ADD_COOLDOWN_MIN * 60_000) {
+        drop(`bought ${(msAgo / 60_000).toFixed(0)}min ago — one buy per token per ${ADD_COOLDOWN_MIN}min`);
+        continue;
+      }
+      // Entry timing: don't catch falling knives, don't chase exhausted pumps.
+      if (!pos && (t.change1h ?? 0) < -5) {
+        drop(`1h ${t.change1h?.toFixed(1)}% — falling knife`);
+        continue;
+      }
+      if (!pos && (t.change24h ?? 0) > 150 && (t.change1h ?? 0) <= 0) {
+        drop(`+${t.change24h?.toFixed(0)}% in 24h with fading 1h — exhausted pump, too late`);
+        continue;
+      }
+      if (hourlyBudget < 10) {
+        drop(`hourly deployment budget spent ($${activity.totalUsd.toFixed(0)} bought in last 60min)`);
+        continue;
+      }
+      const room = maxPositionUsd - currentValue;
       // RHC buys route cross-chain with a ~$4 fixed fee, so allow up to 2x the
       // normal clip and refuse fee-bleeding dust clips on that chain.
       const rhc = isRhc(t);
       const clipCap = rhc ? risk.clipUsd * 2 : risk.clipUsd;
-      let usd = Math.min(Number(p.usd) || risk.clipUsd, clipCap, room, cashLeft);
+      let usd = Math.min(Number(p.usd) || risk.clipUsd, clipCap, room, cashLeft, hourlyBudget);
       usd = buySizeCap(
         usd,
         {
@@ -367,6 +404,7 @@ function validateOrders(
         continue;
       }
       cashLeft -= usd;
+      hourlyBudget -= usd;
       if (!pos) openCount += 1;
       const thesis = String(p.thesis ?? "").trim().slice(0, 600) || undefined;
       orders.push({
@@ -383,7 +421,10 @@ function validateOrders(
       if (!pos) continue;
       const t = bySymbol.get(symbol);
       const price = t?.priceUsd ?? pos.avgCostUsd;
-      const fraction = Math.min(1, Math.max(0.1, Number(p.fraction) || 1));
+      let fraction = Math.min(1, Math.max(0.1, Number(p.fraction) || 1));
+      // A trim that leaves dust is worse than a full exit: repeated half-trims
+      // cascaded STONK through 8 fee-paying sells ($17→$8→…→$1). Finish it.
+      if (pos.qty * price * (1 - fraction) < 15) fraction = 1;
       const thesis = String(p.thesis ?? "").trim().slice(0, 600) || undefined;
       orders.push({
         side: "sell",
