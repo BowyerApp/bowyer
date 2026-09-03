@@ -382,7 +382,9 @@ function validateOrders(
         continue;
       }
       // One buy per token per window — no re-clipping the same name every cycle.
-      const msAgo = activity.lastBuyMsAgoByToken.get(tokenKey(t.address));
+      // (Fills store tokens lowercased; tokenKey preserves base58 case, so
+      // lowercase explicitly or the throttle never matches Solana mints.)
+      const msAgo = activity.lastBuyMsAgoByToken.get(t.address.toLowerCase());
       if (msAgo !== undefined && msAgo < ADD_COOLDOWN_MIN * 60_000) {
         drop(`bought ${(msAgo / 60_000).toFixed(0)}min ago — one buy per token per ${ADD_COOLDOWN_MIN}min`);
         continue;
