@@ -64,6 +64,9 @@ function fomoActivityNudge(agent: StrategyInput["agent"]): string {
     "The board spans ALL of Solana plus Robinhood Chain (rows tagged RHC), and diversity across narratives beats concentration. " +
     "RHC remains a desk priority: judge RHC rows against their own chain's norms, and size RHC clips $50-100 — " +
     "cross-chain routing carries a roughly fixed ~$4 fee, so take FEWER, LARGER RHC positions when the setup is genuinely strong. " +
+    "CRITICAL RHC EXCEPTION: a brand-new RHC launch (age under a day) ripping its first hours on real liquidity ($40k+) with " +
+    "climbing short-tape is the young chain's PRIMARY opportunity, not a blowoff — the anti-chase rule is for old names rolling over. " +
+    "A starter clip with the stop doing its job is the correct play on a fresh RHC launch; do not dismiss it as 'parabolic'. " +
     "Passing on a mediocre board is a professional decision; an empty orders array with reasoning is a perfectly good answer. " +
     "Never invent an edge that isn't in the data — every order needs concrete numbers behind it."
   );
@@ -372,7 +375,10 @@ function validateOrders(
         drop(`1h ${t.change1h?.toFixed(1)}% — falling knife`);
         continue;
       }
-      if (!pos && (t.change24h ?? 0) > 150 && (t.change1h ?? 0) <= 0) {
+      // First-day launches are exempt: +300% in the first hours is how a
+      // launch looks, not how exhaustion looks. The stop handles the downside.
+      const isFreshLaunch = (t.ageMinutes ?? Infinity) < 1_440;
+      if (!pos && !isFreshLaunch && (t.change24h ?? 0) > 150 && (t.change1h ?? 0) <= 0) {
         drop(`+${t.change24h?.toFixed(0)}% in 24h with fading 1h — exhausted pump, too late`);
         continue;
       }
@@ -609,7 +615,12 @@ async function runDecision(
 
   // Rank by the deterministic quality score, not raw volume, so the model spends
   // its reasoning on the highest-quality names that clear the safety bar.
-  const eligible = tokens.filter((t) => tradeable(t, cfg));
+  // RHC pools run shallower than Solana's — a $20k pool there is a normal
+  // fresh launch, not a red flag — so the young chain gets a lower liquidity
+  // floor (the Q-score's own $15k rug floor still applies).
+  const eligible = tokens.filter((t) =>
+    tradeable(t, isRhc(t) ? { ...cfg, minLiquidityUsd: Math.min(cfg.minLiquidityUsd, 16_000) } : cfg)
+  );
   const byQuality = [...eligible].sort((a, b) => qualityScore(b) - qualityScore(a));
   let universe = byQuality.slice(0, UNIVERSE_SIZE);
   // On fomo, reserve slots for the hottest movers that still clear the buy

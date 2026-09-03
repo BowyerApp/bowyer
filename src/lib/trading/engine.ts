@@ -241,9 +241,9 @@ async function executeLiveFomo(agent: TradingAgentRow, order: Order): Promise<bo
     const sellQty = Math.min(onChain, pos.qty * fraction);
     if (sellQty <= 0 || sellQty * order.priceUsd < 1) {
       // Dust or already gone (decimal flooring residue, or tokens moved in
-      // the fomo app directly). Reconcile the store to the chain so this
-      // order stops re-firing every cycle.
-      reconcilePositionQty(agent.id, order.token, onChain);
+      // the fomo app directly). A sub-$1 stub can never be sold, so delete it
+      // outright — keeping it re-fires this doomed order every cycle.
+      reconcilePositionQty(agent.id, order.token, onChain * order.priceUsd < 1 ? 0 : onChain);
       console.warn(
         `[trading] fomo sell ${order.symbol}: reconciled to on-chain ${onChain} (stored ${pos.qty}, ~$${(sellQty * order.priceUsd).toFixed(2)}) — no order sent`
       );
@@ -346,7 +346,7 @@ async function executeLiveFomoRhc(
     const fraction = Math.min(1, Math.max(0, order.fraction ?? 1));
     const sellQty = Math.min(onChain, pos.qty * fraction);
     if (sellQty <= 0 || sellQty * order.priceUsd < 1) {
-      reconcilePositionQty(agent.id, order.token, onChain);
+      reconcilePositionQty(agent.id, order.token, onChain * order.priceUsd < 1 ? 0 : onChain);
       console.warn(
         `[trading] fomo/rhc sell ${order.symbol}: reconciled to on-chain ${onChain} (stored ${pos.qty}) — no order sent`
       );
