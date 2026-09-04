@@ -256,8 +256,23 @@ export async function GET(req: Request) {
   const positionsAgent = url.searchParams.get("positions");
   if (positionsAgent) {
     const { positionsFor, fillsFor } = await import("@/lib/trading/store");
+    const { loadAgentWallet, loadAgentSolanaWallet } = await import("@/lib/trading/wallets");
+    // Address only (never key material) — needed to audit RHC custody on-chain.
+    const evmAddress = loadAgentWallet(positionsAgent)?.address ?? null;
+    let evmGasEth: number | null = null;
+    if (evmAddress) {
+      try {
+        const dex = await import("@/lib/trading/dex");
+        evmGasEth = Number(await dex.nativeBalance(evmAddress)) / 1e18;
+      } catch {
+        /* observability only */
+      }
+    }
     return NextResponse.json({
       ok: true,
+      evmAddress,
+      evmGasEth,
+      solAddress: loadAgentSolanaWallet(positionsAgent)?.address ?? null,
       positions: positionsFor(positionsAgent),
       recentFills: fillsFor(positionsAgent, 15),
     });
