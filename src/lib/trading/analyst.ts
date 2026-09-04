@@ -713,6 +713,52 @@ async function runDecision(
   }
   lastBoardSig.set(agent.id, { sig: boardSig, at: Date.now() });
 
+  const positionLines =
+    positions.length === 0
+      ? "none"
+      : positions
+          .map((p) => {
+            const t = tokens.find((x) => x.address.toLowerCase() === p.token);
+            const px = t?.priceUsd ?? p.avgCostUsd;
+            const pnl = ((px - p.avgCostUsd) / p.avgCostUsd) * 100;
+            return `${p.symbol}: ${p.qty.toPrecision(4)} @ avg $${p.avgCostUsd.toPrecision(4)}, now $${px.toPrecision(4)} (${pnl >= 0 ? "+" : ""}${pnl.toFixed(1)}%)`;
+          })
+          .join("\n");
+
+  // Scout stage: at a 3-minute cadence the premium reasoning model costs
+  // ~$0.20/decision — $40+/day, which drained the OpenRouter account twice.
+  // A free fast-tier scout reads a compact tape-only summary (a full briefing
+  // makes small reasoning models think until max_tokens and return nothing)
+  // and only escalates when something is genuinely actionable. Running it
+  // BEFORE context/social fetches also skips those costs on quiet cycles.
+  // The premium model still sees the full book at least every 30 minutes,
+  // and mechanical exits never pass through here at all (they run first).
+  const sincePremium = Date.now() - (lastPremiumAt.get(agent.id) ?? 0);
+  if (!llmDegraded() && sincePremium < 30 * 60_000) {
+    const tape = [
+      `MARKET:\n${marketTable(universe)}`,
+      `OPEN POSITIONS:\n${positionLines}`,
+      `CASH: $${cashUsd.toFixed(0)} | max clip $${risk.clipUsd} | open ${positions.length}/${risk.maxOpenPositions}`,
+      `ACTIVE PROTECTIONS: ${guard.summary}`,
+    ].join("\n\n");
+    try {
+      const verdict = await llmChat(
+        'You are the SCOUT on a trading desk. The senior risk officer is expensive to wake up. Read the tape and answer strict JSON {"escalate":true|false,"why":"one line"}. Escalate ONLY if there is a genuinely actionable setup right now: a new entry with real momentum/flow/quality edge, or a held position that needs judgment (thesis broken, parabolic extension worth trimming, narrative shift). Routine drift, flat boards, and positions already protected by stops are NOT worth escalating.',
+        `${tape}\n\nJSON only.`,
+        { json: true, maxTokens: 400 }
+      );
+      const v = JSON.parse(verdict.slice(verdict.indexOf("{"), verdict.lastIndexOf("}") + 1));
+      if (v && v.escalate !== true) {
+        console.log(`[analyst] ${agent.id.slice(0, 8)}: scout passed (${String(v.why ?? "").slice(0, 120)})`);
+        return [];
+      }
+      console.log(`[analyst] ${agent.id.slice(0, 8)}: scout escalated (${String(v?.why ?? "").slice(0, 120)})`);
+    } catch {
+      /* scout is a cost gate, not a safety gate — on failure, escalate */
+    }
+  }
+  lastPremiumAt.set(agent.id, Date.now());
+
   const context = await fetchContext(input);
 
   // Memecoins trade on attention, so the numbers alone aren't the whole tape.
@@ -732,18 +778,6 @@ async function runDecision(
       /* social intel is an enhancement — decide on the tape alone if it fails */
     }
   }
-  const positionLines =
-    positions.length === 0
-      ? "none"
-      : positions
-          .map((p) => {
-            const t = tokens.find((x) => x.address.toLowerCase() === p.token);
-            const px = t?.priceUsd ?? p.avgCostUsd;
-            const pnl = ((px - p.avgCostUsd) / p.avgCostUsd) * 100;
-            return `${p.symbol}: ${p.qty.toPrecision(4)} @ avg $${p.avgCostUsd.toPrecision(4)}, now $${px.toPrecision(4)} (${pnl >= 0 ? "+" : ""}${pnl.toFixed(1)}%)`;
-          })
-          .join("\n");
-
   const lessons = memoriesFor(agent.id, 10);
   const lessonLines =
     lessons.length === 0 ? "" : lessons.map((m) => `- ${m.lesson}`).join("\n");
@@ -763,31 +797,6 @@ async function runDecision(
   ]
     .filter(Boolean)
     .join("\n\n");
-
-  // Scout stage: at a 3-minute cadence the premium reasoning model costs
-  // ~$0.20/decision — $40+/day, which drained the OpenRouter account twice.
-  // A free fast-tier scout reads the same briefing and only escalates when
-  // something is genuinely actionable. The premium model still sees the full
-  // book at least every 30 minutes, and mechanical exits never pass through
-  // here at all (they run before any LLM).
-  const sincePremium = Date.now() - (lastPremiumAt.get(agent.id) ?? 0);
-  if (!llmDegraded() && sincePremium < 30 * 60_000) {
-    try {
-      const verdict = await llmChat(
-        'You are the SCOUT on a trading desk. The senior risk officer is expensive to wake up. Read the briefing and answer strict JSON {"escalate":true|false,"why":"one line"}. Escalate ONLY if there is a genuinely actionable setup right now: a new entry with real momentum/flow/quality edge, or a held position that needs judgment (thesis broken, parabolic extension worth trimming, narrative shift). Routine drift, flat boards, and positions already protected by stops are NOT worth escalating.',
-        `${briefing}\n\nJSON only.`,
-        { json: true, maxTokens: 150 }
-      );
-      const v = JSON.parse(verdict.slice(verdict.indexOf("{"), verdict.lastIndexOf("}") + 1));
-      if (v && v.escalate !== true) {
-        console.log(`[analyst] ${agent.id.slice(0, 8)}: scout passed (${String(v.why ?? "").slice(0, 120)})`);
-        return [];
-      }
-    } catch {
-      /* scout is a cost gate, not a safety gate — on failure, escalate */
-    }
-  }
-  lastPremiumAt.set(agent.id, Date.now());
 
   // Debate mode (default on): bull and bear argue in parallel, the
   // risk officer reads both cases and makes the final call.
