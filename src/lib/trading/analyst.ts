@@ -497,7 +497,14 @@ async function chatOnce(
         { role: "user", content: user },
       ],
       temperature: 0.3,
-      max_tokens: opts.maxTokens ?? 500,
+      // Reasoning models (gpt-oss via OpenRouter) burn hidden thinking out of
+      // max_tokens BEFORE writing content — small budgets return an empty
+      // completion. Give fast calls a real floor and ask for minimal effort;
+      // providers that don't know the reasoning param ignore it.
+      max_tokens: Math.max(opts.maxTokens ?? 500, /gpt-oss|reasoning|thinking|r1/i.test(llm.model) ? 700 : 0),
+      ...(llm.baseUrl.includes("openrouter") && /gpt-oss/i.test(llm.model)
+        ? { reasoning: { effort: "low" } }
+        : {}),
       ...(opts.json ? { response_format: { type: "json_object" } } : {}),
     }),
     signal: AbortSignal.timeout(45_000),
