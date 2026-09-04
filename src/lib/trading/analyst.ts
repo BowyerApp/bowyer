@@ -36,6 +36,8 @@ function maxOrdersFor(agent: StrategyInput["agent"]): number {
 const lastDecisionAt = new Map<string, number>();
 /** Board signature per agent — unchanged board skips the (expensive) LLM call. */
 const lastBoardSig = new Map<string, { sig: string; at: number }>();
+/** Last time the premium risk officer actually ran — the scout can't defer it forever. */
+const lastPremiumAt = new Map<string, number>();
 
 /** For fomo agents, feed the model real community theses so ours match the culture. */
 function fomoStyleBlock(agent: StrategyInput["agent"]): string {
@@ -740,6 +742,31 @@ async function runDecision(
   ]
     .filter(Boolean)
     .join("\n\n");
+
+  // Scout stage: at a 3-minute cadence the premium reasoning model costs
+  // ~$0.20/decision — $40+/day, which drained the OpenRouter account twice.
+  // A free fast-tier scout reads the same briefing and only escalates when
+  // something is genuinely actionable. The premium model still sees the full
+  // book at least every 30 minutes, and mechanical exits never pass through
+  // here at all (they run before any LLM).
+  const sincePremium = Date.now() - (lastPremiumAt.get(agent.id) ?? 0);
+  if (!llmDegraded() && sincePremium < 30 * 60_000) {
+    try {
+      const verdict = await llmChat(
+        'You are the SCOUT on a trading desk. The senior risk officer is expensive to wake up. Read the briefing and answer strict JSON {"escalate":true|false,"why":"one line"}. Escalate ONLY if there is a genuinely actionable setup right now: a new entry with real momentum/flow/quality edge, or a held position that needs judgment (thesis broken, parabolic extension worth trimming, narrative shift). Routine drift, flat boards, and positions already protected by stops are NOT worth escalating.',
+        `${briefing}\n\nJSON only.`,
+        { json: true, maxTokens: 150 }
+      );
+      const v = JSON.parse(verdict.slice(verdict.indexOf("{"), verdict.lastIndexOf("}") + 1));
+      if (v && v.escalate !== true) {
+        console.log(`[analyst] ${agent.id.slice(0, 8)}: scout passed (${String(v.why ?? "").slice(0, 120)})`);
+        return [];
+      }
+    } catch {
+      /* scout is a cost gate, not a safety gate — on failure, escalate */
+    }
+  }
+  lastPremiumAt.set(agent.id, Date.now());
 
   // Debate mode (default on): bull and bear argue in parallel, the
   // risk officer reads both cases and makes the final call.
