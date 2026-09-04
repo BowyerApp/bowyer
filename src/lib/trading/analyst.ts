@@ -501,7 +501,7 @@ async function chatOnce(
       // max_tokens BEFORE writing content — small budgets return an empty
       // completion. Give fast calls a real floor and ask for minimal effort;
       // providers that don't know the reasoning param ignore it.
-      max_tokens: Math.max(opts.maxTokens ?? 500, /gpt-oss|reasoning|thinking|r1/i.test(llm.model) ? 700 : 0),
+      max_tokens: Math.max(opts.maxTokens ?? 500, /gpt-oss|reasoning|thinking|r1/i.test(llm.model) ? 1500 : 0),
       ...(llm.baseUrl.includes("openrouter") && /gpt-oss/i.test(llm.model)
         ? { reasoning: { effort: "low" } }
         : {}),
@@ -510,13 +510,27 @@ async function chatOnce(
     signal: AbortSignal.timeout(45_000),
   });
   if (!res.ok) throw new LlmHttpError(res.status, `analyst LLM ${res.status}`);
-  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-  const content = json.choices?.[0]?.message?.content ?? "";
-  // Reasoning models can burn the whole budget on hidden thinking and return an
-  // empty completion. Treat that as a failure so the fallback chain engages
-  // instead of silently handing an empty string to the decision parser.
-  if (!content.trim()) throw new Error("analyst LLM empty completion");
-  return content;
+  const json = (await res.json()) as {
+    choices?: { finish_reason?: string; message?: { content?: string; reasoning?: string } }[];
+  };
+  const choice = json.choices?.[0];
+  const content = choice?.message?.content ?? "";
+  if (content.trim()) return content;
+  // Reasoning models can burn the whole budget on hidden thinking and return
+  // an empty completion. Before failing over, salvage: truncated runs often
+  // write the final JSON inside the visible reasoning trace.
+  const reasoning = choice?.message?.reasoning ?? "";
+  if (opts.json && reasoning.includes("{")) {
+    const candidate = reasoning.slice(reasoning.indexOf("{"), reasoning.lastIndexOf("}") + 1);
+    try {
+      JSON.parse(candidate);
+      console.warn(`[analyst] ${llm.model}: salvaged JSON from reasoning trace (finish=${choice?.finish_reason})`);
+      return candidate;
+    } catch {
+      /* not valid JSON — fall through to failure */
+    }
+  }
+  throw new Error(`analyst LLM empty completion (finish=${choice?.finish_reason ?? "?"})`);
 }
 
 /**
