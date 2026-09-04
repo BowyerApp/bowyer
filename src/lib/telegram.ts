@@ -272,6 +272,21 @@ async function handleAgentChat(
   }
 }
 
+/** Plain operational alert to an agent owner's linked chat (e.g. LLM credits low). */
+export async function notifyOwnerAlert(owner: string, text: string): Promise<boolean> {
+  if (!telegramConfigured()) return false;
+  const link = db()
+    .prepare("SELECT chat_id FROM telegram_links WHERE wallet = ?")
+    .get(owner.toLowerCase()) as { chat_id: string } | undefined;
+  if (!link) return false;
+  try {
+    await sendMessage(link.chat_id, text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function sendMessage(chatId: string, text: string, replyMarkup?: InlineKeyboard): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
   if (!token) return;

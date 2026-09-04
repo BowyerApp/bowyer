@@ -910,11 +910,25 @@ async function flushThesesQuietly(): Promise<void> {
   }
 }
 
+/** Watch the OpenRouter balance and warn the owner before the desk goes dark. */
+async function watchCreditsQuietly(): Promise<void> {
+  try {
+    const { listActiveAgents } = await import("@/lib/trading/store");
+    const live = listActiveAgents().find((a) => a.mode === "live");
+    if (!live) return;
+    const { watchLlmCredits } = await import("@/lib/trading/llm-credits");
+    await watchLlmCredits(live.owner);
+  } catch {
+    /* monitoring must never block trading */
+  }
+}
+
 export function startTradingEngine(): void {
   if (engineHandle || process.env.TRADING_DISABLED === "1") return;
   engineHandle = setInterval(() => {
     tradingTick().catch((err) => console.error("[trading] tick crashed:", err));
     void flushThesesQuietly();
+    void watchCreditsQuietly();
   }, 60_000);
   setTimeout(() => {
     tradingTick().catch((err) => console.error("[trading] first tick crashed:", err));

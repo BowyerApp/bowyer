@@ -34,6 +34,8 @@ function maxOrdersFor(agent: StrategyInput["agent"]): number {
 }
 
 const lastDecisionAt = new Map<string, number>();
+/** Board signature per agent — unchanged board skips the (expensive) LLM call. */
+const lastBoardSig = new Map<string, { sig: string; at: number }>();
 
 /** For fomo agents, feed the model real community theses so ours match the culture. */
 function fomoStyleBlock(agent: StrategyInput["agent"]): string {
@@ -669,6 +671,25 @@ async function runDecision(
   }
   if (universe.length === 0) return [];
 
+  // Premium-call economizer: if nothing material moved since the last
+  // decision (same book, same cash, no top name off by 3%+), a fresh LLM
+  // call would reach the same conclusion at real cost — the cadence burn is
+  // what drains OpenRouter. Any 3% move, fill, or new name decides instantly.
+  const boardSig = [
+    positions.map((p) => `${p.token}:${p.qty.toPrecision(4)}`).sort().join(","),
+    Math.round(cashUsd / 25),
+    universe
+      .slice(0, 12)
+      .map((t) => `${t.symbol}:${Math.round(Math.log(Math.max(t.priceUsd ?? 1e-12, 1e-12)) / 0.03)}`)
+      .join(","),
+  ].join("|");
+  const prev = lastBoardSig.get(agent.id);
+  if (prev && prev.sig === boardSig && Date.now() - prev.at < 30 * 60_000) {
+    console.log(`[analyst] ${agent.id.slice(0, 8)}: board unchanged — skipping LLM this cycle`);
+    return [];
+  }
+  lastBoardSig.set(agent.id, { sig: boardSig, at: Date.now() });
+
   const context = await fetchContext(input);
 
   // Memecoins trade on attention, so the numbers alone aren't the whole tape.
@@ -770,7 +791,9 @@ async function runDecision(
     // Degraded (non-reasoning) rails don't burn hidden thinking, and Groq
     // admission-controls on max_tokens — ask for less to actually get served.
     json: true,
-    maxTokens: llmDegraded() ? 1600 : 4000,
+    // 2400 fits hidden thinking + the JSON comfortably while capping the
+    // worst-case output bill; degraded rails get less to pass Groq admission.
+    maxTokens: llmDegraded() ? 1600 : 2400,
     tier: "reasoning",
   });
 
