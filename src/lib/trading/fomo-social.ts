@@ -81,6 +81,10 @@ interface TraderPerformance {
   realizedRoi: number;
   winRate: number;
   roundTrips: number;
+  openPnlUsd: number;
+  openCostBasisUsd: number;
+  openRoi: number;
+  openPositions: number;
 }
 
 interface TraderOpenPerformance {
@@ -93,6 +97,7 @@ interface TraderOpenPerformance {
 interface FomoClosedTrade {
   trade?: {
     realizedPnlUsd?: number;
+    unrealizedPnlUsd?: number;
     totalCostBasis?: number;
     closedAt?: string;
     networkId?: number;
@@ -258,6 +263,10 @@ function performanceFromSwaps(swaps: FomoSwap[]): TraderPerformance {
     realizedRoi: realizedCostUsd > 0 ? realizedPnlUsd / realizedCostUsd : 0,
     winRate: roundTrips > 0 ? wins / roundTrips : 0,
     roundTrips,
+    openPnlUsd: 0,
+    openCostBasisUsd: 0,
+    openRoi: 0,
+    openPositions: 0,
   };
 }
 
@@ -268,7 +277,7 @@ async function traderPerformance(uuid: string): Promise<TraderPerformance> {
     // basis, including RHC. Prefer it over reconstructing from raw swaps.
     const trades = (await fomoApi(
       `/trades?userId=${encodeURIComponent(uuid)}&orderBy=closedAt`
-    )) as { closedTrades?: FomoClosedTrade[] };
+    )) as { activeTrades?: FomoClosedTrade[]; closedTrades?: FomoClosedTrade[] };
     const closed = (trades.closedTrades ?? [])
       .map((row) => row.trade)
       .filter(
@@ -277,15 +286,29 @@ async function traderPerformance(uuid: string): Promise<TraderPerformance> {
           Number.isFinite(Number(trade?.realizedPnlUsd)) &&
           Number(trade?.totalCostBasis) > 0
       );
-    if (closed.length > 0) {
+    const active = (trades.activeTrades ?? [])
+      .map((row) => row.trade)
+      .filter(
+        (trade): trade is NonNullable<FomoClosedTrade["trade"]> =>
+          Boolean(trade) &&
+          Number.isFinite(Number(trade?.unrealizedPnlUsd)) &&
+          Number(trade?.totalCostBasis) > 0
+      );
+    if (closed.length > 0 || active.length > 0) {
       const realizedPnlUsd = closed.reduce((sum, trade) => sum + Number(trade.realizedPnlUsd), 0);
       const realizedCostUsd = closed.reduce((sum, trade) => sum + Number(trade.totalCostBasis), 0);
       const wins = closed.filter((trade) => Number(trade.realizedPnlUsd) > 0).length;
+      const openPnlUsd = active.reduce((sum, trade) => sum + Number(trade.unrealizedPnlUsd), 0);
+      const openCostBasisUsd = active.reduce((sum, trade) => sum + Number(trade.totalCostBasis), 0);
       return {
         realizedPnlUsd,
         realizedRoi: realizedCostUsd > 0 ? realizedPnlUsd / realizedCostUsd : 0,
-        winRate: wins / closed.length,
+        winRate: closed.length > 0 ? wins / closed.length : 0,
         roundTrips: closed.length,
+        openPnlUsd,
+        openCostBasisUsd,
+        openRoi: openCostBasisUsd > 0 ? openPnlUsd / openCostBasisUsd : 0,
+        openPositions: active.length,
       };
     }
 
@@ -295,8 +318,27 @@ async function traderPerformance(uuid: string): Promise<TraderPerformance> {
       | { items?: FomoSwap[]; swaps?: FomoSwap[] };
     return performanceFromSwaps(Array.isArray(ro) ? ro : (ro.items ?? ro.swaps ?? []));
   } catch {
-    return { realizedPnlUsd: 0, realizedRoi: 0, winRate: 0, roundTrips: 0 };
+    return {
+      realizedPnlUsd: 0,
+      realizedRoi: 0,
+      winRate: 0,
+      roundTrips: 0,
+      openPnlUsd: 0,
+      openCostBasisUsd: 0,
+      openRoi: 0,
+      openPositions: 0,
+    };
   }
+}
+
+function completeOpenPerformance(perf?: TraderPerformance): TraderOpenPerformance | undefined {
+  if (!perf || perf.openPositions === 0) return undefined;
+  return {
+    openPnlUsd: perf.openPnlUsd,
+    openCostBasisUsd: perf.openCostBasisUsd,
+    openRoi: perf.openRoi,
+    openPositions: perf.openPositions,
+  };
 }
 
 function closedPerformanceScore(perf: TraderPerformance): number {
@@ -310,11 +352,13 @@ function closedPerformanceScore(perf: TraderPerformance): number {
 function openPerformanceScore(open: TraderOpenPerformance): number {
   if (open.openPositions === 0 || open.openCostBasisUsd <= 0) return 0;
   const roiScore = clamp01((open.openRoi + 0.05) / 1.05);
-  const pnlScore = clamp01(Math.log10(Math.max(1, open.openPnlUsd + 1)) / 5);
+  // Preserve separation above $100k instead of flattening every seven-figure
+  // open book to the same score. Eight log decades covers $1 through $100m.
+  const pnlScore = clamp01(Math.log10(Math.max(1, open.openPnlUsd + 1)) / 8);
   // One live winner is useful evidence, but several profitable open positions
   // deserve more confidence than one potentially temporary mark-to-market spike.
   const sample = 0.5 + 0.5 * Math.min(1, open.openPositions / 3);
-  return (roiScore * 0.7 + pnlScore * 0.3) * sample;
+  return (roiScore * 0.3 + pnlScore * 0.7) * sample;
 }
 
 function scoreTrader(
@@ -326,10 +370,10 @@ function scoreTrader(
   const hasClosed = Boolean(perf && perf.roundTrips >= 2);
   const hasOpen = Boolean(open && open.openPositions > 0 && open.openCostBasisUsd > 0);
   if (hasClosed && hasOpen) {
-    return closedPerformanceScore(perf!) * 0.6 + openPerformanceScore(open!) * 0.2 + activity * 0.2;
+    return openPerformanceScore(open!) * 0.7 + closedPerformanceScore(perf!) * 0.2 + activity * 0.1;
   }
   if (hasClosed) return closedPerformanceScore(perf!) * 0.75 + activity * 0.25;
-  if (hasOpen) return openPerformanceScore(open!) * 0.7 + activity * 0.3;
+  if (hasOpen) return openPerformanceScore(open!) * 0.8 + activity * 0.2;
   return activity * 0.3;
 }
 
@@ -459,6 +503,15 @@ async function profile(uuid: string): Promise<FomoProfile | null> {
   }
 }
 
+async function profileByHandle(handle: string): Promise<FomoProfile | null> {
+  try {
+    const { fomoApi } = await fomoLib();
+    return (await fomoApi(`/v2/users/userHandle/${encodeURIComponent(handle)}`)) as FomoProfile;
+  } catch {
+    return null;
+  }
+}
+
 async function ourFollowerIds(uid: string): Promise<string[]> {
   try {
     const { fomoApi } = await fomoLib();
@@ -505,6 +558,18 @@ export async function discoverAndFollow(maxFollow = 12): Promise<{
   // Solana/RHC tape, plus our followers and existing tracked set. This breaks
   // the old self-reinforcing loop where six follows were the entire pool.
   const candidateIds = new Set<string>();
+  // Keep known high-signal accounts in every evaluation even when none of
+  // their current positions overlap today's sampled token set. Operators can
+  // extend this list without code via FOMO_TRADER_SEEDS=handle1,handle2.
+  const seedHandles = [
+    "unipcs",
+    ...(process.env.FOMO_TRADER_SEEDS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+  ];
+  const seedProfiles = (await Promise.all(seedHandles.map(profileByHandle))).filter(
+    (p): p is FomoProfile => Boolean(p?.id)
+  );
+  const seedProfileHints = new Map(seedProfiles.map((p) => [p.id, p]));
+  for (const p of seedProfiles) candidateIds.add(p.id);
   const feedRefs = new Map<string, TokenFeedRef>();
   for (const token of [...(await ourTokens(uid)), ...(await discoveryTokens())]) {
     feedRefs.set(`${token.networkId}:${token.address}`, token);
@@ -514,7 +579,7 @@ export async function discoverAndFollow(maxFollow = 12): Promise<{
   const holderDiscovery = await topHolderDiscovery([...feedRefs.values()].slice(0, 32));
   const holderProfiles = holderDiscovery.profiles;
   const openById = holderDiscovery.openById;
-  const profileHints = new Map(holderProfiles.map((p) => [p.id, p]));
+  const profileHints = new Map([...seedProfileHints, ...holderProfiles.map((p) => [p.id, p] as const)]);
   for (const p of holderProfiles) candidateIds.add(p.id);
   for (const token of [...feedRefs.values()].slice(0, 32)) {
     for (const item of await thesisFeed(token)) {
@@ -542,7 +607,9 @@ export async function discoverAndFollow(maxFollow = 12): Promise<{
   // Pull swap history for the strongest active candidates and rank them on
   // realized results. API work stays bounded so the publish cron cannot time out.
   const performanceById = new Map<string, TraderPerformance>();
-  const performanceCandidates = [...profiles]
+  const seedIds = new Set(seedProfiles.map((p) => p.id));
+  const rankedCandidates = [...profiles]
+    .filter((p) => !seedIds.has(p.id))
     .sort(
       (a, b) =>
         openPerformanceScore(openById.get(b.id) ?? {
@@ -559,8 +626,13 @@ export async function discoverAndFollow(maxFollow = 12): Promise<{
           openPositions: 0,
         }) +
           activityScore(a))
-    )
-    .slice(0, 48);
+    );
+  // Configured high-signal accounts always receive a complete ledger read;
+  // discovery heuristics are only used to allocate the remaining API budget.
+  const performanceCandidates = [
+    ...profiles.filter((p) => seedIds.has(p.id)),
+    ...rankedCandidates,
+  ].slice(0, 48);
   for (let i = 0; i < performanceCandidates.length; i += 6) {
     const batch = performanceCandidates.slice(i, i + 6);
     const results = await Promise.all(batch.map((p) => traderPerformance(p.id)));
@@ -576,7 +648,10 @@ export async function discoverAndFollow(maxFollow = 12): Promise<{
   for (const p of profiles) {
     evaluated += 1;
     const perf = performanceById.get(p.id);
-    const open = openById.get(p.id);
+    // The user's full active-trade ledger is authoritative. Top-holder PnL is
+    // only a discovery-time fallback for candidates outside the bounded set
+    // whose complete ledger we fetched this run.
+    const open = completeOpenPerformance(perf) ?? openById.get(p.id);
     const score = scoreTrader(p, perf, open);
     scored.push({ p, score, perf, open });
     upsertTrackedTrader({
