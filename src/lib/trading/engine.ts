@@ -17,11 +17,13 @@ import {
   cashFor,
   fillsFor,
   fillsToday,
+  getAgent,
   listActiveAgents,
   noteTick,
   positionsFor,
   reconcilePositionQty,
   recordFill,
+  recordThesis,
   setCash,
   setPositionMeta,
   snapshotEquity,
@@ -482,6 +484,70 @@ async function executeLive(agent: TradingAgentRow, order: Order): Promise<boolea
     });
   }
   if (order.meta) setPositionMeta(agent.id, order.token, order.meta);
+}
+
+/**
+ * Explicit operator-directed Fomo buy. It still resolves the token from the
+ * live screener, checks cash/liquidity, executes through the normal wallet
+ * path, and records both fill and thesis so the autonomous desk can manage
+ * the resulting position afterward.
+ */
+export async function executeManualFomoBuy(input: {
+  agentId: string;
+  token: string;
+  usd: number;
+  reason: string;
+  thesis: string;
+}): Promise<{ txHash: string; symbol: string; qty: number; priceUsd: number; valueUsd: number }> {
+  const agent = getAgent(input.agentId);
+  if (!agent || agent.mode !== "live" || agent.config.venue !== "fomo") {
+    throw new Error("active live Fomo agent not found");
+  }
+  if (agent.status !== "active") throw new Error("agent is paused");
+  if (!Number.isFinite(input.usd) || input.usd < 10 || input.usd > 2_000) {
+    throw new Error("manual buy must be between $10 and $2,000");
+  }
+  const rows = await solScreener(100);
+  const token = rows.find((row) => canonicalMint(row.address) === canonicalMint(input.token));
+  if (!token || !token.priceUsd) throw new Error("token is not in the live Solana screener");
+  if ((token.liquidityUsd ?? 0) < 25_000) throw new Error("token liquidity is below $25,000");
+
+  const wallet = fomoWalletFor(agent);
+  if (!wallet) throw new Error("Fomo wallet unavailable");
+  const cash = await splBalance(wallet.address, USDC_MINT);
+  if (cash < input.usd) throw new Error(`insufficient USDC: $${cash.toFixed(2)} available`);
+
+  const before = fillsFor(agent.id, 1)[0]?.id;
+  const executed = await executeLiveFomo(agent, {
+    side: "buy",
+    token: token.address,
+    symbol: token.symbol,
+    usd: input.usd,
+    priceUsd: token.priceUsd,
+    reason: input.reason,
+  });
+  if (!executed) throw new Error("manual buy was not executed");
+  const fill = fillsFor(agent.id, 1)[0];
+  if (!fill || fill.id === before || !fill.txHash) throw new Error("fill was not recorded");
+
+  recordThesis({
+    agentId: agent.id,
+    token: fill.token,
+    symbol: fill.symbol,
+    side: "buy",
+    venue: "fomo",
+    thesis: input.thesis,
+    txHash: fill.txHash,
+    valueUsd: fill.valueUsd,
+    priceUsd: fill.priceUsd,
+  });
+  return {
+    txHash: fill.txHash,
+    symbol: fill.symbol,
+    qty: fill.qty,
+    priceUsd: fill.priceUsd,
+    valueUsd: fill.valueUsd,
+  };
 }
 
 /** Market-sell every open position (owner-triggered flatten). Returns fills executed. */

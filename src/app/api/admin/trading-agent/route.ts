@@ -29,6 +29,10 @@ export async function POST(req: Request) {
     action?: string;
     agentId?: string;
     to?: string;
+    token?: string;
+    usd?: unknown;
+    reason?: string;
+    thesis?: string;
     owner?: string;
     strategy?: string;
     mode?: string;
@@ -45,6 +49,7 @@ export async function POST(req: Request) {
   if (body.action === "transfer-out") return transferOut(body);
   if (body.action === "bridge") return bridgeToRhc(body);
   if (body.action === "sweep-usdg") return sweepUsdgHome(body);
+  if (body.action === "manual-buy") return manualFomoBuy(body);
 
   const owner = String(body.owner ?? "").toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(owner)) {
@@ -103,6 +108,38 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json({ ok: true, agentId: agent.id, owner, strategy, mode, venue: venue ?? "rhc", walletAddress });
+}
+
+/** Operator-directed buy requested explicitly by the agent owner. */
+async function manualFomoBuy(body: {
+  agentId?: string;
+  token?: string;
+  usd?: unknown;
+  reason?: string;
+  thesis?: string;
+}) {
+  const agentId = String(body.agentId ?? "");
+  const token = String(body.token ?? "");
+  const usd = Number(body.usd);
+  const reason = String(body.reason ?? "").trim().slice(0, 500);
+  const thesis = String(body.thesis ?? "").trim().slice(0, 1_200);
+  if (!agentId || !token) {
+    return NextResponse.json({ ok: false, error: "agentId and token are required" }, { status: 400 });
+  }
+  if (!Number.isFinite(usd) || usd < 10 || usd > 2_000) {
+    return NextResponse.json({ ok: false, error: "usd must be 10-2000" }, { status: 400 });
+  }
+  if (reason.length < 20 || thesis.length < 80) {
+    return NextResponse.json({ ok: false, error: "reason and substantive thesis are required" }, { status: 400 });
+  }
+  try {
+    const { executeManualFomoBuy } = await import("@/lib/trading/engine");
+    const fill = await executeManualFomoBuy({ agentId, token, usd, reason, thesis });
+    return NextResponse.json({ ok: true, fill, thesis });
+  } catch (err) {
+    const { briefError } = await import("@/lib/trading/store");
+    return NextResponse.json({ ok: false, error: briefError(err) }, { status: 500 });
+  }
 }
 
 /**
