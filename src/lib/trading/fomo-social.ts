@@ -563,6 +563,13 @@ export async function discoverAndFollow(maxFollow = 12): Promise<{
   // extend this list without code via FOMO_TRADER_SEEDS=handle1,handle2.
   const seedHandles = [
     "unipcs",
+    "Quanterty",
+    "AvgJoesCrypto",
+    "notanicecat69",
+    "soby0x",
+    "LP1111",
+    "m0f0",
+    "DumbCrayonEater",
     ...(process.env.FOMO_TRADER_SEEDS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
   ];
   const seedProfiles = (await Promise.all(seedHandles.map(profileByHandle))).filter(
