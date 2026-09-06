@@ -852,9 +852,17 @@ export async function tradingTick(): Promise<{ agents: number; errors: number }>
 
     // One shared Solana snapshot per tick, only when a fomo agent is active.
     let solTokens: ScreenerToken[] | null = null;
+    let fomoRhcTokens: ScreenerToken[] = [];
     if (agents.some((a) => a.config.venue === "fomo")) {
       try {
-        solTokens = await solScreener();
+        const { fomoRhcScreener } = await import("@/lib/trading/fomo-market");
+        [solTokens, fomoRhcTokens] = await Promise.all([
+          solScreener(),
+          fomoRhcScreener().catch((err) => {
+            console.error("[trading] fomo RHC screener failed:", (err as Error).message);
+            return [];
+          }),
+        ]);
       } catch (err) {
         console.error("[trading] solana screener failed:", (err as Error).message);
       }
@@ -888,8 +896,12 @@ export async function tradingTick(): Promise<{ agents: number; errors: number }>
       }
       try {
         // fomo sees everything it can execute: the Solana tape plus Robinhood
-        // Chain names (fomo lists both chains; execution routes per token).
-        const fomoUniverse = onFomo ? [...solTokens!, ...tokens] : null;
+        // Chain names. Keep richer chain-index rows on overlaps, then append
+        // every extra RHC token verified by Fomo so no executable play is
+        // absent merely because Blockscout/DexScreener did not rank it.
+        const chainAddresses = new Set(tokens.map((t) => addrKey(t.address)));
+        const fomoOnlyRhc = fomoRhcTokens.filter((t) => !chainAddresses.has(addrKey(t.address)));
+        const fomoUniverse = onFomo ? [...solTokens!, ...tokens, ...fomoOnlyRhc] : null;
         await tickAgent(agent, onHl ? hlTokens! : fomoUniverse ?? tokens);
       } catch (err) {
         errors += 1;

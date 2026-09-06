@@ -323,14 +323,10 @@ async function discoveryTokens(): Promise<TokenFeedRef[]> {
     /* RHC and own-trade feeds can still discover candidates */
   }
   try {
-    const { getMemeScreener } = await import("@/lib/market-data");
-    const rows = (await getMemeScreener()).tokens
-      .filter((t) => t.address.startsWith("0x") && t.priceUsd && (t.liquidityUsd ?? 0) >= 10_000)
-      .sort(
-        (a, b) =>
-          (b.change1h ?? 0) + (b.change5m ?? 0) * 2 - ((a.change1h ?? 0) + (a.change5m ?? 0) * 2)
-      )
-      .slice(0, 16);
+    const { fomoRhcScreener } = await import("@/lib/trading/fomo-market");
+    const rows = (await fomoRhcScreener())
+      .filter((t) => t.priceUsd && (t.liquidityUsd ?? 0) >= 10_000)
+      .slice(0, 20);
     for (const t of rows) {
       refs.set(`${RHC_NETWORK_ID}:${t.address.toLowerCase()}`, {
         address: t.address.toLowerCase(),
