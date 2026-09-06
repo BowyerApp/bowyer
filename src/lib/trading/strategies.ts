@@ -114,7 +114,16 @@ export function stopAndTrailExits(
       });
       continue;
     }
+    // Memecoins wick ±10% constantly on the way up — protective exits that
+    // key off small round-trips sell every winner right before the real move
+    // (the paperhand pattern: right entry, right thesis, shaken out by noise).
+    // Breakeven and trail get a short grace window after entry (hard stop is
+    // NEVER deferred), and the trail widens as the run extends.
+    const heldMinutes = heldHours * 60;
+    const protectiveActive = heldMinutes >= 20;
+    const highGain = (pos.highWaterUsd - pos.avgCostUsd) / pos.avgCostUsd;
     if (
+      protectiveActive &&
       opts.breakevenAfterPct !== undefined &&
       pos.highWaterUsd >= pos.avgCostUsd * (1 + opts.breakevenAfterPct) &&
       fromAvg <= 0
@@ -129,14 +138,21 @@ export function stopAndTrailExits(
       });
       continue;
     }
-    if (opts.trailPct !== undefined && fromHigh <= -opts.trailPct && fromAvg > 0) {
+    // Trail widens with the size of the run: a +10% trade keeps a tight leash,
+    // a +60% runner earns room to retrace a quarter of its gain without being
+    // cut. Capped so a parabola still gets locked in eventually.
+    const effTrailPct =
+      opts.trailPct !== undefined
+        ? Math.min(0.28, opts.trailPct + Math.max(0, highGain) * 0.25)
+        : undefined;
+    if (protectiveActive && effTrailPct !== undefined && fromHigh <= -effTrailPct && fromAvg > 0) {
       orders.push({
         side: "sell",
         token: pos.token,
         symbol: pos.symbol,
         fraction: 1,
         priceUsd: price,
-        reason: `trailing stop, +${(fromAvg * 100).toFixed(1)}% locked from high`,
+        reason: `trailing stop, +${(fromAvg * 100).toFixed(1)}% locked from high (trail ${(effTrailPct * 100).toFixed(0)}%)`,
       });
       continue;
     }

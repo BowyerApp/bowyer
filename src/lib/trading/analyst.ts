@@ -622,7 +622,10 @@ export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
   const exits = stopAndTrailExits(input, {
     trailPct: risk.trailPct,
     stopLossPct: risk.stopLossPct,
-    breakevenAfterPct: 0.08,
+    // +8% armed the breakeven stop on every ordinary wick and sold winners
+    // at flat right before their real move (ZCAT/STONK pattern). A breakeven
+    // guard should only arm once the trade has genuinely worked.
+    breakevenAfterPct: 0.25,
     maxHoldHours: onFomo ? 48 : 96,
   });
   if (exits.length > 0) {
@@ -834,6 +837,7 @@ async function runDecision(
     "For buys set usd (position size). For sells set fraction (0.1-1.0 of the position). " +
     `Each token shows a QUALITY score (0-100), a deterministic safety/liquidity/flow gate. You may ONLY open new positions in names with QUALITY >= ${MIN_QUALITY_SCORE} (RHC rows: >= ${RHC_MIN_QUALITY_SCORE}, their young-chain stats run lower); buys under the bar are auto-rejected, so don't waste an order on them. Prefer the highest-quality setups per chain. ` +
     "Every reason must cite the concrete data that motivated it (quality, momentum, flow, turnover). Do not trade without an edge. " +
+    "EXIT DISCIPLINE: selling a working position on an ordinary retrace is the most expensive mistake on this desk — recent winners were sold flat right before their real move. Mechanical stops and trails already protect every position; only order a sell when the thesis is actually broken (flow reversed, narrative died, structure failed) or the move is parabolic and exhausted. A red candle is not a broken thesis. " +
     "If SOCIAL / NARRATIVE INTELLIGENCE is provided, weigh it heavily — memecoins run on attention. Rising chatter, fresh catalysts, or smart-money traders writing about a name strengthen a long; silence, fading mentions, or warnings (rug talk, dumping, exploit) are a reason to pass or exit even when the tape looks fine. Cite social signals in your reason/thesis when they influenced the call. " +
     "For EVERY order also write a 'thesis': 3-5 punchy sentences a trader would post publicly to justify the trade — " +
     "the setup, the concrete edge/catalyst (cite the numbers: volume, flow, price action), the risk and what invalidates it, " +
