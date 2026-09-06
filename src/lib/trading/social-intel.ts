@@ -22,6 +22,7 @@ import { trackedTraders } from "@/lib/trading/store";
 
 const TAVILY_URL = "https://api.tavily.com/search";
 const SOLANA_NETWORK_ID = 1399811149;
+const RHC_NETWORK_ID = 4663;
 const CACHE_TTL_MS = 15 * 60 * 1000;
 
 const cache = new Map<string, { at: number; text: string }>();
@@ -34,7 +35,10 @@ interface TavilyResult {
 }
 
 /** Live web + X sentiment for a ticker via Tavily (fresh, cited). */
-async function xAndWebChatter(symbol: string): Promise<{ answer: string; hits: string[] }> {
+async function xAndWebChatter(
+  symbol: string,
+  networkId: number
+): Promise<{ answer: string; hits: string[] }> {
   const apiKey = process.env.TAVILY_API_KEY?.trim();
   if (!apiKey) return { answer: "", hits: [] };
   try {
@@ -43,7 +47,7 @@ async function xAndWebChatter(symbol: string): Promise<{ answer: string; hits: s
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         api_key: apiKey,
-        query: `$${symbol} Solana memecoin — what are traders saying on X/Twitter right now, sentiment, catalysts, warnings`,
+        query: `$${symbol} ${networkId === RHC_NETWORK_ID ? "Robinhood Chain" : "Solana"} memecoin — what are traders saying on X/Twitter right now, sentiment, catalysts, warnings`,
         search_depth: "basic",
         topic: "news",
         days: 3,
@@ -84,11 +88,12 @@ function itemText(i: ThesisFeedItem): string {
 /** On-platform trader talk: the fomo thesis feed for this exact token. */
 async function fomoTokenTalk(
   tokenAddress: string,
+  networkId: number,
   smartHandles: Set<string>
 ): Promise<{ count: number; recent: string[]; smartMoney: string[] }> {
   try {
     const { fomoApi } = await import("@/lib/trading/fomo-thesis");
-    const qs = new URLSearchParams({ tokenAddress, networkId: String(SOLANA_NETWORK_ID) });
+    const qs = new URLSearchParams({ tokenAddress, networkId: String(networkId) });
     const ro = (await fomoApi(`/feed/token/thesis?${qs.toString()}`)) as
       | { items?: ThesisFeedItem[] }
       | ThesisFeedItem[];
@@ -123,10 +128,11 @@ export async function socialIntel(symbol: string, tokenAddress: string): Promise
       .map((t) => (t.handle ?? "").toLowerCase())
       .filter(Boolean)
   );
+  const networkId = tokenAddress.startsWith("0x") ? RHC_NETWORK_ID : SOLANA_NETWORK_ID;
 
   const [web, fomo] = await Promise.all([
-    xAndWebChatter(symbol),
-    fomoTokenTalk(tokenAddress, smartHandles),
+    xAndWebChatter(symbol, networkId),
+    fomoTokenTalk(tokenAddress, networkId, smartHandles),
   ]);
 
   const lines: string[] = [];

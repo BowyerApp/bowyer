@@ -410,6 +410,29 @@ function rowFromPair(
 }
 
 /**
+ * Price specific RHC contracts even when they have fallen out of the capped
+ * chain screener. Stops and high-water marks must not go blind just because a
+ * held token is no longer in the top-volume set.
+ */
+export async function rhcTokensByAddress(
+  tokens: { address: string; symbol?: string }[]
+): Promise<ScreenerToken[]> {
+  const normalized = [...new Set(tokens.map((t) => t.address.toLowerCase()).filter((a) => a.startsWith("0x")))];
+  if (normalized.length === 0) return [];
+  const symbols = new Map(tokens.map((t) => [t.address.toLowerCase(), t.symbol ?? "?"]));
+  const pairs = await fetchDexPairsFor(normalized);
+  return normalized
+    .map((address) => {
+      const pair = pairs.get(address);
+      if (!pair) return null;
+      const row = rowFromPair(address, pair, false);
+      if (row.symbol === "?") row.symbol = symbols.get(address) ?? "?";
+      return row.priceUsd && row.priceUsd > 0 ? row : null;
+    })
+    .filter((row): row is ScreenerToken => row !== null);
+}
+
+/**
  * Company logo for a tokenized equity, keyed by its underlying ticker.
  * Robinhood tokens append a lowercase "x" (AAPLx, METAx) — strip it to reach
  * the real ticker. Parqet serves clean per-ticker logos; the UI falls back to
@@ -450,7 +473,7 @@ async function buildScreener(): Promise<ScreenerResult> {
   if (radar) {
     // On hot tape the chain does hundreds of launches an hour; keep the most
     // recent/scored slice so the established universe keeps its table slots.
-    for (const launch of (radar.launches ?? []).slice(0, 25)) {
+    for (const launch of (radar.launches ?? []).slice(0, 40)) {
       const token = launch.token?.toLowerCase();
       if (!token) continue;
       // A "fresh launch" of WETH/USDG etc. is either a scam impersonator or

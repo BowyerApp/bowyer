@@ -10,10 +10,10 @@
  *    best-written ones as few-shot style exemplars (cached in trading_kv). The
  *    analyst injects these so our theses read like the community's, not a bot's.
  *
- *  - discoverAndFollow(): gather trader ids from those same thesis feeds plus our
- *    own followers, pull each profile, score them on real activity (trades,
- *    volume, hold time, audience), follow the best, and persist the ranked list
- *    so we know who is worth tracking.
+ *  - discoverAndFollow(): gather traders from live Solana + RHC thesis feeds
+ *    and our social graph, reconstruct realized performance from swap history,
+ *    follow only accounts with proven positive expectancy, and persist the
+ *    ranked smart-money list used by the analyst.
  */
 
 import {
@@ -34,6 +34,13 @@ async function fomoLib() {
 }
 
 const SOLANA_NETWORK_ID = 1399811149;
+const RHC_NETWORK_ID = 4663;
+const SOLANA_USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+interface TokenFeedRef {
+  address: string;
+  networkId: number;
+}
 
 interface ThesisFeedItem {
   userId?: string;
@@ -62,6 +69,35 @@ interface FomoSwap {
   outTokenAddress?: string;
   inNetworkId?: number;
   outNetworkId?: number;
+  inHumanAmount?: number;
+  outHumanAmount?: number;
+  humanUsdAmountIn?: number;
+  humanUsdAmountOut?: number;
+  createdAt?: string;
+}
+
+interface TraderPerformance {
+  realizedPnlUsd: number;
+  realizedRoi: number;
+  winRate: number;
+  roundTrips: number;
+}
+
+interface FomoClosedTrade {
+  trade?: {
+    realizedPnlUsd?: number;
+    totalCostBasis?: number;
+    closedAt?: string;
+    networkId?: number;
+  };
+}
+
+interface FomoTopHolder {
+  user?: FomoProfile;
+}
+
+interface FomoTopHoldersResult {
+  topHolders?: FomoTopHolder[];
 }
 
 function commentText(item: ThesisFeedItem): string {
@@ -70,30 +106,35 @@ function commentText(item: ThesisFeedItem): string {
   return (typeof c === "string" ? c : c.comment ?? "").trim();
 }
 
-/** Tokens (Solana mints) we've actually traded — the feeds most relevant to us. */
-async function ourTokens(uid: string): Promise<string[]> {
+/** Tokens we've actually traded on Solana or RHC — the feeds most relevant to us. */
+async function ourTokens(uid: string): Promise<TokenFeedRef[]> {
   try {
     const { fomoApi } = await fomoLib();
     const ro = (await fomoApi(`/v2/users/${encodeURIComponent(uid)}/swaps`)) as
       | FomoSwap[]
       | { items?: FomoSwap[]; swaps?: FomoSwap[] };
     const swaps = Array.isArray(ro) ? ro : (ro.items ?? ro.swaps ?? []);
-    const mints = new Set<string>();
+    const tokens = new Map<string, TokenFeedRef>();
     for (const s of swaps) {
-      if (s.outNetworkId === SOLANA_NETWORK_ID && s.outTokenAddress && !s.outTokenAddress.startsWith("0x")) {
-        mints.add(s.outTokenAddress);
-      }
+      if (!s.outTokenAddress || s.outTokenAddress === SOLANA_USDC) continue;
+      const networkId = Number(s.outNetworkId);
+      if (networkId !== SOLANA_NETWORK_ID && networkId !== RHC_NETWORK_ID) continue;
+      const address = networkId === RHC_NETWORK_ID ? s.outTokenAddress.toLowerCase() : s.outTokenAddress;
+      tokens.set(`${networkId}:${address}`, { address, networkId });
     }
-    return [...mints];
+    return [...tokens.values()];
   } catch {
     return [];
   }
 }
 
-async function thesisFeed(tokenAddress: string): Promise<ThesisFeedItem[]> {
+async function thesisFeed(token: TokenFeedRef): Promise<ThesisFeedItem[]> {
   try {
     const { fomoApi } = await fomoLib();
-    const qs = new URLSearchParams({ tokenAddress, networkId: String(SOLANA_NETWORK_ID) });
+    const qs = new URLSearchParams({
+      tokenAddress: token.address,
+      networkId: String(token.networkId),
+    });
     const ro = (await fomoApi(`/feed/token/thesis?${qs.toString()}`)) as
       | { items?: ThesisFeedItem[] }
       | ThesisFeedItem[];
@@ -140,7 +181,11 @@ export async function studyTheses(maxExamples = 12): Promise<ThesisExemplar[]> {
 
 /* ---------------- discover + follow ---------------- */
 
-function scoreTrader(p: FomoProfile): number {
+function clamp01(n: number): number {
+  return Math.max(0, Math.min(1, n));
+}
+
+function activityScore(p: FomoProfile): number {
   const trades = Math.min(p.numTrades ?? 0, 250) / 250; // activity
   const volume = Math.min(p.totalVolume ?? 0, 100_000) / 100_000; // conviction/size
   const audience = Math.min(p.followers ?? 0, 500) / 500; // social proof
@@ -148,6 +193,184 @@ function scoreTrader(p: FomoProfile): number {
   const hold = p.averageHoldTimeSeconds ?? 0;
   const holdScore = hold >= 600 && hold <= 259_200 ? 1 : hold > 0 ? 0.4 : 0;
   return trades * 0.4 + volume * 0.3 + audience * 0.15 + holdScore * 0.15;
+}
+
+/**
+ * Reconstruct realized PnL from the latest fomo swaps. Fomo settles both
+ * Solana and RHC exits back into Solana USDC, so a weighted-average cost book
+ * gives us an honest profit signal instead of mistaking volume for skill.
+ */
+function performanceFromSwaps(swaps: FomoSwap[]): TraderPerformance {
+  const books = new Map<string, { qty: number; costUsd: number }>();
+  let realizedPnlUsd = 0;
+  let realizedCostUsd = 0;
+  let wins = 0;
+  let roundTrips = 0;
+  const ordered = [...swaps].sort(
+    (a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime()
+  );
+
+  for (const s of ordered) {
+    const inToken = String(s.inTokenAddress ?? "");
+    const outToken = String(s.outTokenAddress ?? "");
+    if (!inToken || !outToken) continue;
+    if (inToken === SOLANA_USDC && outToken !== SOLANA_USDC) {
+      const qty = Number(s.outHumanAmount ?? 0);
+      const costUsd = Number(s.inHumanAmount ?? s.humanUsdAmountIn ?? 0);
+      if (!(qty > 0 && costUsd > 0)) continue;
+      const key = outToken.toLowerCase();
+      const book = books.get(key) ?? { qty: 0, costUsd: 0 };
+      book.qty += qty;
+      book.costUsd += costUsd;
+      books.set(key, book);
+      continue;
+    }
+    if (outToken === SOLANA_USDC && inToken !== SOLANA_USDC) {
+      const soldQty = Number(s.inHumanAmount ?? 0);
+      const proceedsUsd = Number(s.outHumanAmount ?? s.humanUsdAmountOut ?? 0);
+      const book = books.get(inToken.toLowerCase());
+      if (!book || !(soldQty > 0 && proceedsUsd > 0) || book.qty <= 0) continue;
+      const matchedQty = Math.min(soldQty, book.qty);
+      const matchedCost = book.costUsd * (matchedQty / book.qty);
+      const matchedProceeds = proceedsUsd * (matchedQty / soldQty);
+      const pnl = matchedProceeds - matchedCost;
+      realizedPnlUsd += pnl;
+      realizedCostUsd += matchedCost;
+      roundTrips += 1;
+      if (pnl > 0) wins += 1;
+      book.qty -= matchedQty;
+      book.costUsd -= matchedCost;
+      if (book.qty <= 1e-12) books.delete(inToken.toLowerCase());
+    }
+  }
+
+  return {
+    realizedPnlUsd,
+    realizedRoi: realizedCostUsd > 0 ? realizedPnlUsd / realizedCostUsd : 0,
+    winRate: roundTrips > 0 ? wins / roundTrips : 0,
+    roundTrips,
+  };
+}
+
+async function traderPerformance(uuid: string): Promise<TraderPerformance> {
+  try {
+    const { fomoApi } = await fomoLib();
+    // This is fomo's own closed-trade ledger: exact realized PnL and cost
+    // basis, including RHC. Prefer it over reconstructing from raw swaps.
+    const trades = (await fomoApi(
+      `/trades?userId=${encodeURIComponent(uuid)}&orderBy=closedAt`
+    )) as { closedTrades?: FomoClosedTrade[] };
+    const closed = (trades.closedTrades ?? [])
+      .map((row) => row.trade)
+      .filter(
+        (trade): trade is NonNullable<FomoClosedTrade["trade"]> =>
+          Boolean(trade) &&
+          Number.isFinite(Number(trade?.realizedPnlUsd)) &&
+          Number(trade?.totalCostBasis) > 0
+      );
+    if (closed.length > 0) {
+      const realizedPnlUsd = closed.reduce((sum, trade) => sum + Number(trade.realizedPnlUsd), 0);
+      const realizedCostUsd = closed.reduce((sum, trade) => sum + Number(trade.totalCostBasis), 0);
+      const wins = closed.filter((trade) => Number(trade.realizedPnlUsd) > 0).length;
+      return {
+        realizedPnlUsd,
+        realizedRoi: realizedCostUsd > 0 ? realizedPnlUsd / realizedCostUsd : 0,
+        winRate: wins / closed.length,
+        roundTrips: closed.length,
+      };
+    }
+
+    // Fallback for profiles whose closed-trade endpoint is empty.
+    const ro = (await fomoApi(`/v2/users/${encodeURIComponent(uuid)}/swaps`)) as
+      | FomoSwap[]
+      | { items?: FomoSwap[]; swaps?: FomoSwap[] };
+    return performanceFromSwaps(Array.isArray(ro) ? ro : (ro.items ?? ro.swaps ?? []));
+  } catch {
+    return { realizedPnlUsd: 0, realizedRoi: 0, winRate: 0, roundTrips: 0 };
+  }
+}
+
+function scoreTrader(p: FomoProfile, perf?: TraderPerformance): number {
+  const activity = activityScore(p);
+  if (!perf || perf.roundTrips < 2) return activity * 0.3;
+  const sample = Math.min(1, perf.roundTrips / 10);
+  const roiScore = clamp01((perf.realizedRoi + 0.05) / 0.45);
+  const winScore = clamp01((perf.winRate - 0.35) / 0.4);
+  const pnlScore = clamp01(Math.log10(Math.max(1, perf.realizedPnlUsd + 1)) / 3);
+  const performance = (roiScore * 0.55 + winScore * 0.3 + pnlScore * 0.15) * sample;
+  return performance * 0.75 + activity * 0.25;
+}
+
+function performanceNote(p: FomoProfile, perf?: TraderPerformance): string | null {
+  const prefix = p.followsCurrentUser ? "follows us; " : "";
+  if (!perf || perf.roundTrips === 0) return prefix ? prefix.slice(0, -2) : null;
+  const pnl = `${perf.realizedPnlUsd >= 0 ? "+" : ""}$${perf.realizedPnlUsd.toFixed(0)}`;
+  return `${prefix}${perf.roundTrips} exits, ${(perf.winRate * 100).toFixed(0)}% wins, ${pnl}, ${(perf.realizedRoi * 100).toFixed(1)}% ROI`;
+}
+
+/** Broaden discovery beyond our own book: scan live trending feeds on both chains. */
+async function discoveryTokens(): Promise<TokenFeedRef[]> {
+  const refs = new Map<string, TokenFeedRef>();
+  try {
+    const { solScreener } = await import("@/lib/trading/fomo-solana");
+    for (const t of (await solScreener(12)).slice(0, 12)) {
+      refs.set(`${SOLANA_NETWORK_ID}:${t.address}`, {
+        address: t.address,
+        networkId: SOLANA_NETWORK_ID,
+      });
+    }
+  } catch {
+    /* RHC and own-trade feeds can still discover candidates */
+  }
+  try {
+    const { getMemeScreener } = await import("@/lib/market-data");
+    const rows = (await getMemeScreener()).tokens
+      .filter((t) => t.address.startsWith("0x") && t.priceUsd && (t.liquidityUsd ?? 0) >= 10_000)
+      .sort(
+        (a, b) =>
+          (b.change1h ?? 0) + (b.change5m ?? 0) * 2 - ((a.change1h ?? 0) + (a.change5m ?? 0) * 2)
+      )
+      .slice(0, 16);
+    for (const t of rows) {
+      refs.set(`${RHC_NETWORK_ID}:${t.address.toLowerCase()}`, {
+        address: t.address.toLowerCase(),
+        networkId: RHC_NETWORK_ID,
+      });
+    }
+  } catch {
+    /* Solana and own-trade feeds can still discover candidates */
+  }
+  return [...refs.values()];
+}
+
+/**
+ * Fomo exposes the actual top holders of a set of tokens, including the user
+ * attached to each profitable position. This is a much better discovery pool
+ * than follower count: it finds the people already winning in today's RHC and
+ * Solana tape, then traderPerformance() verifies their closed record.
+ */
+async function topHolderProfiles(tokens: TokenFeedRef[]): Promise<FomoProfile[]> {
+  const found = new Map<string, FomoProfile>();
+  const { fomoApi } = await fomoLib();
+  for (let i = 0; i < tokens.length; i += 8) {
+    const chunk = tokens.slice(i, i + 8).map((token) => ({
+      address: token.address,
+      networkId: token.networkId,
+    }));
+    try {
+      const query = encodeURIComponent(JSON.stringify(chunk));
+      const ro = (await fomoApi(`/hodlers/top?tokens=${query}`)) as FomoTopHoldersResult[];
+      for (const tokenResult of Array.isArray(ro) ? ro : []) {
+        for (const holder of tokenResult.topHolders ?? []) {
+          const user = holder.user;
+          if (user?.id && !user.isRestricted && !user.private) found.set(user.id, user);
+        }
+      }
+    } catch {
+      /* other token batches can still contribute candidates */
+    }
+  }
+  return [...found.values()];
 }
 
 /**
@@ -189,7 +412,7 @@ async function ourFollowerIds(uid: string): Promise<string[]> {
  * Discover traders from our thesis feeds + followers, score them, follow the
  * strongest, and persist the ranked watch list. Returns a short report.
  */
-export async function discoverAndFollow(maxFollow = 5): Promise<{
+export async function discoverAndFollow(maxFollow = 12): Promise<{
   enabled: boolean;
   evaluated: number;
   followed: number;
@@ -215,24 +438,60 @@ export async function discoverAndFollow(maxFollow = 5): Promise<{
     };
   }
 
-  // Candidate ids: thesis writers on tokens we trade + people who follow us.
+  // Candidate ids: writers and top holders on our trades AND today's live
+  // Solana/RHC tape, plus our followers and existing tracked set. This breaks
+  // the old self-reinforcing loop where six follows were the entire pool.
   const candidateIds = new Set<string>();
-  for (const token of (await ourTokens(uid)).slice(0, 10)) {
+  const feedRefs = new Map<string, TokenFeedRef>();
+  for (const token of [...(await ourTokens(uid)), ...(await discoveryTokens())]) {
+    feedRefs.set(`${token.networkId}:${token.address}`, token);
+  }
+  // Top holders go first so a noisy thesis feed cannot crowd proven on-chain
+  // participants out of the bounded evaluation set.
+  const holderProfiles = await topHolderProfiles([...feedRefs.values()].slice(0, 32));
+  const profileHints = new Map(holderProfiles.map((p) => [p.id, p]));
+  for (const p of holderProfiles) candidateIds.add(p.id);
+  for (const token of [...feedRefs.values()].slice(0, 32)) {
     for (const item of await thesisFeed(token)) {
       if (item.userId && item.userId !== uid) candidateIds.add(item.userId);
     }
-    if (candidateIds.size >= 60) break;
+    if (candidateIds.size >= 120) break;
   }
-  for (const id of await ourFollowerIds(uid)) candidateIds.add(id);
+  const followers = await ourFollowerIds(uid);
+  for (const id of [...followers, ...trackedTraders(100).map((t) => t.uuid)]) {
+    if (id !== uid) candidateIds.add(id);
+  }
 
   let evaluated = 0;
-  const scored: { p: FomoProfile; score: number }[] = [];
-  for (const id of candidateIds) {
-    const p = await profile(id);
-    if (!p || p.isRestricted || p.private) continue;
+  const profiles: FomoProfile[] = [];
+  const ids = [...candidateIds].slice(0, 120);
+  for (let i = 0; i < ids.length; i += 8) {
+    const batch = await Promise.all(
+      ids.slice(i, i + 8).map((id) => profileHints.get(id) ?? profile(id))
+    );
+    for (const p of batch) {
+      if (p && !p.isRestricted && !p.private) profiles.push(p);
+    }
+  }
+
+  // Pull swap history for the strongest active candidates and rank them on
+  // realized results. API work stays bounded so the publish cron cannot time out.
+  const performanceById = new Map<string, TraderPerformance>();
+  const performanceCandidates = [...profiles]
+    .sort((a, b) => activityScore(b) - activityScore(a))
+    .slice(0, 48);
+  for (let i = 0; i < performanceCandidates.length; i += 6) {
+    const batch = performanceCandidates.slice(i, i + 6);
+    const results = await Promise.all(batch.map((p) => traderPerformance(p.id)));
+    batch.forEach((p, index) => performanceById.set(p.id, results[index]));
+  }
+
+  const scored: { p: FomoProfile; score: number; perf?: TraderPerformance }[] = [];
+  for (const p of profiles) {
     evaluated += 1;
-    const score = scoreTrader(p);
-    scored.push({ p, score });
+    const perf = performanceById.get(p.id);
+    const score = scoreTrader(p, perf);
+    scored.push({ p, score, perf });
     upsertTrackedTrader({
       uuid: p.id,
       handle: p.userHandle ?? null,
@@ -243,15 +502,30 @@ export async function discoverAndFollow(maxFollow = 5): Promise<{
       avgHoldS: p.averageHoldTimeSeconds ?? 0,
       followers: p.followers ?? 0,
       followed: isTrackedFollowed(p.id),
-      note: p.followsCurrentUser ? "follows us" : null,
+      note: performanceNote(p, perf),
     });
   }
 
   scored.sort((a, b) => b.score - a.score);
   let followed = 0;
-  for (const { p, score } of scored) {
+  for (const { p, score, perf } of scored) {
     if (followed >= maxFollow) break;
-    if (score < 0.15) continue; // don't follow dead/empty accounts
+    // New follows must have enough closed trades to prove positive expectancy.
+    // Existing follows stay intact, but volume/follower count alone can no
+    // longer earn a "smart money" follow.
+    if (
+      !perf ||
+      perf.roundTrips < 5 ||
+      perf.realizedPnlUsd <= 0 ||
+      perf.realizedRoi < 0.05 ||
+      // Memecoin trend followers can be extremely profitable with a modest
+      // hit rate because winners dwarf losers. Accept that asymmetry only
+      // when the realized ROI is exceptional; otherwise demand consistency.
+      (perf.winRate < 0.4 && perf.realizedRoi < 0.25) ||
+      score < 0.35
+    ) {
+      continue;
+    }
     if (isTrackedFollowed(p.id)) continue;
     if (await follow(uid, p.id)) {
       followed += 1;
@@ -265,7 +539,7 @@ export async function discoverAndFollow(maxFollow = 5): Promise<{
         avgHoldS: p.averageHoldTimeSeconds ?? 0,
         followers: p.followers ?? 0,
         followed: true,
-        note: p.followsCurrentUser ? "follows us" : null,
+        note: performanceNote(p, perf),
       });
     }
   }

@@ -9,7 +9,7 @@
  * canonical WETH/USDG pool. Live requires TRADING_WALLET_SECRET and mainnet.
  */
 
-import { getMemeScreener, type ScreenerToken } from "@/lib/market-data";
+import { getMemeScreener, rhcTokensByAddress, type ScreenerToken } from "@/lib/market-data";
 import { ACTIVE_CHAIN } from "@/lib/chain";
 import {
   briefError,
@@ -587,10 +587,22 @@ async function tickAgent(agent: TradingAgentRow, tokens: ScreenerToken[]) {
   // invisible to stop-losses and shows as break-even to the analyst. Fetch
   // them individually so exits always work.
   if (agent.config.venue === "fomo") {
-    const missing = positions.filter((p) => !priceOf.get(p.token) && !p.token.startsWith("0x"));
+    const missing = positions.filter((p) => !priceOf.get(p.token));
     if (missing.length > 0) {
       try {
-        const extra = await solTokensByMint(missing.map((p) => ({ mint: p.token, symbol: p.symbol })));
+        const [solExtra, rhcExtra] = await Promise.all([
+          solTokensByMint(
+            missing
+              .filter((p) => !p.token.startsWith("0x"))
+              .map((p) => ({ mint: p.token, symbol: p.symbol }))
+          ),
+          rhcTokensByAddress(
+            missing
+              .filter((p) => p.token.startsWith("0x"))
+              .map((p) => ({ address: p.token, symbol: p.symbol }))
+          ),
+        ]);
+        const extra = [...solExtra, ...rhcExtra];
         if (extra.length > 0) {
           tokens = tokens.concat(extra);
           for (const t of extra) priceOf.set(addrKey(t.address), t.priceUsd ?? null);

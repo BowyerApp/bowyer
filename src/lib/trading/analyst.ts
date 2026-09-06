@@ -95,8 +95,8 @@ const MIN_QUALITY_SCORE = Number(process.env.TRADING_MIN_SCORE) || 45;
  * price RHC out of the book entirely.
  */
 const RHC_MIN_QUALITY_SCORE = Number(process.env.TRADING_MIN_SCORE_RHC) || 32;
-/** RHC pools are thin — always show the best few RHC rows so the model can judge them. */
-const RHC_UNIVERSE_SLOTS = 3;
+/** Reserve enough of the board for RHC that Solana volume cannot crowd it out. */
+const RHC_UNIVERSE_SLOTS = 5;
 /** Max fraction of equity deployed into NEW buys per rolling hour. */
 const HOURLY_DEPLOY_FRAC = 0.15;
 /** Minimum minutes between buys of the same token. */
@@ -679,7 +679,9 @@ async function runDecision(
     const chosen = new Set(core.map((t) => t.address));
     const heat = (t: ScreenerToken) => (t.change1h ?? 0) + (t.change5m ?? 0) * 2;
     const movers = eligible
-      .filter((t) => !chosen.has(t.address) && qualityScore(t) >= MIN_QUALITY_SCORE)
+      // RHC has its own calibrated quality floor. Using Solana's 45 here
+      // silently excluded every young-chain mover from the heat slots.
+      .filter((t) => !chosen.has(t.address) && qualityScore(t) >= minQualityFor(t))
       .sort((a, b) => heat(b) - heat(a))
       .slice(0, 5);
     universe = [...core, ...movers];

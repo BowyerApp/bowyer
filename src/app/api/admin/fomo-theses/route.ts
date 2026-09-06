@@ -35,7 +35,7 @@ export async function GET(req: Request) {
   }
   if (social === "discover") {
     const { discoverAndFollow } = await import("@/lib/trading/fomo-social");
-    const max = Math.min(Math.max(Number(url.searchParams.get("max") ?? 5), 1), 15);
+    const max = Math.min(Math.max(Number(url.searchParams.get("max") ?? 12), 1), 30);
     return NextResponse.json(await discoverAndFollow(max));
   }
   if (social === "tracked") {
