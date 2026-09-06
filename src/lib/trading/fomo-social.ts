@@ -83,6 +83,13 @@ interface TraderPerformance {
   roundTrips: number;
 }
 
+interface TraderOpenPerformance {
+  openPnlUsd: number;
+  openCostBasisUsd: number;
+  openRoi: number;
+  openPositions: number;
+}
+
 interface FomoClosedTrade {
   trade?: {
     realizedPnlUsd?: number;
@@ -94,6 +101,8 @@ interface FomoClosedTrade {
 
 interface FomoTopHolder {
   user?: FomoProfile;
+  unrealizedPnl?: number;
+  costBasis?: number;
 }
 
 interface FomoTopHoldersResult {
@@ -290,22 +299,61 @@ async function traderPerformance(uuid: string): Promise<TraderPerformance> {
   }
 }
 
-function scoreTrader(p: FomoProfile, perf?: TraderPerformance): number {
-  const activity = activityScore(p);
-  if (!perf || perf.roundTrips < 2) return activity * 0.3;
+function closedPerformanceScore(perf: TraderPerformance): number {
   const sample = Math.min(1, perf.roundTrips / 10);
   const roiScore = clamp01((perf.realizedRoi + 0.05) / 0.45);
   const winScore = clamp01((perf.winRate - 0.35) / 0.4);
   const pnlScore = clamp01(Math.log10(Math.max(1, perf.realizedPnlUsd + 1)) / 3);
-  const performance = (roiScore * 0.55 + winScore * 0.3 + pnlScore * 0.15) * sample;
-  return performance * 0.75 + activity * 0.25;
+  return (roiScore * 0.55 + winScore * 0.3 + pnlScore * 0.15) * sample;
 }
 
-function performanceNote(p: FomoProfile, perf?: TraderPerformance): string | null {
+function openPerformanceScore(open: TraderOpenPerformance): number {
+  if (open.openPositions === 0 || open.openCostBasisUsd <= 0) return 0;
+  const roiScore = clamp01((open.openRoi + 0.05) / 1.05);
+  const pnlScore = clamp01(Math.log10(Math.max(1, open.openPnlUsd + 1)) / 5);
+  // One live winner is useful evidence, but several profitable open positions
+  // deserve more confidence than one potentially temporary mark-to-market spike.
+  const sample = 0.5 + 0.5 * Math.min(1, open.openPositions / 3);
+  return (roiScore * 0.7 + pnlScore * 0.3) * sample;
+}
+
+function scoreTrader(
+  p: FomoProfile,
+  perf?: TraderPerformance,
+  open?: TraderOpenPerformance
+): number {
+  const activity = activityScore(p);
+  const hasClosed = Boolean(perf && perf.roundTrips >= 2);
+  const hasOpen = Boolean(open && open.openPositions > 0 && open.openCostBasisUsd > 0);
+  if (hasClosed && hasOpen) {
+    return closedPerformanceScore(perf!) * 0.6 + openPerformanceScore(open!) * 0.2 + activity * 0.2;
+  }
+  if (hasClosed) return closedPerformanceScore(perf!) * 0.75 + activity * 0.25;
+  if (hasOpen) return openPerformanceScore(open!) * 0.7 + activity * 0.3;
+  return activity * 0.3;
+}
+
+function performanceNote(
+  p: FomoProfile,
+  perf?: TraderPerformance,
+  open?: TraderOpenPerformance
+): string | null {
   const prefix = p.followsCurrentUser ? "follows us; " : "";
-  if (!perf || perf.roundTrips === 0) return prefix ? prefix.slice(0, -2) : null;
-  const pnl = `${perf.realizedPnlUsd >= 0 ? "+" : ""}$${perf.realizedPnlUsd.toFixed(0)}`;
-  return `${prefix}${perf.roundTrips} exits, ${(perf.winRate * 100).toFixed(0)}% wins, ${pnl}, ${(perf.realizedRoi * 100).toFixed(1)}% ROI`;
+  const parts: string[] = [];
+  if (perf && perf.roundTrips > 0) {
+    const pnl = `${perf.realizedPnlUsd >= 0 ? "+" : ""}$${perf.realizedPnlUsd.toFixed(0)}`;
+    parts.push(
+      `${perf.roundTrips} exits, ${(perf.winRate * 100).toFixed(0)}% wins, ${pnl}, ${(perf.realizedRoi * 100).toFixed(1)}% realized ROI`
+    );
+  }
+  if (open && open.openPositions > 0) {
+    const pnl = `${open.openPnlUsd >= 0 ? "+" : ""}$${open.openPnlUsd.toFixed(0)}`;
+    parts.push(
+      `${open.openPositions} open, ${pnl} unrealized, ${(open.openRoi * 100).toFixed(1)}% open ROI`
+    );
+  }
+  if (parts.length === 0) return prefix ? prefix.slice(0, -2) : null;
+  return `${prefix}${parts.join("; ")}`;
 }
 
 /** Broaden discovery beyond our own book: scan live trending feeds on both chains. */
@@ -345,8 +393,12 @@ async function discoveryTokens(): Promise<TokenFeedRef[]> {
  * than follower count: it finds the people already winning in today's RHC and
  * Solana tape, then traderPerformance() verifies their closed record.
  */
-async function topHolderProfiles(tokens: TokenFeedRef[]): Promise<FomoProfile[]> {
+async function topHolderDiscovery(tokens: TokenFeedRef[]): Promise<{
+  profiles: FomoProfile[];
+  openById: Map<string, TraderOpenPerformance>;
+}> {
   const found = new Map<string, FomoProfile>();
+  const openById = new Map<string, TraderOpenPerformance>();
   const { fomoApi } = await fomoLib();
   for (let i = 0; i < tokens.length; i += 8) {
     const chunk = tokens.slice(i, i + 8).map((token) => ({
@@ -359,14 +411,29 @@ async function topHolderProfiles(tokens: TokenFeedRef[]): Promise<FomoProfile[]>
       for (const tokenResult of Array.isArray(ro) ? ro : []) {
         for (const holder of tokenResult.topHolders ?? []) {
           const user = holder.user;
-          if (user?.id && !user.isRestricted && !user.private) found.set(user.id, user);
+          if (!user?.id || user.isRestricted || user.private) continue;
+          found.set(user.id, user);
+          const pnl = Number(holder.unrealizedPnl ?? 0);
+          const cost = Number(holder.costBasis ?? 0);
+          if (!Number.isFinite(pnl) || !Number.isFinite(cost) || cost <= 0) continue;
+          const current = openById.get(user.id) ?? {
+            openPnlUsd: 0,
+            openCostBasisUsd: 0,
+            openRoi: 0,
+            openPositions: 0,
+          };
+          current.openPnlUsd += pnl;
+          current.openCostBasisUsd += cost;
+          current.openPositions += 1;
+          current.openRoi = current.openPnlUsd / current.openCostBasisUsd;
+          openById.set(user.id, current);
         }
       }
     } catch {
       /* other token batches can still contribute candidates */
     }
   }
-  return [...found.values()];
+  return { profiles: [...found.values()], openById };
 }
 
 /**
@@ -444,7 +511,9 @@ export async function discoverAndFollow(maxFollow = 12): Promise<{
   }
   // Top holders go first so a noisy thesis feed cannot crowd proven on-chain
   // participants out of the bounded evaluation set.
-  const holderProfiles = await topHolderProfiles([...feedRefs.values()].slice(0, 32));
+  const holderDiscovery = await topHolderDiscovery([...feedRefs.values()].slice(0, 32));
+  const holderProfiles = holderDiscovery.profiles;
+  const openById = holderDiscovery.openById;
   const profileHints = new Map(holderProfiles.map((p) => [p.id, p]));
   for (const p of holderProfiles) candidateIds.add(p.id);
   for (const token of [...feedRefs.values()].slice(0, 32)) {
@@ -474,7 +543,23 @@ export async function discoverAndFollow(maxFollow = 12): Promise<{
   // realized results. API work stays bounded so the publish cron cannot time out.
   const performanceById = new Map<string, TraderPerformance>();
   const performanceCandidates = [...profiles]
-    .sort((a, b) => activityScore(b) - activityScore(a))
+    .sort(
+      (a, b) =>
+        openPerformanceScore(openById.get(b.id) ?? {
+          openPnlUsd: 0,
+          openCostBasisUsd: 0,
+          openRoi: 0,
+          openPositions: 0,
+        }) +
+        activityScore(b) -
+        (openPerformanceScore(openById.get(a.id) ?? {
+          openPnlUsd: 0,
+          openCostBasisUsd: 0,
+          openRoi: 0,
+          openPositions: 0,
+        }) +
+          activityScore(a))
+    )
     .slice(0, 48);
   for (let i = 0; i < performanceCandidates.length; i += 6) {
     const batch = performanceCandidates.slice(i, i + 6);
@@ -482,12 +567,18 @@ export async function discoverAndFollow(maxFollow = 12): Promise<{
     batch.forEach((p, index) => performanceById.set(p.id, results[index]));
   }
 
-  const scored: { p: FomoProfile; score: number; perf?: TraderPerformance }[] = [];
+  const scored: {
+    p: FomoProfile;
+    score: number;
+    perf?: TraderPerformance;
+    open?: TraderOpenPerformance;
+  }[] = [];
   for (const p of profiles) {
     evaluated += 1;
     const perf = performanceById.get(p.id);
-    const score = scoreTrader(p, perf);
-    scored.push({ p, score, perf });
+    const open = openById.get(p.id);
+    const score = scoreTrader(p, perf, open);
+    scored.push({ p, score, perf, open });
     upsertTrackedTrader({
       uuid: p.id,
       handle: p.userHandle ?? null,
@@ -498,30 +589,27 @@ export async function discoverAndFollow(maxFollow = 12): Promise<{
       avgHoldS: p.averageHoldTimeSeconds ?? 0,
       followers: p.followers ?? 0,
       followed: isTrackedFollowed(p.id),
-      note: performanceNote(p, perf),
+      note: performanceNote(p, perf, open),
     });
   }
 
   scored.sort((a, b) => b.score - a.score);
   let followed = 0;
-  for (const { p, score, perf } of scored) {
+  for (const { p, score, perf, open } of scored) {
     if (followed >= maxFollow) break;
-    // New follows must have enough closed trades to prove positive expectancy.
-    // Existing follows stay intact, but volume/follower count alone can no
-    // longer earn a "smart money" follow.
-    if (
-      !perf ||
-      perf.roundTrips < 5 ||
-      perf.realizedPnlUsd <= 0 ||
-      perf.realizedRoi < 0.05 ||
-      // Memecoin trend followers can be extremely profitable with a modest
-      // hit rate because winners dwarf losers. Accept that asymmetry only
-      // when the realized ROI is exceptional; otherwise demand consistency.
-      (perf.winRate < 0.4 && perf.realizedRoi < 0.25) ||
-      score < 0.35
-    ) {
-      continue;
-    }
+    const closedProven = Boolean(
+      perf &&
+        perf.roundTrips >= 5 &&
+        perf.realizedPnlUsd > 0 &&
+        perf.realizedRoi >= 0.05 &&
+        (perf.winRate >= 0.4 || perf.realizedRoi >= 0.25)
+    );
+    const openProven = Boolean(
+      open &&
+        ((open.openPositions >= 2 && open.openPnlUsd >= 1_000 && open.openRoi >= 0.2) ||
+          (open.openPositions >= 1 && open.openPnlUsd >= 10_000 && open.openRoi >= 0.5))
+    );
+    if ((!closedProven && !openProven) || score < 0.35) continue;
     if (isTrackedFollowed(p.id)) continue;
     if (await follow(uid, p.id)) {
       followed += 1;
@@ -535,7 +623,7 @@ export async function discoverAndFollow(maxFollow = 12): Promise<{
         avgHoldS: p.averageHoldTimeSeconds ?? 0,
         followers: p.followers ?? 0,
         followed: true,
-        note: performanceNote(p, perf),
+        note: performanceNote(p, perf, open),
       });
     }
   }
