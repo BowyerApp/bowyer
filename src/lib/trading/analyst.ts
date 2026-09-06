@@ -64,6 +64,7 @@ function fomoActivityNudge(agent: StrategyInput["agent"]): string {
     "no entries into a name dumping on the hour, and no chasing something already up 150%+ once its momentum has flipped. " +
     "A starter goes into a setup that is CONFIRMING (positive short-tape, real two-sided flow, fresh catalyst or social pull) — " +
     "being high on today's trending list is where exit liquidity comes from, not an edge. " +
+    "When a Q70+ setup has aligned positive 5m/1h momentum and buy flow, act decisively: use the full allowed clip and rotate out of stale capital instead of hesitating in cash. " +
     "Trims into strength and rotations out of stale holdings are always encouraged. " +
     "The board spans ALL of Solana plus Robinhood Chain (rows tagged RHC), and diversity across narratives beats concentration. " +
     "RHC remains a desk priority: judge RHC rows against their own chain's norms, and size RHC clips $50-100 — " +
@@ -97,12 +98,14 @@ const MIN_QUALITY_SCORE = Number(process.env.TRADING_MIN_SCORE) || 45;
 const RHC_MIN_QUALITY_SCORE = Number(process.env.TRADING_MIN_SCORE_RHC) || 32;
 /** Reserve enough of the board for RHC that Solana volume cannot crowd it out. */
 const RHC_UNIVERSE_SLOTS = 5;
-/** Max fraction of equity deployed into NEW buys per rolling hour. */
+/** Base and Fomo-specific fractions of equity deployable into new buys hourly. */
 const HOURLY_DEPLOY_FRAC = 0.15;
+const FOMO_HOURLY_DEPLOY_FRAC = 0.25;
 /** Minimum minutes between buys of the same token. */
 const ADD_COOLDOWN_MIN = 45;
 /** No single position may exceed this fraction of equity, whatever the base config says. */
 const MAX_POSITION_EQUITY_FRAC = 0.15;
+const FOMO_MAX_POSITION_EQUITY_FRAC = 0.2;
 
 function isRhc(t: ScreenerToken): boolean {
   return t.address.startsWith("0x");
@@ -324,8 +327,12 @@ function validateOrders(
   // three midnight pump names in 34 minutes — a fresh "starter clip" on the
   // same token every cycle. These are hard gates, not prompt suggestions.
   const activity = recentBuyActivity(input.agent.id, 60);
-  let hourlyBudget = Math.max(0, equityUsd * HOURLY_DEPLOY_FRAC - activity.totalUsd);
-  const maxPositionUsd = Math.min(risk.maxPositionUsd, equityUsd * MAX_POSITION_EQUITY_FRAC);
+  const hourlyDeployFrac =
+    input.agent.config.venue === "fomo" ? FOMO_HOURLY_DEPLOY_FRAC : HOURLY_DEPLOY_FRAC;
+  const maxPositionFrac =
+    input.agent.config.venue === "fomo" ? FOMO_MAX_POSITION_EQUITY_FRAC : MAX_POSITION_EQUITY_FRAC;
+  let hourlyBudget = Math.max(0, equityUsd * hourlyDeployFrac - activity.totalUsd);
+  const maxPositionUsd = Math.min(risk.maxPositionUsd, equityUsd * maxPositionFrac);
 
   const capped = proposals.slice(0, maxOrdersFor(input.agent));
 
@@ -413,7 +420,18 @@ function validateOrders(
       // RHC buys route cross-chain with a ~$4 fixed fee, so allow up to 2x the
       // normal clip and refuse fee-bleeding dust clips on that chain.
       const rhc = isRhc(t);
-      const clipCap = rhc ? risk.clipUsd * 2 : risk.clipUsd;
+      const buys = t.buys24h ?? 0;
+      const sells = t.sells24h ?? 0;
+      const buyFlow = buys + sells > 0 ? buys / (buys + sells) : 0;
+      const highConviction =
+        qualityScore(t) >= 70 &&
+        (t.change5m ?? 0) > 0 &&
+        (t.change1h ?? 0) > 0 &&
+        buyFlow >= 0.51;
+      // Earned aggression: only a Q70+ setup with aligned momentum and
+      // positive flow can exceed the adaptive base clip. RHC retains its 2x
+      // allowance because fixed cross-chain fees make small clips wasteful.
+      const clipCap = rhc ? risk.clipUsd * 2 : risk.clipUsd * (highConviction ? 1.5 : 1);
       let usd = Math.min(Number(p.usd) || risk.clipUsd, clipCap, room, cashLeft, hourlyBudget);
       usd = buySizeCap(
         usd,
@@ -614,7 +632,9 @@ export async function signalAnalyst(input: StrategyInput): Promise<Order[]> {
     risk = {
       ...risk,
       maxOpenPositions: Math.max(risk.maxOpenPositions, 5),
-      clipUsd: Math.min(risk.clipUsd, 60),
+      // Let adaptive performance sizing breathe up to $100; validation only
+      // grants the 1.5x extension to Q70+ aligned-momentum setups.
+      clipUsd: Math.min(risk.clipUsd, 100),
     };
   }
 
