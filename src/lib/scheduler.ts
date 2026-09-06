@@ -174,6 +174,17 @@ export async function runScheduledPublish(slug?: string): Promise<{
     } catch (err) {
       console.error("[forge] heal failed:", err);
     }
+
+    try {
+      const { reconcileRobinhoodOrders } = await import("@/lib/robinhood-executor");
+      await reconcileRobinhoodOrders();
+      if (process.env.ROBINHOOD_HOUSE_BOT_ENABLED === "1") {
+        const { runRobinhoodHouseBot } = await import("@/lib/robinhood-house-bot");
+        await runRobinhoodHouseBot();
+      }
+    } catch (err) {
+      console.error("[robinhood] scheduled cycle failed:", err);
+    }
   }
   return { ran, skipped, errors };
 }

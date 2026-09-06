@@ -287,6 +287,73 @@ export async function notifyOwnerAlert(owner: string, text: string): Promise<boo
   }
 }
 
+export async function notifyRobinhoodTrade(
+  owner: string,
+  event: string,
+  decision: {
+    id: number;
+    symbol: string;
+    side: string;
+    status: string;
+    mode: string;
+    notionalUsd: number | null;
+    quantity: number | null;
+    thesis: string;
+    brokerOrderId: string | null;
+    brokerStatus: string | null;
+  },
+  detail?: string
+): Promise<boolean> {
+  if (!telegramConfigured()) return false;
+  const link = db()
+    .prepare("SELECT chat_id FROM telegram_links WHERE wallet = ?")
+    .get(owner.toLowerCase()) as { chat_id: string } | undefined;
+  if (!link) return false;
+  const heading =
+    event === "proposal"
+      ? "Robinhood order reviewed"
+      : event === "filled"
+        ? "Robinhood order filled"
+        : event === "failed"
+          ? "Robinhood order needs attention"
+          : `Robinhood order ${event}`;
+  const lines = [
+    heading,
+    "",
+    `${decision.side.toUpperCase()} ${decision.symbol}${decision.notionalUsd ? ` · $${decision.notionalUsd.toLocaleString()}` : ""}`,
+    decision.quantity ? `Quantity: ${decision.quantity}` : "",
+    `Status: ${decision.brokerStatus ?? decision.status}`,
+    decision.brokerOrderId ? `Broker order: ${decision.brokerOrderId}` : "",
+    detail ?? "",
+    "",
+    decision.thesis.slice(0, 800),
+  ].filter(Boolean);
+  const approvalButtons =
+    event === "proposal" && decision.mode === "approval"
+      ? {
+          inline_keyboard: [
+            [
+              { text: "Approve", callback_data: `rh:approve:${decision.id}` },
+              { text: "Reject", callback_data: `rh:reject:${decision.id}` },
+            ],
+            [{ text: "Open trading console", url: `${SITE}/agents/robinhood-trading-agent#trading` }],
+          ],
+        }
+      : {
+          inline_keyboard: [
+            [{ text: "Open trading console", url: `${SITE}/agents/robinhood-trading-agent#trading` }],
+          ],
+        };
+  const queued = enqueueTelegramDelivery({
+    chatId: link.chat_id,
+    text: lines.join("\n"),
+    replyMarkup: approvalButtons,
+    dedupeKey: `robinhood:${event}:${decision.id}:${decision.status}:${decision.brokerStatus ?? ""}`,
+  });
+  if (queued) await processTelegramDeliveryQueue(10).catch(() => {});
+  return queued;
+}
+
 async function sendMessage(chatId: string, text: string, replyMarkup?: InlineKeyboard): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
   if (!token) return;
@@ -440,6 +507,37 @@ async function sendStartMenu(chatId: string): Promise<void> {
 }
 
 async function handleMenuAction(chatId: string, data: string, wallet?: string): Promise<void> {
+  if (data.startsWith("rh:")) {
+    if (!wallet) {
+      await sendMessage(chatId, "Link this Telegram chat to your BOWYER wallet before approving orders.");
+      return;
+    }
+    const [, action, rawId] = data.split(":");
+    const id = Number(rawId);
+    if (!id || !["approve", "reject", "cancel"].includes(action)) {
+      await sendMessage(chatId, "That Robinhood order action is invalid.");
+      return;
+    }
+    try {
+      const executor = await import("@/lib/robinhood-executor");
+      const decision =
+        action === "approve"
+          ? await executor.approveRobinhoodTrade(wallet, id)
+          : action === "cancel"
+            ? await executor.cancelRobinhoodOrder(wallet, id)
+            : await executor.rejectRobinhoodTrade(wallet, id);
+      await sendMessage(
+        chatId,
+        `Robinhood decision #${id}: ${decision.status}${decision.brokerStatus ? ` (${decision.brokerStatus})` : ""}.`
+      );
+    } catch (error) {
+      await sendMessage(
+        chatId,
+        `Robinhood action blocked: ${error instanceof Error ? error.message : "request failed"}`
+      );
+    }
+    return;
+  }
   if (data.startsWith("agent:")) {
     await selectAgentForChat(chatId, data.slice("agent:".length), wallet);
     return;

@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 import {
   createTradeDecision,
-  dailyTradeStats,
   getTradingPolicy,
   listTradeDecisions,
-  updateDecisionStatus,
 } from "@/lib/robinhood-trading";
-import { evaluatePolicy, normalizeSymbol, type OrderIntent } from "@/lib/trading-policy";
+import {
+  approveRobinhoodTrade,
+  cancelRobinhoodOrder,
+  proposeRobinhoodTrade,
+  rejectRobinhoodTrade,
+} from "@/lib/robinhood-executor";
+import { normalizeSymbol } from "@/lib/trading-policy";
 import { requireWalletSession } from "@/lib/wallet-auth";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -43,6 +47,9 @@ export async function POST(req: Request) {
     quantity?: number;
     notionalUsd?: number;
     orderType?: "market" | "limit";
+    limitPrice?: number;
+    timeInForce?: string;
+    idempotencyKey?: string;
   };
   try {
     body = await req.json();
@@ -56,39 +63,59 @@ export async function POST(req: Request) {
   if (!symbol || !thesis) {
     return NextResponse.json({ ok: false, error: "symbol and thesis required" }, { status: 400 });
   }
+  if (!["buy", "sell", "hold"].includes(side)) {
+    return NextResponse.json({ ok: false, error: "side must be buy, sell, or hold" }, { status: 400 });
+  }
 
   const policy = getTradingPolicy(wallet);
-  const stats = dailyTradeStats(wallet);
-  const intent: OrderIntent = {
-    symbol,
-    side: side === "hold" ? "buy" : side,
-    quantity: Number(body.quantity ?? 1),
-    notionalUsd: Number(body.notionalUsd ?? 0),
-    orderType: body.orderType ?? "market",
-  };
-  const check =
-    side === "hold"
-      ? { allowed: true, reasons: [], warnings: ["Hold — no order intent evaluated."] }
-      : evaluatePolicy(policy, intent, {
-          dailyTrades: stats.trades,
-          dailyRealizedLossUsd: stats.realizedLossUsd,
-        });
-
-  const decision = createTradeDecision({
-    wallet,
-    symbol,
-    side,
-    thesis,
-    confidence: body.confidence,
-    policyVersion: policy.version,
-    policyAllowed: check.allowed,
-    policyReasons: check.reasons,
-    mode: policy.mode,
-    notionalUsd: intent.notionalUsd || undefined,
-    metadata: { warnings: check.warnings, orderType: intent.orderType },
-  });
-
-  return NextResponse.json({ ok: true, decision, policyCheck: check });
+  if (side === "hold") {
+    const decision = createTradeDecision({
+      wallet,
+      symbol,
+      side,
+      thesis,
+      confidence: body.confidence,
+      policyVersion: policy.version,
+      policyAllowed: true,
+      policyReasons: ["Hold — no order submitted."],
+      mode: policy.mode,
+      idempotencyKey: body.idempotencyKey ?? req.headers.get("idempotency-key") ?? undefined,
+    });
+    return NextResponse.json({ ok: true, decision });
+  }
+  const quantity = Number(body.quantity);
+  const notionalUsd = Number(body.notionalUsd);
+  if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(notionalUsd) || notionalUsd <= 0) {
+    return NextResponse.json(
+      { ok: false, error: "Positive quantity and notionalUsd are required" },
+      { status: 400 }
+    );
+  }
+  if (body.orderType === "limit" && (!Number.isFinite(body.limitPrice) || Number(body.limitPrice) <= 0)) {
+    return NextResponse.json({ ok: false, error: "limitPrice is required for limit orders" }, { status: 400 });
+  }
+  try {
+    const decision = await proposeRobinhoodTrade({
+      wallet,
+      symbol,
+      side,
+      thesis,
+      confidence: body.confidence,
+      quantity,
+      notionalUsd,
+      orderType: body.orderType ?? "market",
+      limitPrice: body.limitPrice,
+      timeInForce: body.timeInForce,
+      idempotencyKey: body.idempotencyKey ?? req.headers.get("idempotency-key") ?? undefined,
+      source: "web",
+    });
+    return NextResponse.json({ ok: true, decision });
+  } catch (error) {
+    return NextResponse.json(
+      { ok: false, error: error instanceof Error ? error.message : "Trade proposal failed" },
+      { status: 400 }
+    );
+  }
 }
 
 export async function PATCH(req: Request) {
@@ -96,7 +123,7 @@ export async function PATCH(req: Request) {
   if (!wallet) {
     return NextResponse.json({ ok: false, error: "Wallet session required" }, { status: 401 });
   }
-  let body: { id?: number; action?: "approve" | "reject" };
+  let body: { id?: number; action?: "approve" | "reject" | "cancel" };
   try {
     body = await req.json();
   } catch {
@@ -106,10 +133,18 @@ export async function PATCH(req: Request) {
   if (!id || !body.action) {
     return NextResponse.json({ ok: false, error: "id and action required" }, { status: 400 });
   }
-  const status = body.action === "approve" ? "approved" : "rejected";
-  const decision = updateDecisionStatus(wallet, id, status);
-  if (!decision) {
-    return NextResponse.json({ ok: false, error: "Decision not found" }, { status: 404 });
+  try {
+    const decision =
+      body.action === "approve"
+        ? await approveRobinhoodTrade(wallet, id)
+        : body.action === "cancel"
+          ? await cancelRobinhoodOrder(wallet, id)
+          : await rejectRobinhoodTrade(wallet, id);
+    return NextResponse.json({ ok: true, decision });
+  } catch (error) {
+    return NextResponse.json(
+      { ok: false, error: error instanceof Error ? error.message : "Decision update failed" },
+      { status: 409 }
+    );
   }
-  return NextResponse.json({ ok: true, decision });
 }

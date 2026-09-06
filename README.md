@@ -207,6 +207,18 @@ Or connect directly from Cursor — every business is an MCP server:
 }
 ```
 
+## Robinhood Agentic Trading
+
+The Robinhood Trading Agent connects to Robinhood's dedicated Agentic Account with OAuth authorization-code + PKCE. BOWYER encrypts access and refresh tokens at rest and never asks for Robinhood credentials. The same execution pipeline powers:
+
+- the marketplace Robinhood Trading Agent;
+- an optional private house bot configured with `ROBINHOOD_HOUSE_WALLET`; and
+- the wallet-scoped `/api/mcp/robinhood` connector.
+
+Live order modes are opt-in. `approval` requires an authenticated web or wallet-linked Telegram approval for every reviewed order. `autonomous` skips the human click, but still runs broker review, policy revalidation, idempotent submission, audit events, and reconciliation. The global `ROBINHOOD_TRADING_DISABLED=1` switch, per-wallet pause/revoke controls, cash reserve, position/order caps, daily trade limits, and daily-loss auto-halt all fail closed.
+
+Robinhood permits order placement only in the separately funded Agentic Account. Supported asset classes depend on the tools exposed by Robinhood's live Trading MCP. Trading involves loss risk; broker review is not a guarantee of execution price or profitability.
+
 ## Robinhood Chain
 
 | | Mainnet | Testnet |

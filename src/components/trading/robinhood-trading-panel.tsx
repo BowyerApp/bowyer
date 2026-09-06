@@ -12,6 +12,14 @@ interface ConnectionState {
   agenticAccountHint: string | null;
   mcpEndpoint: string;
   connectedAt: string | null;
+  lastVerifiedAt: string | null;
+  lastError: string | null;
+}
+
+interface AccountState {
+  buyingPowerUsd: number | null;
+  equityUsd: number | null;
+  dayPnlUsd: number | null;
 }
 
 interface PolicyState {
@@ -39,6 +47,13 @@ interface DecisionRow {
   status: string;
   mode: string;
   notionalUsd: number | null;
+  quantity: number | null;
+  orderType: string;
+  limitPrice: number | null;
+  review: Record<string, unknown> | null;
+  reviewExpiresAt: number | null;
+  brokerOrderId: string | null;
+  brokerStatus: string | null;
   createdAt: string;
 }
 
@@ -53,35 +68,45 @@ const MODES: { id: TradingMode; label: string; detail: string }[] = [
 export function RobinhoodTradingPanel() {
   const { address, authenticate } = useWallet();
   const [connection, setConnection] = useState<ConnectionState | null>(null);
+  const [account, setAccount] = useState<AccountState | null>(null);
   const [policy, setPolicy] = useState<PolicyState | null>(null);
   const [decisions, setDecisions] = useState<DecisionRow[]>([]);
   const [agenticUrl, setAgenticUrl] = useState("");
   const [docsUrl, setDocsUrl] = useState("");
+  const [rolloutStage, setRolloutStage] = useState("read_only");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [autonomousAck, setAutonomousAck] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (silent = false) => {
     if (!address) return;
-    setLoading(true);
-    setError(null);
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     if (!(await authenticate())) {
-      setLoading(false);
+      if (!silent) setLoading(false);
       return;
     }
     try {
-      const [policyRes, decisionsRes] = await Promise.all([
+      const [policyRes, decisionsRes, accountRes] = await Promise.all([
         fetch("/api/trading/policy"),
         fetch("/api/trading/decisions?limit=8"),
+        fetch("/api/trading/account"),
       ]);
       if (!policyRes.ok) throw new Error("Could not load trading policy");
       const policyData = await policyRes.json();
       setConnection(policyData.connection);
       setPolicy(policyData.policy);
+      setRolloutStage(policyData.rolloutStage ?? "read_only");
       if (decisionsRes.ok) {
         const d = await decisionsRes.json();
         setDecisions(d.decisions ?? []);
+      }
+      if (accountRes.ok) {
+        const a = await accountRes.json();
+        setAccount(a.account ?? null);
       }
       const connRes = await fetch("/api/auth/robinhood");
       if (connRes.ok) {
@@ -90,18 +115,29 @@ export function RobinhoodTradingPanel() {
         setDocsUrl(c.docsUrl ?? "");
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Load failed");
+      if (!silent) setError(e instanceof Error ? e.message : "Load failed");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [address, authenticate]);
 
   useEffect(() => {
     void refresh();
+    const interval = window.setInterval(() => void refresh(true), 15_000);
+    return () => window.clearInterval(interval);
   }, [refresh]);
 
   async function savePolicy(updates: Partial<PolicyState> & { mode?: TradingMode }) {
     if (!policy) return;
+    const ack =
+      updates.mode === "autonomous"
+        ? autonomousAck ||
+          window.confirm(
+            "Autonomous mode may submit real orders without per-order approval. Continue?"
+          )
+        : undefined;
+    if (updates.mode === "autonomous" && !ack) return;
+    if (ack) setAutonomousAck(true);
     setSaving(true);
     setError(null);
     try {
@@ -111,7 +147,7 @@ export function RobinhoodTradingPanel() {
         body: JSON.stringify({
           ...policy,
           ...updates,
-          autonomousAck: updates.mode === "autonomous" ? autonomousAck : undefined,
+          autonomousAck: ack,
         }),
       });
       const data = await res.json();
@@ -130,11 +166,15 @@ export function RobinhoodTradingPanel() {
       const res = await fetch("/api/auth/robinhood", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "link" }),
+        body: JSON.stringify({
+          action: "start",
+          returnTo: `${window.location.pathname}${window.location.hash}`,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Link failed");
-      setConnection(data.connection);
+      if (!data.authorizeUrl) throw new Error("Robinhood authorization URL is missing");
+      window.location.assign(data.authorizeUrl);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Link failed");
     } finally {
@@ -142,13 +182,43 @@ export function RobinhoodTradingPanel() {
     }
   }
 
-  async function decisionAction(id: number, action: "approve" | "reject") {
-    const res = await fetch("/api/trading/decisions", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, action }),
-    });
-    if (res.ok) void refresh();
+  async function connectionAction(action: "pause" | "resume" | "revoke") {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/auth/robinhood", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Connection update failed");
+      setConnection(data.connection);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Connection update failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function decisionAction(id: number, action: "approve" | "reject" | "cancel") {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/trading/decisions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, action }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Order action failed");
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Order action failed");
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (!address) {
@@ -164,6 +234,7 @@ export function RobinhoodTradingPanel() {
     return <div className="rounded-sm border border-border bg-surface/60 p-8 text-[13px] text-muted">Loading trading console…</div>;
   }
 
+  const connected = connection?.status === "linked" || connection?.status === "paused";
   const linked = connection?.status === "linked";
 
   return (
@@ -206,21 +277,58 @@ export function RobinhoodTradingPanel() {
             >
               MCP docs
             </a>
-            {!linked ? (
+            {!connected ? (
               <button
                 type="button"
                 onClick={() => void linkRobinhood()}
                 disabled={saving}
                 className="inline-flex h-9 items-center rounded-full bg-accent px-4 text-[13px] font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
               >
-                Mark connected
+                Connect Robinhood securely
               </button>
             ) : (
               <span className="inline-flex h-9 items-center gap-2 rounded-full border border-accent/30 bg-accent/10 px-4 text-[13px] text-accent">
-                <Shield className="size-3.5" /> Linked
+                <Shield className="size-3.5" /> {linked ? "Linked" : "Paused"}
               </span>
             )}
           </div>
+          {connected && (
+            <div className="mt-4 flex flex-wrap gap-5 text-[12px] text-muted">
+              <span>Account {connection?.agenticAccountHint ? `••${connection.agenticAccountHint}` : "verified"}</span>
+              <span>Buying power {account?.buyingPowerUsd == null ? "—" : `$${account.buyingPowerUsd.toLocaleString()}`}</span>
+              <span>Equity {account?.equityUsd == null ? "—" : `$${account.equityUsd.toLocaleString()}`}</span>
+              <span className={(account?.dayPnlUsd ?? 0) < 0 ? "text-red-300" : "text-accent"}>
+                Day PnL {account?.dayPnlUsd == null ? "—" : `$${account.dayPnlUsd.toLocaleString()}`}
+              </span>
+            </div>
+          )}
+          {connection?.lastError && (
+            <p className="mt-3 text-[12px] text-amber-300">Connection warning: {connection.lastError}</p>
+          )}
+          {connection && connection.status !== "disconnected" && connection.status !== "revoked" && (
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => void connectionAction(connection.status === "paused" ? "resume" : "pause")}
+                className="text-[12px] text-muted hover:text-foreground disabled:opacity-50"
+              >
+                {connection.status === "paused" ? "Resume connection" : "Pause execution"}
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => {
+                  if (window.confirm("Disconnect Robinhood and erase BOWYER's OAuth tokens?")) {
+                    void connectionAction("revoke");
+                  }
+                }}
+                className="text-[12px] text-red-300 hover:text-red-200 disabled:opacity-50"
+              >
+                Emergency disconnect
+              </button>
+            </div>
+          )}
           {connection?.mcpEndpoint && (
             <p className="mt-4 font-mono text-[11px] text-subtle break-all">{connection.mcpEndpoint}</p>
           )}
@@ -234,7 +342,9 @@ export function RobinhoodTradingPanel() {
       {policy && (
         <div className="rounded-sm border border-border bg-surface/60 p-8">
           <h4 className="text-[18px] font-semibold text-foreground">Risk policy</h4>
-          <p className="mt-1 text-[13px] text-muted">Version {policy.version} · enforced server-side before any broker call.</p>
+          <p className="mt-1 text-[13px] text-muted">
+            Version {policy.version} · rollout {rolloutStage.replace("_", " ")} · enforced server-side before any broker call.
+          </p>
 
           <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {MODES.map((m) => (
@@ -273,6 +383,7 @@ export function RobinhoodTradingPanel() {
                 ["maxPositionUsd", "Max position ($)"],
                 ["maxDailyLossUsd", "Daily loss cap ($)"],
                 ["maxDailyTrades", "Daily trades"],
+                ["cashReserveUsd", "Cash reserve ($)"],
               ] as const
             ).map(([key, label]) => (
               <label key={key} className="block">
@@ -287,6 +398,22 @@ export function RobinhoodTradingPanel() {
               </label>
             ))}
           </div>
+
+          <label className="mt-4 block">
+            <span className="text-[12px] text-muted">Allowed symbols (comma-separated; blank allows any)</span>
+            <input
+              value={policy.allowedSymbols.join(", ")}
+              onChange={(e) =>
+                setPolicy({
+                  ...policy,
+                  allowedSymbols: e.target.value.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean),
+                })
+              }
+              onBlur={() => void savePolicy({ allowedSymbols: policy.allowedSymbols })}
+              className="input-dark mt-1 h-9 w-full text-[13px]"
+              placeholder="AAPL, NVDA, BTC"
+            />
+          </label>
 
           <label className="mt-4 block">
             <span className="text-[12px] text-muted">Strategy notes</span>
@@ -322,14 +449,15 @@ export function RobinhoodTradingPanel() {
       {decisions.length > 0 && (
         <div className="rounded-sm border border-border bg-surface/60 p-8">
           <h4 className="text-[18px] font-semibold text-foreground">Decision ledger</h4>
-          <p className="mt-1 text-[13px] text-muted">Immutable proposals with policy outcomes.</p>
+          <p className="mt-1 text-[13px] text-muted">Reviewed orders, broker state, and immutable policy outcomes.</p>
           <ul className="mt-6 space-y-4">
             {decisions.map((d) => (
               <li key={d.id} className="rounded-sm border border-border p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-[14px] font-medium text-foreground">
                     {d.side.toUpperCase()} {d.symbol}
-                    {d.notionalUsd ? ` · $${d.notionalUsd}` : ""}
+                    {d.notionalUsd ? ` · $${d.notionalUsd.toLocaleString()}` : ""}
+                    {d.quantity ? ` · ${d.quantity} units` : ""}
                   </p>
                   <span className="text-[12px] text-muted">{new Date(d.createdAt).toLocaleString()}</span>
                 </div>
@@ -337,10 +465,28 @@ export function RobinhoodTradingPanel() {
                 {!d.policyAllowed && d.policyReasons.length > 0 && (
                   <p className="mt-2 text-[12px] text-red-300">Blocked: {d.policyReasons.join(" ")}</p>
                 )}
+                {d.review?.brokerReview !== undefined && (
+                  <details className="mt-3 rounded-sm border border-white/10 bg-black/10 p-3">
+                    <summary className="cursor-pointer text-[12px] text-accent">
+                      Robinhood review, warnings, and estimate
+                    </summary>
+                    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-[11px] text-muted">
+                      {JSON.stringify(d.review.brokerReview, null, 2).slice(0, 4_000)}
+                    </pre>
+                  </details>
+                )}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <span className="rounded-full bg-white/5 px-2 py-0.5 text-[11px] text-muted">{d.status}</span>
                   <span className="rounded-full bg-white/5 px-2 py-0.5 text-[11px] text-muted">{d.mode}</span>
-                  {d.status === "proposed" && d.policyAllowed && policy?.mode === "approval" && (
+                  {d.brokerStatus && (
+                    <span className="rounded-full bg-white/5 px-2 py-0.5 text-[11px] text-muted">
+                      broker: {d.brokerStatus}
+                    </span>
+                  )}
+                  {d.brokerOrderId && (
+                    <span className="font-mono text-[10px] text-subtle">#{d.brokerOrderId}</span>
+                  )}
+                  {d.status === "reviewed" && d.policyAllowed && policy?.mode === "approval" && (
                     <>
                       <button
                         type="button"
@@ -358,7 +504,22 @@ export function RobinhoodTradingPanel() {
                       </button>
                     </>
                   )}
+                  {d.status === "submitted" && d.brokerOrderId && (
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => void decisionAction(d.id, "cancel")}
+                      className="text-[12px] text-red-300 hover:underline disabled:opacity-50"
+                    >
+                      Cancel broker order
+                    </button>
+                  )}
                 </div>
+                {d.status === "reviewed" && d.reviewExpiresAt && (
+                  <p className="mt-2 text-[11px] text-subtle">
+                    Review expires {new Date(d.reviewExpiresAt).toLocaleTimeString()}
+                  </p>
+                )}
               </li>
             ))}
           </ul>

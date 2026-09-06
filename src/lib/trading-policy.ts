@@ -34,7 +34,7 @@ export interface PolicyCheckResult {
 }
 
 export const DEFAULT_TRADING_POLICY: Omit<TradingPolicy, "wallet" | "updatedAt"> = {
-  mode: "research",
+  mode: "approval",
   enabled: true,
   killSwitch: false,
   maxOrderUsd: 500,
@@ -47,6 +47,15 @@ export const DEFAULT_TRADING_POLICY: Omit<TradingPolicy, "wallet" | "updatedAt">
   version: 1,
 };
 
+export type RobinhoodRolloutStage = "read_only" | "paper" | "approval" | "autonomous";
+
+export function robinhoodRolloutStage(): RobinhoodRolloutStage {
+  const value = process.env.ROBINHOOD_ROLLOUT_STAGE;
+  return value === "paper" || value === "approval" || value === "autonomous"
+    ? value
+    : "read_only";
+}
+
 export function normalizeSymbol(symbol: string): string {
   return symbol.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
 }
@@ -58,6 +67,11 @@ export function evaluatePolicy(
     dailyTrades: number;
     dailyRealizedLossUsd: number;
     openConcentrationUsd?: number;
+    buyingPowerUsd?: number;
+    marketOpen?: boolean;
+    tradable?: boolean;
+    connectionStatus?: "disconnected" | "linked" | "paused" | "revoked";
+    quoteAgeMs?: number;
   }
 ): PolicyCheckResult {
   const reasons: string[] = [];
@@ -68,6 +82,19 @@ export function evaluatePolicy(
   if (policy.mode === "research") reasons.push("Account is in research-only mode.");
   if (policy.mode === "simulate") reasons.push("Account is in simulation mode — no live orders.");
   if (policy.mode === "paper") reasons.push("Account is in paper mode — no broker submission.");
+  if (process.env.ROBINHOOD_TRADING_DISABLED === "1") {
+    reasons.push("Robinhood trading is disabled globally.");
+  }
+  const rolloutStage = robinhoodRolloutStage();
+  if (
+    (policy.mode === "approval" && !["approval", "autonomous"].includes(rolloutStage)) ||
+    (policy.mode === "autonomous" && rolloutStage !== "autonomous")
+  ) {
+    reasons.push(`Robinhood rollout stage ${rolloutStage} does not permit ${policy.mode} orders.`);
+  }
+  if (context.connectionStatus && context.connectionStatus !== "linked") {
+    reasons.push(`Robinhood connection is ${context.connectionStatus}.`);
+  }
 
   const symbol = normalizeSymbol(intent.symbol);
   if (!symbol || symbol.length > 12) reasons.push("Invalid symbol.");
@@ -75,13 +102,30 @@ export function evaluatePolicy(
     reasons.push(`Symbol ${symbol} is not on the allowlist.`);
   }
 
-  if (intent.notionalUsd <= 0 || intent.quantity <= 0) {
+  if (
+    !Number.isFinite(intent.notionalUsd) ||
+    !Number.isFinite(intent.quantity) ||
+    intent.notionalUsd <= 0 ||
+    intent.quantity <= 0
+  ) {
     reasons.push("Order size must be positive.");
+  }
+  if (intent.orderType !== "market" && intent.orderType !== "limit") {
+    reasons.push("Unsupported order type.");
+  }
+  if (
+    intent.orderType === "limit" &&
+    (!Number.isFinite(intent.limitPrice) || Number(intent.limitPrice) <= 0)
+  ) {
+    reasons.push("Limit orders require a positive limit price.");
   }
   if (intent.notionalUsd > policy.maxOrderUsd) {
     reasons.push(`Order exceeds max order size ($${policy.maxOrderUsd}).`);
   }
-  if ((context.openConcentrationUsd ?? 0) + intent.notionalUsd > policy.maxPositionUsd) {
+  if (
+    intent.side === "buy" &&
+    (context.openConcentrationUsd ?? 0) + intent.notionalUsd > policy.maxPositionUsd
+  ) {
     reasons.push(`Order would exceed max position size ($${policy.maxPositionUsd}).`);
   }
   if (context.dailyTrades >= policy.maxDailyTrades) {
@@ -89,6 +133,18 @@ export function evaluatePolicy(
   }
   if (context.dailyRealizedLossUsd >= policy.maxDailyLossUsd) {
     reasons.push(`Daily loss limit reached ($${policy.maxDailyLossUsd}).`);
+  }
+  if (
+    intent.side === "buy" &&
+    context.buyingPowerUsd !== undefined &&
+    context.buyingPowerUsd - intent.notionalUsd < policy.cashReserveUsd
+  ) {
+    reasons.push(`Order would breach cash reserve ($${policy.cashReserveUsd}).`);
+  }
+  if (context.tradable === false) reasons.push(`${symbol} is not currently tradable.`);
+  if (context.marketOpen === false) reasons.push("The relevant market is closed.");
+  if (context.quoteAgeMs !== undefined && context.quoteAgeMs > 30_000) {
+    reasons.push("Market quote is stale.");
   }
 
   if (policy.mode === "autonomous") {

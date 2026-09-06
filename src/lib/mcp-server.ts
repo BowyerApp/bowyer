@@ -23,12 +23,24 @@ import { formatChainContext, scanChain } from "@/lib/chain-scanner";
 import { getMemeRadar, scanTokenRisk } from "@/lib/meme-radar";
 import {
   createTradeDecision,
-  dailyTradeStats,
   getRobinhoodConnection,
   getTradingPolicy,
+  listDecisionEvents,
   listTradeDecisions,
 } from "@/lib/robinhood-trading";
-import { evaluatePolicy, normalizeSymbol } from "@/lib/trading-policy";
+import {
+  approveRobinhoodTrade,
+  cancelRobinhoodOrder,
+  proposeRobinhoodTrade,
+  rejectRobinhoodTrade,
+} from "@/lib/robinhood-executor";
+import {
+  callRobinhoodTool,
+  findRobinhoodTool,
+  listRobinhoodTools,
+  unwrapRobinhoodToolResult,
+} from "@/lib/robinhood-mcp-client";
+import { normalizeSymbol } from "@/lib/trading-policy";
 
 export interface McpToolDefinition {
   name: string;
@@ -341,7 +353,10 @@ function buildMemeRadarServer(ctx: McpAgentContext): McpAgentServer {
 
 /* ---------- Robinhood Trading Agent ---------- */
 
-function buildRobinhoodTradingServer(ctx: McpAgentContext): McpAgentServer {
+export function buildRobinhoodTradingServer(
+  ctx: McpAgentContext,
+  scopedWallet?: string
+): McpAgentServer {
   const identity: AgentIdentity = {
     slug: ctx.slug,
     name: ctx.name,
@@ -357,12 +372,34 @@ function buildRobinhoodTradingServer(ctx: McpAgentContext): McpAgentServer {
       {
         name: "get_robinhood_status",
         description: "Connection status for Robinhood Agentic Account (requires wallet session on HTTP MCP).",
-        inputSchema: { type: "object", properties: { wallet: { type: "string" } }, required: ["wallet"] },
+        inputSchema: { type: "object", properties: {} },
       },
       {
         name: "get_trading_policy",
         description: "Fetch the user's versioned trading policy and risk limits.",
-        inputSchema: { type: "object", properties: { wallet: { type: "string" } }, required: ["wallet"] },
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "get_robinhood_portfolio",
+        description: "Fetch live Agentic Account portfolio and buying-power data.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "get_robinhood_positions",
+        description: "Fetch live positions held in the connected Agentic Account.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "research_robinhood_market",
+        description: "Call a read-only Robinhood market-data, scanner, news, or research tool.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            tool: { type: "string", description: "Exact read-only Robinhood MCP tool name" },
+            arguments: { type: "object", description: "Arguments accepted by the selected tool" },
+          },
+          required: ["tool"],
+        },
       },
       {
         name: "propose_trade",
@@ -370,15 +407,44 @@ function buildRobinhoodTradingServer(ctx: McpAgentContext): McpAgentServer {
         inputSchema: {
           type: "object",
           properties: {
-            wallet: { type: "string" },
             symbol: { type: "string" },
-            side: { type: "string", description: "buy | sell | hold" },
+            side: { type: "string", description: "buy | sell" },
             thesis: { type: "string" },
             notionalUsd: { type: "number" },
             quantity: { type: "number" },
             confidence: { type: "number" },
+            orderType: { type: "string", description: "market | limit" },
+            limitPrice: { type: "number" },
+            idempotencyKey: { type: "string" },
           },
-          required: ["wallet", "symbol", "side", "thesis"],
+          required: ["symbol", "side", "thesis", "notionalUsd", "quantity"],
+        },
+      },
+      {
+        name: "approve_trade",
+        description: "Approve and submit one reviewed proposal (approval policy mode only).",
+        inputSchema: {
+          type: "object",
+          properties: { decisionId: { type: "number" } },
+          required: ["decisionId"],
+        },
+      },
+      {
+        name: "reject_trade",
+        description: "Reject one proposed or reviewed trade.",
+        inputSchema: {
+          type: "object",
+          properties: { decisionId: { type: "number" } },
+          required: ["decisionId"],
+        },
+      },
+      {
+        name: "cancel_order",
+        description: "Cancel a submitted Robinhood order by its BOWYER decision ID.",
+        inputSchema: {
+          type: "object",
+          properties: { decisionId: { type: "number" } },
+          required: ["decisionId"],
         },
       },
       {
@@ -386,11 +452,16 @@ function buildRobinhoodTradingServer(ctx: McpAgentContext): McpAgentServer {
         description: "List recent trade decisions from the immutable ledger.",
         inputSchema: {
           type: "object",
-          properties: {
-            wallet: { type: "string" },
-            limit: { type: "number" },
-          },
-          required: ["wallet"],
+          properties: { limit: { type: "number" } },
+        },
+      },
+      {
+        name: "get_decision_history",
+        description: "Fetch the immutable status-event history for a trade decision.",
+        inputSchema: {
+          type: "object",
+          properties: { decisionId: { type: "number" } },
+          required: ["decisionId"],
         },
       },
       {
@@ -400,58 +471,89 @@ function buildRobinhoodTradingServer(ctx: McpAgentContext): McpAgentServer {
       },
     ],
     async callTool(name, args) {
-      const wallet = String(args.wallet ?? "").toLowerCase();
+      const wallet = scopedWallet?.toLowerCase() ?? "";
+      if (
+        name !== "get_status" &&
+        !runtimeTools(identity).some((tool) => tool.name === name) &&
+        !/^0x[0-9a-fA-F]{40}$/.test(wallet)
+      ) {
+        return { error: "Authenticated wallet session required" };
+      }
       if (name === "get_robinhood_status") {
-        if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
-          return { error: "Valid wallet required" };
-        }
         return getRobinhoodConnection(wallet);
       }
       if (name === "get_trading_policy") {
-        if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
-          return { error: "Valid wallet required" };
-        }
         return getTradingPolicy(wallet);
       }
       if (name === "list_decisions") {
-        if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
-          return { error: "Valid wallet required" };
-        }
         return listTradeDecisions(wallet, Math.min(Number(args.limit ?? 10), 20));
       }
-      if (name === "propose_trade") {
-        if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
-          return { error: "Valid wallet required" };
+      if (name === "get_decision_history") {
+        return listDecisionEvents(wallet, Number(args.decisionId));
+      }
+      if (name === "get_robinhood_portfolio" || name === "get_robinhood_positions") {
+        const tools = await listRobinhoodTools(wallet);
+        const candidates =
+          name === "get_robinhood_portfolio"
+            ? ["get_portfolio", "get_account_summary", "get_account"]
+            : ["get_positions", "get_open_positions", "list_positions"];
+        const selected = findRobinhoodTool(tools, candidates);
+        if (!selected) return { error: `Robinhood ${name} tool unavailable` };
+        return unwrapRobinhoodToolResult(await callRobinhoodTool(wallet, selected.name));
+      }
+      if (name === "research_robinhood_market") {
+        const toolName = String(args.tool ?? "");
+        const readOnlyName = /^(get|list|search|scan|screen|lookup|research|find|calculate|analyze|fetch)_/i.test(
+          toolName
+        );
+        if (
+          !readOnlyName ||
+          /place|submit|cancel|create|replace|exercise|order|trade|transfer|withdraw|deposit/i.test(
+            toolName
+          )
+        ) {
+          return { error: "Only read-only market and research tools are allowed here" };
         }
+        const tools = await listRobinhoodTools(wallet);
+        if (!tools.some((tool) => tool.name === toolName)) return { error: "Unknown Robinhood tool" };
+        const toolArgs =
+          args.arguments && typeof args.arguments === "object"
+            ? (args.arguments as Record<string, unknown>)
+            : {};
+        return unwrapRobinhoodToolResult(await callRobinhoodTool(wallet, toolName, toolArgs));
+      }
+      if (name === "propose_trade") {
         const symbol = normalizeSymbol(String(args.symbol ?? ""));
-        const side = String(args.side ?? "hold") as "buy" | "sell" | "hold";
+        const side = String(args.side ?? "") as "buy" | "sell";
         const thesis = String(args.thesis ?? "").trim();
-        const policy = getTradingPolicy(wallet);
-        const stats = dailyTradeStats(wallet);
         const notionalUsd = Number(args.notionalUsd ?? 0);
-        const quantity = Number(args.quantity ?? 1);
-        const check =
-          side === "hold"
-            ? { allowed: true, reasons: [], warnings: ["Hold proposal — no order gate applied."] }
-            : evaluatePolicy(
-                policy,
-                { symbol, side, quantity, notionalUsd, orderType: "market" },
-                { dailyTrades: stats.trades, dailyRealizedLossUsd: stats.realizedLossUsd }
-              );
-        const decision = createTradeDecision({
+        const quantity = Number(args.quantity ?? 0);
+        if (!symbol || !["buy", "sell"].includes(side) || !thesis || quantity <= 0 || notionalUsd <= 0) {
+          return { error: "Valid symbol, side, thesis, quantity, and notionalUsd are required" };
+        }
+        const decision = await proposeRobinhoodTrade({
           wallet,
           symbol,
           side,
           thesis,
           confidence: args.confidence !== undefined ? Number(args.confidence) : undefined,
-          policyVersion: policy.version,
-          policyAllowed: check.allowed,
-          policyReasons: check.reasons,
-          mode: policy.mode,
-          notionalUsd: notionalUsd || undefined,
-          metadata: { warnings: check.warnings, source: "mcp" },
+          quantity,
+          notionalUsd,
+          orderType: String(args.orderType ?? "market") as "market" | "limit",
+          limitPrice: args.limitPrice !== undefined ? Number(args.limitPrice) : undefined,
+          idempotencyKey: args.idempotencyKey ? String(args.idempotencyKey) : undefined,
+          source: "bowyer-mcp",
         });
-        return { decision, policyCheck: check };
+        return { decision };
+      }
+      if (name === "approve_trade") {
+        return approveRobinhoodTrade(wallet, Number(args.decisionId));
+      }
+      if (name === "reject_trade") {
+        return rejectRobinhoodTrade(wallet, Number(args.decisionId));
+      }
+      if (name === "cancel_order") {
+        return cancelRobinhoodOrder(wallet, Number(args.decisionId));
       }
       if (name === "get_status") {
         return {

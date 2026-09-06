@@ -278,14 +278,33 @@ function migrate(d: DatabaseT.Database) {
       status TEXT NOT NULL DEFAULT 'disconnected',
       agentic_account_hint TEXT,
       access_token_enc TEXT,
+      refresh_token_enc TEXT,
+      token_expires_at INTEGER,
+      oauth_client_id TEXT,
+      scope TEXT,
+      last_verified_at TEXT,
+      last_error TEXT,
       metadata TEXT,
       connected_at TEXT,
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS robinhood_oauth_clients (
+      redirect_uri TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      metadata TEXT,
+      registered_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS robinhood_wallet_locks (
+      wallet TEXT PRIMARY KEY,
+      owner TEXT NOT NULL,
+      lease_until INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS trading_policies (
       wallet TEXT PRIMARY KEY,
-      mode TEXT NOT NULL DEFAULT 'research',
+      mode TEXT NOT NULL DEFAULT 'approval',
       enabled INTEGER NOT NULL DEFAULT 1,
       kill_switch INTEGER NOT NULL DEFAULT 0,
       max_order_usd REAL NOT NULL DEFAULT 500,
@@ -319,6 +338,18 @@ function migrate(d: DatabaseT.Database) {
       status TEXT NOT NULL DEFAULT 'proposed',
       mode TEXT NOT NULL,
       notional_usd REAL,
+      quantity REAL,
+      order_type TEXT NOT NULL DEFAULT 'market',
+      limit_price REAL,
+      time_in_force TEXT NOT NULL DEFAULT 'gfd',
+      idempotency_key TEXT,
+      review_json TEXT,
+      review_expires_at INTEGER,
+      broker_order_id TEXT,
+      broker_status TEXT,
+      submitted_at TEXT,
+      filled_at TEXT,
+      failed_at TEXT,
       metadata TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT
@@ -326,6 +357,19 @@ function migrate(d: DatabaseT.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_trade_decisions_wallet
       ON trade_decisions (wallet, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS trade_decision_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      decision_id INTEGER NOT NULL,
+      wallet TEXT NOT NULL,
+      from_status TEXT,
+      to_status TEXT NOT NULL,
+      details TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_trade_decision_events_decision
+      ON trade_decision_events (decision_id, id);
 
     CREATE TABLE IF NOT EXISTS business_registry (
       slug TEXT PRIMARY KEY,
@@ -412,6 +456,33 @@ function migrate(d: DatabaseT.Database) {
       at TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (run_id, wallet)
     );
+  `);
+
+  addColumnIfMissing(d, "robinhood_connections", "refresh_token_enc TEXT");
+  addColumnIfMissing(d, "robinhood_connections", "token_expires_at INTEGER");
+  addColumnIfMissing(d, "robinhood_connections", "oauth_client_id TEXT");
+  addColumnIfMissing(d, "robinhood_connections", "scope TEXT");
+  addColumnIfMissing(d, "robinhood_connections", "last_verified_at TEXT");
+  addColumnIfMissing(d, "robinhood_connections", "last_error TEXT");
+
+  addColumnIfMissing(d, "trade_decisions", "quantity REAL");
+  addColumnIfMissing(d, "trade_decisions", "order_type TEXT NOT NULL DEFAULT 'market'");
+  addColumnIfMissing(d, "trade_decisions", "limit_price REAL");
+  addColumnIfMissing(d, "trade_decisions", "time_in_force TEXT NOT NULL DEFAULT 'gfd'");
+  addColumnIfMissing(d, "trade_decisions", "idempotency_key TEXT");
+  addColumnIfMissing(d, "trade_decisions", "review_json TEXT");
+  addColumnIfMissing(d, "trade_decisions", "review_expires_at INTEGER");
+  addColumnIfMissing(d, "trade_decisions", "broker_order_id TEXT");
+  addColumnIfMissing(d, "trade_decisions", "broker_status TEXT");
+  addColumnIfMissing(d, "trade_decisions", "submitted_at TEXT");
+  addColumnIfMissing(d, "trade_decisions", "filled_at TEXT");
+  addColumnIfMissing(d, "trade_decisions", "failed_at TEXT");
+
+  d.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_trade_decisions_idempotency
+      ON trade_decisions (wallet, idempotency_key) WHERE idempotency_key IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_trade_decisions_broker_order
+      ON trade_decisions (broker_order_id) WHERE broker_order_id IS NOT NULL;
   `);
 }
 

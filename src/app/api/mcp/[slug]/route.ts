@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { buildTradingOpsServer, getOrCreateMcpServer, handleMcpJsonRpc } from "@/lib/mcp-server";
+import {
+  buildRobinhoodTradingServer,
+  buildTradingOpsServer,
+  getOrCreateMcpServer,
+  handleMcpJsonRpc,
+} from "@/lib/mcp-server";
 import { GITHUB_REPOS, getAgentSummary } from "@/lib/data/agents";
 import { getRegisteredDescription, hasSubscription } from "@/lib/data/agent-registry";
 import { rateLimit } from "@/lib/rate-limit";
@@ -16,9 +21,34 @@ import {
 
 export const runtime = "nodejs";
 
-function resolveServer(slug: string) {
+function resolveServer(slug: string, wallet?: string | null) {
+  if (slug === "robinhood") {
+    return buildRobinhoodTradingServer(
+      {
+        slug: "robinhood",
+        name: "BOWYER Robinhood Connector",
+        version: "1.0.0",
+        tagline: "Wallet-scoped Robinhood Agentic Trading connector",
+        description: "A policy-controlled facade over Robinhood's Trading MCP.",
+      },
+      wallet ?? undefined
+    );
+  }
   const agent = getAgentSummary(slug);
   if (!agent) return undefined;
+  if (slug === "robinhood-trading-agent") {
+    return buildRobinhoodTradingServer(
+      {
+        slug,
+        name: agent.name,
+        version: agent.version,
+        tagline: agent.tagline,
+        description: getRegisteredDescription(slug) ?? agent.thesis,
+        githubRepo: GITHUB_REPOS[slug],
+      },
+      wallet ?? undefined
+    );
+  }
   return getOrCreateMcpServer({
     slug,
     name: agent.name,
@@ -90,8 +120,8 @@ export async function POST(
     );
   }
 
-  // Trading desk MCP — wallet-scoped, session-authenticated, no x402 gating.
-  if (slug === "trading") {
+  // First-party control MCPs — wallet-scoped, session-authenticated, no x402 gating.
+  if (slug === "trading" || slug === "robinhood") {
     const wallet = requireWalletSession(req);
     if (!wallet && body.method === "tools/call") {
       return NextResponse.json(
@@ -106,7 +136,11 @@ export async function POST(
         { status: 401 }
       );
     }
-    const response = await handleMcpJsonRpc(buildTradingOpsServer(wallet ?? "0x0"), {
+    const server =
+      slug === "trading"
+        ? buildTradingOpsServer(wallet ?? "0x0")
+        : resolveServer(slug, wallet);
+    const response = await handleMcpJsonRpc(server, {
       jsonrpc: "2.0",
       method: body.method,
       id: body.id,
@@ -126,6 +160,7 @@ export async function POST(
   const isStatusCall = body.method === "tools/call" && toolName === "get_status";
   const needsAccessCheck =
     (body.method === "tools/call" && !isStatusCall) || body.method === "resources/read";
+  const sessionWallet = requireWalletSession(req);
 
   // Claimed x402 credit for this call — refunded if the tool run errors.
   let x402CreditId: number | null = null;
@@ -133,7 +168,7 @@ export async function POST(
   if (needsAccessCheck) {
     const agent = getAgentSummary(slug);
     const isPaid = agent && agent.pricing.model !== "free" && agent.pricing.amount > 0;
-    const wallet = requireWalletSession(req);
+    const wallet = sessionWallet;
     const subscribed = wallet ? hasSubscription(slug, wallet) : false;
 
     // Paid monthly subscription path (existing).
@@ -233,7 +268,7 @@ export async function POST(
     }
   }
 
-  const response = await handleMcpJsonRpc(resolveServer(slug), {
+  const response = await handleMcpJsonRpc(resolveServer(slug, sessionWallet), {
     jsonrpc: "2.0",
     method: body.method,
     id: body.id,

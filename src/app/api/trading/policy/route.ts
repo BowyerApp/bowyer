@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRobinhoodConnection, getTradingPolicy, saveTradingPolicy } from "@/lib/robinhood-trading";
-import type { TradingMode } from "@/lib/trading-policy";
+import { robinhoodRolloutStage, type TradingMode } from "@/lib/trading-policy";
 import { requireWalletSession } from "@/lib/wallet-auth";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -17,7 +17,7 @@ export async function GET(req: Request) {
   }
   const connection = getRobinhoodConnection(wallet);
   const policy = getTradingPolicy(wallet);
-  return NextResponse.json({ ok: true, connection, policy });
+  return NextResponse.json({ ok: true, connection, policy, rolloutStage: robinhoodRolloutStage() });
 }
 
 export async function PUT(req: Request) {
@@ -43,7 +43,7 @@ export async function PUT(req: Request) {
   if (!validModes.includes(nextMode)) {
     return NextResponse.json({ ok: false, error: "Invalid trading mode" }, { status: 400 });
   }
-  if (nextMode === "autonomous" && body.autonomousAck !== true) {
+  if (nextMode === "autonomous" && current.mode !== "autonomous" && body.autonomousAck !== true) {
     return NextResponse.json(
       {
         ok: false,
@@ -56,17 +56,31 @@ export async function PUT(req: Request) {
   const allowedSymbols = Array.isArray(body.allowedSymbols)
     ? (body.allowedSymbols as string[]).map((s) => s.trim().toUpperCase()).filter(Boolean)
     : current.allowedSymbols;
+  const numeric = {
+    maxOrderUsd: Number(body.maxOrderUsd ?? current.maxOrderUsd),
+    maxPositionUsd: Number(body.maxPositionUsd ?? current.maxPositionUsd),
+    maxDailyLossUsd: Number(body.maxDailyLossUsd ?? current.maxDailyLossUsd),
+    maxDailyTrades: Number(body.maxDailyTrades ?? current.maxDailyTrades),
+    cashReserveUsd: Number(body.cashReserveUsd ?? current.cashReserveUsd),
+  };
+  if (
+    !Object.values(numeric).every(Number.isFinite) ||
+    numeric.maxOrderUsd <= 0 ||
+    numeric.maxPositionUsd < numeric.maxOrderUsd ||
+    numeric.maxDailyLossUsd <= 0 ||
+    numeric.maxDailyTrades < 1 ||
+    numeric.maxDailyTrades > 100 ||
+    numeric.cashReserveUsd < 0
+  ) {
+    return NextResponse.json({ ok: false, error: "Invalid risk limits" }, { status: 400 });
+  }
 
   const policy = saveTradingPolicy({
     ...current,
     mode: nextMode,
     enabled: body.enabled !== undefined ? Boolean(body.enabled) : current.enabled,
     killSwitch: body.killSwitch !== undefined ? Boolean(body.killSwitch) : current.killSwitch,
-    maxOrderUsd: Number(body.maxOrderUsd ?? current.maxOrderUsd),
-    maxPositionUsd: Number(body.maxPositionUsd ?? current.maxPositionUsd),
-    maxDailyLossUsd: Number(body.maxDailyLossUsd ?? current.maxDailyLossUsd),
-    maxDailyTrades: Number(body.maxDailyTrades ?? current.maxDailyTrades),
-    cashReserveUsd: Number(body.cashReserveUsd ?? current.cashReserveUsd),
+    ...numeric,
     allowedSymbols,
     strategyNotes: String(body.strategyNotes ?? current.strategyNotes),
   });
