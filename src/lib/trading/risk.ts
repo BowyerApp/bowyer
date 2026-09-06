@@ -144,7 +144,9 @@ const STOP_COOLDOWN_HOURS = 4;
 const EXIT_COOLDOWN_MINUTES = 30;
 const STOPLOSS_GUARD_LIMIT = 3; // stop-losses in the lookback window …
 const STOPLOSS_GUARD_LOOKBACK_HOURS = 24; // … halts entries
-const DRAWDOWN_HALT = 0.2;
+// Owner-selected outer boundary for the aggressive growth mandate. Adaptive
+// sizing already cuts risk hard beyond 20%; at 25% no new exposure is allowed.
+const DRAWDOWN_HALT = 0.25;
 
 /**
  * Freqtrade-style protections, adapted:
